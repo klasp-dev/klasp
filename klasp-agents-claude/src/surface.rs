@@ -8,6 +8,18 @@
 //! 4. Honour `--dry-run` (preview only, no writes).
 //! 5. Atomic write of the script + chmod 0o755 (Unix).
 //! 6. Surgical merge into `.claude/settings.json`.
+//!
+//! ## Windows notes (audit W4)
+//!
+//! On Windows, `current_mode` and `apply_mode` are no-ops — NTFS has no
+//! executable permission bit, and `bash.exe` (Git for Windows) interprets
+//! the script's `#!/usr/bin/env bash` shebang at runtime regardless. The
+//! generated hook script therefore works without any chmod step. Users on
+//! Windows must have Git for Windows installed (which puts `bash.exe` on
+//! PATH); the default installer satisfies this. All `Path::join` calls in
+//! this module produce platform-correct separators via `std::path::Path` —
+//! no manual separator handling is required, and `HOOK_COMMAND` uses
+//! forward slashes (resolved by Claude Code at hook-invocation time).
 
 use std::fs;
 use std::io::Write;
@@ -253,8 +265,10 @@ fn apply_mode(path: &Path, mode: u32) -> Result<(), InstallError> {
     }
     #[cfg(not(unix))]
     {
-        // Windows: bash interprets the shebang regardless of the NTFS bit.
-        // Per design.md §14, the Windows path/permission audit lands at W4.
+        // Windows: NTFS has no executable bit; bash.exe (Git for Windows)
+        // interprets the script's shebang at runtime regardless. W4 audit
+        // (see module docstring) confirmed no action is needed here. The
+        // `let _ = (path, mode);` silences the unused-variable lint.
         let _ = (path, mode);
     }
     Ok(())

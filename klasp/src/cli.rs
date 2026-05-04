@@ -32,7 +32,11 @@ pub enum Cmd {
 }
 
 #[derive(Debug, Args)]
-pub struct InitArgs {}
+pub struct InitArgs {
+    /// Overwrite an existing klasp.toml without prompting.
+    #[arg(long)]
+    pub force: bool,
+}
 
 #[derive(Debug, Args)]
 pub struct InstallArgs {
