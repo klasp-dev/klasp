@@ -64,11 +64,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: ${{ matrix.target.triple }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ${{ matrix.target.triple }}
 
@@ -215,7 +215,7 @@ jobs:
         run: node scripts/bump-source-versions.mjs "$VERSION"
 
       - name: build wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           working-directory: pypi
           target: ${{ matrix.target.triple }}
@@ -249,12 +249,29 @@ jobs:
       - name: list wheels
         run: ls -la dist/
 
-      - name: publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: report auth method
+        shell: bash
+        env:
+          HAS_TOKEN: ${{ secrets.PYPI_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" = "true" ]; then
+            echo "PyPI auth: using PYPI_TOKEN secret (API token)"
+          else
+            echo "PyPI auth: using OIDC trusted publisher (no PYPI_TOKEN set)"
+          fi
+
+      - name: publish to PyPI via OIDC (trusted publisher)
+        if: ${{ secrets.PYPI_TOKEN == '' }}
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           packages-dir: dist/
-          # If trusted publishing is configured, leave password empty.
-          # If only an API token is configured, set PYPI_TOKEN as a repo secret.
+          skip-existing: true
+
+      - name: publish to PyPI via API token
+        if: ${{ secrets.PYPI_TOKEN != '' }}
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        with:
+          packages-dir: dist/
           password: ${{ secrets.PYPI_TOKEN }}
           skip-existing: true
 
@@ -277,9 +294,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - uses: actions/setup-node@v4
         with:
@@ -297,7 +314,25 @@ jobs:
         run: cargo publish -p klasp-core --no-verify --allow-dirty
 
       - name: wait for klasp-core to land
-        run: sleep 30
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          crate="klasp-core"
+          url="https://crates.io/api/v1/crates/${crate}/${VERSION}"
+          echo "Polling ${url} ..."
+          for i in $(seq 1 36); do
+            status=$(curl -sf -o /dev/null -w "%{http_code}" \
+              -H "User-Agent: klasp-release-workflow" "$url" || echo "000")
+            if [ "$status" = "200" ]; then
+              echo "${crate} ${VERSION} is live on crates.io (attempt ${i})."
+              exit 0
+            fi
+            echo "  attempt ${i}/36: got HTTP ${status}; retrying in 5s ..."
+            sleep 5
+          done
+          echo "ERROR: ${crate} ${VERSION} did not appear on crates.io within 180s." >&2
+          exit 1
 
       - name: publish klasp-agents-claude
         env:
@@ -305,7 +340,25 @@ jobs:
         run: cargo publish -p klasp-agents-claude --no-verify --allow-dirty
 
       - name: wait for klasp-agents-claude to land
-        run: sleep 30
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          crate="klasp-agents-claude"
+          url="https://crates.io/api/v1/crates/${crate}/${VERSION}"
+          echo "Polling ${url} ..."
+          for i in $(seq 1 36); do
+            status=$(curl -sf -o /dev/null -w "%{http_code}" \
+              -H "User-Agent: klasp-release-workflow" "$url" || echo "000")
+            if [ "$status" = "200" ]; then
+              echo "${crate} ${VERSION} is live on crates.io (attempt ${i})."
+              exit 0
+            fi
+            echo "  attempt ${i}/36: got HTTP ${status}; retrying in 5s ..."
+            sleep 5
+          done
+          echo "ERROR: ${crate} ${VERSION} did not appear on crates.io within 180s." >&2
+          exit 1
 
       - name: publish klasp
         env:
@@ -351,7 +404,7 @@ jobs:
           done
           ls -la release-assets/
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: release-assets/*
           generate_release_notes: true
