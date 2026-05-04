@@ -1,5 +1,5 @@
 {
-  "name": "klasp",
+  "name": "@klasp-dev/klasp",
   "version": "0.0.0",
   "description": "Placeholder for klasp — block AI coding agents on the same quality gates your humans hit. See https://github.com/klasp-dev/klasp",
   "main": "index.js",
