@@ -21,45 +21,45 @@ The MVP. Claude Code only. Shell-command checks. One-command install. See
 
 - **Three-crate workspace**: `klasp-core` (library — traits, types, gate
   protocol), `klasp-agents-claude` (Claude Code surface impl), `klasp`
-  (binary). [#1, W1]
+  (binary). [`5740eb3`, W1]
 - **`klasp-core` foundations**: `ConfigV1` (versioned `klasp.toml` parser),
   `Verdict` 3-tier enum (Pass / Warn / Fail) with `Finding` rendering,
   `GateProtocol` with `GATE_SCHEMA_VERSION = 1`, `AgentSurface` and
   `CheckSource` traits, `Trigger` regex (Rust port of fallow's POSIX ERE),
-  typed `KlaspError` hierarchy. [#1, W1]
+  typed `KlaspError` hierarchy. [`5740eb3`, W1]
 - **`ClaudeCodeSurface`**: surgical `.claude/settings.json` JSON merge
   (preserves sibling hooks and key order), generated `klasp-gate.sh`
   bash shim, idempotent install/uninstall, Unix mode preservation,
-  Windows-aware (no chmod on NTFS; bash.exe via Git for Windows). [#2, W2]
+  Windows-aware (no chmod on NTFS; bash.exe via Git for Windows). [#10, W2]
 - **`klasp gate` runtime**: stdin parser, schema handshake, trigger
   classification, sequential check execution via the `Shell` `CheckSource`,
   fail-open on every degradation path (parse error, schema mismatch,
   missing config, source runtime error), structured block message on
-  exit 2. [#3, W3]
+  exit 2. [#11, W3]
 - **`klasp doctor`**: four-stage diagnostic (config / hook script byte-equal
   re-render check / `.claude/settings.json` entry presence / `PATH`
   resolution for every shell command), FAIL/WARN/INFO output, exits 0 iff
-  zero FAIL. [#4, W4]
+  zero FAIL. [#13, W4]
 - **`klasp init`**: scaffolds an example `klasp.toml` at the repo root with
-  `--force` for overwrite. [#4, W4]
+  `--force` for overwrite. [#13, W4]
 - **`klasp install` / `klasp uninstall`**: surface-discovery flow described
   in [design.md §5](./docs/design.md#5-install-flow); `--agent`, `--force`,
-  `--dry-run`. Uninstall preserves sibling hooks. [#2, W2]
+  `--dry-run`. Uninstall preserves sibling hooks. [#10, W2]
 - **Five-platform release pipeline**: tag-triggered GitHub Actions workflow
   builds darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win-x64
   binaries, publishes to crates.io (`klasp`), npm
   (biome-style platform-shim, `@klasp-dev/klasp`), PyPI (maturin wheel,
-  `klasp`), and GitHub Releases. [#5, W5]
+  `klasp`), and GitHub Releases. [#15, W5]
 - **Documentation**: [`docs/design.md`](./docs/design.md) (architecture),
   [`docs/roadmap.md`](./docs/roadmap.md) (v0.1 → v1.0 milestones),
   [`docs/recipes.md`](./docs/recipes.md) (worked `klasp.toml` examples for
   pre-commit, fallow, pytest, cargo, ESLint/Biome, ruff), `README.md`
-  quickstart. [#6, W6-7]
+  quickstart. [#17, W6-7]
 - **Dogfood**: klasp's own repo runs `cargo check` + `cargo clippy
   -D warnings` on every commit and `cargo test --workspace` on every push
   via this same gate; `.claude/settings.json` and
   `.claude/hooks/klasp-gate.sh` are tracked in git so worktrees inherit the
-  install. [#6, W6-7]
+  install. [#17, W6-7]
 - **`KLASP_BASE_REF` env var**: every shell check's child process sees
   `KLASP_BASE_REF` set to the merge-base of `HEAD` against the upstream
   tracking branch (falling back to `origin/main`, `origin/master`, then
@@ -67,7 +67,7 @@ The MVP. Claude Code only. Shell-command checks. One-command install. See
   `fallow audit --base`) can scope themselves to the diff without an
   agent-side wrapper. Matches the contract documented in
   [design.md §3.5](./docs/design.md#35-configv1-versioned-config) and
-  [recipes.md](./docs/recipes.md#klasp_base_ref). [#6, W6-7]
+  [recipes.md](./docs/recipes.md#klasp_base_ref). [#17, W6-7]
 
 ### Fixed (W3 follow-ups)
 
