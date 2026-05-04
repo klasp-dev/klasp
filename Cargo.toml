@@ -1,0 +1,15 @@
+[package]
+name = "klasp"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Placeholder for klasp — block AI coding agents on the same quality gates your humans hit. See https://github.com/klasp-dev/klasp"
+license = "Apache-2.0"
+repository = "https://github.com/klasp-dev/klasp"
+homepage = "https://klasp.dev"
+documentation = "https://docs.rs/klasp"
+readme = "README.md"
+keywords = ["ai", "agents", "git-hooks", "pre-commit", "quality"]
+categories = ["development-tools", "command-line-utilities"]
+authors = ["klasp authors"]
+exclude = ["npm/", "pypi/"]

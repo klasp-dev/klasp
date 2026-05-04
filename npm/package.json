@@ -1,0 +1,34 @@
+{
+  "name": "klasp",
+  "version": "0.0.0",
+  "description": "Placeholder for klasp — block AI coding agents on the same quality gates your humans hit. See https://github.com/klasp-dev/klasp",
+  "main": "index.js",
+  "bin": {
+    "klasp": "index.js"
+  },
+  "homepage": "https://klasp.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/klasp-dev/klasp.git",
+    "directory": "npm"
+  },
+  "bugs": {
+    "url": "https://github.com/klasp-dev/klasp/issues"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "git-hooks",
+    "pre-commit",
+    "quality"
+  ],
+  "author": "klasp authors",
+  "license": "Apache-2.0",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

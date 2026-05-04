@@ -1,0 +1,23 @@
+# Rust
+/target/
+Cargo.lock
+
+# Node
+node_modules/
+*.tgz
+.npmrc
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+*.egg-info/
+.venv/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
