@@ -18,6 +18,7 @@ use crate::verdict::VerdictPolicy;
 pub const CONFIG_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigV1 {
     /// Schema version. Must equal [`CONFIG_VERSION`]; mismatches fail with
     /// [`KlaspError::ConfigVersion`].
@@ -30,6 +31,7 @@ pub struct ConfigV1 {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct GateConfig {
     #[serde(default)]
     pub agents: Vec<String>,
@@ -39,6 +41,7 @@ pub struct GateConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CheckConfig {
     pub name: String,
 
@@ -52,6 +55,7 @@ pub struct CheckConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TriggerConfig {
     pub on: Vec<String>,
 }
@@ -69,7 +73,7 @@ pub struct TriggerConfig {
 /// fields that map to pre-commit's own CLI flags. `verdict_path` is
 /// deferred — see [docs/design.md §14] for the explicit scope note.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CheckSourceConfig {
     Shell {
         command: String,

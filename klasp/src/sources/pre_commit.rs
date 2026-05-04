@@ -21,6 +21,7 @@
 //! needed.
 
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use klasp_core::{
@@ -57,7 +58,7 @@ const MIN_SUPPORTED_VERSION: (u32, u32) = (3, 0);
 /// stderr notice and keeps running, on the bet that pre-commit's stable
 /// stdout format is stable. The notice gives operators a breadcrumb
 /// when something does break.
-const MAX_TESTED_VERSION: (u32, u32) = (4, 0);
+const MAX_TESTED_VERSION: (u32, u32) = (4, 2);
 
 /// `CheckSource` for `type = "pre_commit"` config entries. Stateless;
 /// safe to clone or share. Constructed once via
@@ -105,7 +106,7 @@ impl CheckSource for PreCommitSource {
             }
         };
 
-        let command = build_command(&hook_stage, config_path.as_deref(), &state.base_ref);
+        let command = build_command(&hook_stage, config_path.as_deref());
         let timeout = Duration::from_secs(config.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
         let outcome = run_with_timeout(&command, &state.root, &state.base_ref, timeout)?;
 
@@ -130,11 +131,7 @@ impl CheckSource for PreCommitSource {
 /// with the v0.1 user-authored `command = "…"` form means a copy-paste
 /// from one to the other is mechanical. The shell source's
 /// `run_with_timeout` exports the var into the child env identically.
-fn build_command(
-    hook_stage: &str,
-    config_path: Option<&std::path::Path>,
-    _base_ref: &str,
-) -> String {
+fn build_command(hook_stage: &str, config_path: Option<&std::path::Path>) -> String {
     let mut parts: Vec<String> = vec!["pre-commit".into(), "run".into()];
     parts.push("--hook-stage".into());
     parts.push(shell_quote(hook_stage));
@@ -186,10 +183,21 @@ fn outcome_to_verdict(
                 };
                 findings.push(finding(check_name, &detail, Severity::Error));
             }
+            // Surface the version warning alongside the hook failures: an
+            // out-of-range pre-commit version is exactly the case where
+            // the parser may have produced incomplete findings, so the
+            // operator needs to see the warning *and* the failure detail.
+            if let Some(warning) = version_warning {
+                findings.insert(0, finding(check_name, warning, Severity::Warn));
+            }
+            let hook_failures = findings
+                .iter()
+                .filter(|f| matches!(f.severity, Severity::Error))
+                .count();
             let message = format!(
                 "pre-commit failed ({} hook{})",
-                findings.len(),
-                if findings.len() == 1 { "" } else { "s" }
+                hook_failures,
+                if hook_failures == 1 { "" } else { "s" }
             );
             Verdict::Fail { findings, message }
         }
@@ -206,12 +214,30 @@ fn outcome_to_verdict(
                      {other}: {trimmed}"
                 )
             };
-            single_fail(check_name, detail)
+            fail_with_optional_warning(check_name, detail, version_warning)
         }
-        None => single_fail(
+        None => fail_with_optional_warning(
             check_name,
             format!("pre-commit `{check_name}` was terminated before producing an exit code"),
+            version_warning,
         ),
+    }
+}
+
+/// Build a `Verdict::Fail` whose findings carry the unexpected-exit
+/// detail plus an optional version-warning prepended at `Severity::Warn`.
+fn fail_with_optional_warning(
+    check_name: &str,
+    detail: String,
+    version_warning: Option<&str>,
+) -> Verdict {
+    let mut findings = vec![finding(check_name, &detail, Severity::Error)];
+    if let Some(warning) = version_warning {
+        findings.insert(0, finding(check_name, warning, Severity::Warn));
+    }
+    Verdict::Fail {
+        findings,
+        message: detail,
     }
 }
 
@@ -224,17 +250,6 @@ fn finding(check_name: &str, message: &str, severity: Severity) -> Finding {
         file: None,
         line: None,
         severity,
-    }
-}
-
-/// `Verdict::Fail` with a single error-level finding whose message is also
-/// the verdict's top-level `message`. Used for the unexpected-exit and
-/// terminated-without-exit branches where there's nothing to parse out
-/// of stdout.
-fn single_fail(check_name: &str, detail: String) -> Verdict {
-    Verdict::Fail {
-        findings: vec![finding(check_name, &detail, Severity::Error)],
-        message: detail,
     }
 }
 
@@ -264,7 +279,24 @@ fn parse_failed_hooks(check_name: &str, stdout: &str) -> Vec<Finding> {
 /// warning when it falls outside the supported range. `None` means the
 /// version is fine *or* we couldn't probe pre-commit (some wrappers
 /// don't honour `--version`); both cases swallow the warning.
+///
+/// The probe result is memoised for the lifetime of the process: a klasp
+/// gate invocation typically resolves `pre-commit` from the same `$PATH`
+/// entry for every check, so re-running the probe per check would
+/// multiply subprocess overhead by N for no signal. `cwd` is the first
+/// caller's working directory; later callers reuse the cached probe even
+/// from a different cwd, which is correct because `pre-commit --version`
+/// doesn't read the working directory. If a future klasp use-case spans
+/// repos in one process with divergent `pre-commit` on `$PATH`, this
+/// cache becomes wrong and the keying needs to be revisited.
 fn sniff_version_warning(cwd: &std::path::Path) -> Option<String> {
+    static CACHED: OnceLock<Option<String>> = OnceLock::new();
+    CACHED
+        .get_or_init(|| sniff_version_warning_uncached(cwd))
+        .clone()
+}
+
+fn sniff_version_warning_uncached(cwd: &std::path::Path) -> Option<String> {
     let output = Command::new("pre-commit")
         .arg("--version")
         .current_dir(cwd)
@@ -355,7 +387,7 @@ mod tests {
 
     #[test]
     fn build_command_uses_defaults_when_unset() {
-        let cmd = build_command("pre-commit", None, "deadbeef");
+        let cmd = build_command("pre-commit", None);
         assert_eq!(
             cmd,
             "pre-commit run --hook-stage 'pre-commit' --from-ref ${KLASP_BASE_REF} --to-ref HEAD"
@@ -364,7 +396,7 @@ mod tests {
 
     #[test]
     fn build_command_passes_config_path() {
-        let cmd = build_command("pre-push", Some(Path::new("tools/p.yaml")), "x");
+        let cmd = build_command("pre-push", Some(Path::new("tools/p.yaml")));
         assert_eq!(
             cmd,
             "pre-commit run --hook-stage 'pre-push' --from-ref ${KLASP_BASE_REF} --to-ref HEAD \
