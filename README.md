@@ -49,7 +49,7 @@ klasp uninstall --agent claude_code        # removes the hook + settings entry, 
 | Shell-command checks via `klasp.toml` | Shipped in v0.1 |
 | `klasp init` / `install` / `uninstall` / `gate` / `doctor` | Shipped in v0.1 |
 | `KLASP_BASE_REF` env var for diff-aware checks | Shipped in v0.1 |
-| Five-platform binary distribution (cargo / npm / PyPI) | Shipped in v0.1 (live post-tag) |
+| Four-platform binary distribution (cargo / npm / PyPI) | Shipped in v0.1 (live post-tag); darwin-arm64, linux-x64-gnu, linux-arm64-gnu, win-x64. x86 mac → `cargo install klasp` from source. |
 | Codex via `AGENTS.md` + git hooks | v0.2 |
 | Named recipes (`type = "pre_commit"` / `"fallow"` / `"pytest"` / `"cargo"`) | v0.2 |
 | Parallel check execution | v0.2.5 |

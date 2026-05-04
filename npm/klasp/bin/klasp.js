@@ -9,7 +9,6 @@ const { spawnSync } = require("node:child_process");
 
 const PLATFORM_MAP = {
   "darwin-arm64": "@klasp-dev/klasp-darwin-arm64",
-  "darwin-x64": "@klasp-dev/klasp-darwin-x64",
   "linux-x64": "@klasp-dev/klasp-linux-x64-gnu",
   "linux-arm64": "@klasp-dev/klasp-linux-arm64-gnu",
   "win32-x64": "@klasp-dev/klasp-win32-x64",

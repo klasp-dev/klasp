@@ -32,7 +32,6 @@
   },
   "optionalDependencies": {
     "@klasp-dev/klasp-darwin-arm64": "0.0.0",
-    "@klasp-dev/klasp-darwin-x64": "0.0.0",
     "@klasp-dev/klasp-linux-x64-gnu": "0.0.0",
     "@klasp-dev/klasp-linux-arm64-gnu": "0.0.0",
     "@klasp-dev/klasp-win32-x64": "0.0.0"

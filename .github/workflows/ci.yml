@@ -47,8 +47,8 @@ jobs:
           - { os: ubuntu-latest,    triple: x86_64-unknown-linux-gnu }
           - { os: windows-latest,   triple: x86_64-pc-windows-msvc }
           - { os: ubuntu-24.04-arm, triple: aarch64-unknown-linux-gnu }
-          # x86_64-apple-darwin (macos-13) is built at release time only.
-          # See https://github.com/klasp-dev/klasp/issues/9 — W5 release workflow reintroduces it on tag push.
+          # x86_64-apple-darwin intentionally absent from the v0.1 matrix.
+          # See docs/roadmap.md "What v0.1 actually delivered" for rationale.
     runs-on: ${{ matrix.target.os }}
     steps:
       - uses: actions/checkout@v4

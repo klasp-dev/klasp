@@ -51,11 +51,12 @@ The MVP. Claude Code only. Shell-command checks. One-command install. See
 - **`klasp install` / `klasp uninstall`**: surface-discovery flow described
   in [design.md §5](./docs/design.md#5-install-flow); `--agent`, `--force`,
   `--dry-run`. Uninstall preserves sibling hooks. [#10, W2]
-- **Five-platform release pipeline**: tag-triggered GitHub Actions workflow
-  builds darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win-x64
-  binaries, publishes to crates.io (`klasp`), npm
-  (biome-style platform-shim, `@klasp-dev/klasp`), PyPI (maturin wheel,
-  `klasp`), and GitHub Releases. [#15, W5]
+- **Four-platform release pipeline**: tag-triggered GitHub Actions workflow
+  builds darwin-arm64, linux-x64-gnu, linux-arm64-gnu, win-x64 binaries,
+  publishes to crates.io (`klasp`), npm (biome-style platform-shim,
+  `@klasp-dev/klasp`), PyPI (maturin wheel, `klasp`), and GitHub Releases.
+  `x86_64-apple-darwin` (macos-13) was dropped at v0.1.0 launch — see
+  `docs/roadmap.md` "What v0.1 actually delivered". [#15, W5]
 - **Documentation**: [`docs/design.md`](./docs/design.md) (architecture),
   [`docs/roadmap.md`](./docs/roadmap.md) (v0.1 → v1.0 milestones),
   [`docs/recipes.md`](./docs/recipes.md) (worked `klasp.toml` examples for
