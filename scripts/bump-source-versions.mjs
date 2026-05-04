@@ -34,6 +34,20 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
   process.exit(1);
 }
 
+// Whitelist the tag forms this project ships. Anything else (e.g. -pre.N,
+// -dev.N, +sha.abc) would either be silently mangled by the PEP 440
+// normalisation below or produce a string PyPI rejects outright.
+// Supported: X.Y.Z  |  X.Y.Z-rc.N  |  X.Y.Z-alpha.N  |  X.Y.Z-beta.N
+const SUPPORTED_TAG_RE =
+  /^\d+\.\d+\.\d+(?:-(rc|alpha|beta)\.\d+)?$/;
+if (!SUPPORTED_TAG_RE.test(version)) {
+  console.error(
+    `error: Unsupported tag format '${version}'. ` +
+      "Supported: X.Y.Z | X.Y.Z-rc.N | X.Y.Z-alpha.N | X.Y.Z-beta.N"
+  );
+  process.exit(1);
+}
+
 function patchFile(path, replacements) {
   const original = readFileSync(path, "utf8");
   let modified = original;
