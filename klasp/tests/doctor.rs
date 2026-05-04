@@ -270,11 +270,11 @@ fn doctor_output_prefix_invariant() {
                 continue;
             }
             assert!(
-                line.starts_with("OK  ")
-                    || line.starts_with("WARN")
-                    || line.starts_with("FAIL")
-                    || line.starts_with("INFO"),
-                "{label}: stdout line lacks canonical prefix: {line:?}"
+                line.starts_with("OK    ")
+                    || line.starts_with("WARN  ")
+                    || line.starts_with("FAIL  ")
+                    || line.starts_with("INFO  "),
+                "{label}: stdout line lacks canonical 6-char prefix: {line:?}"
             );
         }
     }
