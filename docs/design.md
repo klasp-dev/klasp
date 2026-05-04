@@ -1,10 +1,10 @@
 # klasp v0.1 — Design
 
-> **Status:** v0.1 design, pre-implementation. The repo currently ships only `0.0.0` name-reservation placeholders on crates.io / npm / PyPI. This document is the build target.
+> **Status:** v0.1 implementation merged on `main` at [`234908e`](https://github.com/klasp-dev/klasp/commit/234908e) (PR [#17](https://github.com/klasp-dev/klasp/pull/17), W6-7). This document remains the build-target reference; deviations from the implementation that surfaced during W1-W7 are noted inline below where relevant. For the deferred items intentionally pushed to later milestones, see [`roadmap.md`](./roadmap.md).
 
 klasp v0.1 commits to five core abstractions — `AgentSurface`, `CheckSource`, `GateProtocol`, `Verdict`, and `ConfigV1` — and accepts ~450 LOC of overhead to buy a plugin-ready design that won't break existing users when v0.3 lands. This document explains each choice and names the alternatives rejected. For the milestone-by-milestone shape from v0.1 → v1.0, see [`roadmap.md`](./roadmap.md).
 
-> **Implementation status.** The `Cargo.toml`, `npm/package.json`, and `pypi/pyproject.toml` shipped at `0.0.0` are deliberately thin name-reservation stubs — single-package Cargo manifest (no workspace), npm package without `optionalDependencies`, PyPI build with Hatchling rather than maturin. The v0.1 implementation work replaces all three with the architecture described below: a 3-crate Cargo workspace, biome-style npm shim with per-platform sub-packages, and maturin-based PyPI wheels.
+> **Implementation status.** All three distribution shells described below shipped as designed: the 3-crate Cargo workspace (`klasp-core`, `klasp-agents-claude`, `klasp`), the biome-style npm shim with per-platform sub-packages under `optionalDependencies`, and maturin-based PyPI wheels. The original `0.0.0` name-reservation publishes (single-crate Cargo manifest, plain npm package, Hatchling PyPI build) are superseded by the wiring landed in [W5 (PR #15)](https://github.com/klasp-dev/klasp/pull/15) and validated by the W6-7 dogfood. Items deferred to v0.2+ are tracked in [`roadmap.md`](./roadmap.md). Implementation notes that diverge from this design are flagged inline in the sections below and consolidated in [§17](#17-key-implementation-notes-w1-w7).
 
 ---
 
@@ -193,6 +193,8 @@ command = "pytest -q"
 Every shell check sees `KLASP_BASE_REF` in its env (set to the merge-base ref klasp computed) so checks can scope themselves to the diff. Future versions add `[[trigger]]` blocks for non-git triggers and `[plugin]` sections for v0.3 subprocess plugins; v0.1 fails parsing on those sections, guiding the user to upgrade.
 
 This sets up multi-version compatibility from day one without needing it yet.
+
+> **Implementation note (W6-7).** The shipped `CheckConfig` struct in `klasp-core/src/config.rs` has four fields — `name`, `triggers`, `source`, `timeout_secs` — and intentionally **does not** ship a `verdict_path` field. v0.1's only `CheckSource` (`Shell`) maps the child's exit code to `Verdict::Pass | Fail` directly; the `verdict_path` design originally implied for parsing recipe-tool JSON is deferred to v0.2 named recipes (see [`recipes.md` §What's next](./recipes.md#whats-next)). `KLASP_BASE_REF` is wired through the `RepoState::base_ref` field rather than computed inside `Shell::run`, so the v0.2 named recipes (`pre_commit`, `fallow`, `pytest`, `cargo`) can read the merge-base off the same struct without re-implementing the resolution logic.
 
 ---
 
@@ -546,7 +548,7 @@ Versioned scope (Codex, named recipes, parallel execution, Cursor/Aider, plugins
 
 - **Monorepo config discovery.** v0.1 looks for `klasp.toml` at `$CLAUDE_PROJECT_DIR` then `cwd()`. A monorepo with per-package configs needs a richer resolution strategy. v0.2 will need to address this when the integration test fixture for monorepos lands.
 - **Windows path handling in the bash shim.** The shim runs under Git for Windows' bash. Forward-slash paths in `settings.json`, but the Rust binary handles platform paths internally. Audit during week 3.
-- **`verdict_path` is dot-notation, not full JSONPath.** `.verdict` works, `.results[0].verdict` does not. Acceptable v0.1 limitation; v0.2 swaps to a real JSON pointer library if anyone hits it.
+- **`verdict_path` is deferred to v0.2 (not in v0.1).** The originally-anticipated dot-notation `verdict_path` field on `CheckConfig` is not part of the shipped v0.1 schema — v0.1's only source (`Shell`) maps exit code to `Verdict::Pass | Fail` directly. v0.2's named recipes (`type = "pre_commit"`, `type = "fallow"`, etc.) parse tool-specific output formats internally; if a generic `verdict_path` ever ships, it lands alongside or after named recipes. Tracked under [`roadmap.md` §v0.2](./roadmap.md#v02--codex--named-recipes-target-3-months-from-v01).
 - **Settings.json roundtrip preservation.** `serde_json::Value` normalises key order. Real `.claude/settings.json` files may have keys in a specific order users care about. Test against real fixtures and see if anyone complains.
 
 ---
@@ -556,6 +558,7 @@ Versioned scope (Codex, named recipes, parallel execution, Cursor/Aider, plugins
 - **fallow-rs/fallow** — the prior art for `setup-hooks`. Read the generated `fallow-gate.sh` for the canonical bash pattern; klasp's shim is intentionally thinner because logic lives in the binary.
 - **biomejs/biome** — the pattern for npm distribution (`@biomejs/biome` main + `@biomejs/cli-<platform>` optional deps). Klasp mirrors this exactly.
 - **astral-sh/ruff** — the pattern for PyPI distribution via maturin with `bindings = "bin"`.
+- **klasp itself** — the canonical v0.1 `klasp.toml` lives at [`/klasp.toml`](../klasp.toml) and runs `cargo check` + `cargo clippy -D warnings` on every commit attempt and `cargo test --workspace` on every push. The repo's `.claude/hooks/klasp-gate.sh` and `.claude/settings.json` are tracked in git so worktrees and contributor checkouts inherit the install. See [W6-7 (PR #17)](https://github.com/klasp-dev/klasp/pull/17).
 
 ---
 
@@ -564,3 +567,23 @@ Versioned scope (Codex, named recipes, parallel execution, Cursor/Aider, plugins
 This document uses Rust pseudocode where signatures are load-bearing for the design. The actual implementation will diverge in surface details (error type imports, lifetime annotations, derive macros) but must preserve the contracts described here. Where the design names a specific exit code, regex, env var name, or JSON path, those are commitments — changing them is a `GATE_SCHEMA_VERSION` bump.
 
 Discussion happens on GitHub issues. Major design changes go through an `RFC-NNNN.md` PR in `docs/rfcs/` (a directory that doesn't exist yet — created when needed).
+
+---
+
+## 17. Key implementation notes (W1-W7)
+
+The v0.1 implementation followed this design closely; the items below are the places where reality diverged enough to be worth flagging for future readers. None invalidate the architecture; all are surface-level corrections that the implementation surfaced.
+
+- **`KLASP_BASE_REF` is carried on `RepoState`, not synthesised inside `Shell::run`.** The design (§3.5, §6) names the env var as a contract with shell checks, but doesn't say where the value originates. The shipped runtime resolves the merge-base once during gate setup, stores it as `RepoState::base_ref: String`, and `Shell::run_with_timeout` exports it onto the child env from there. This matters because v0.2's named recipes will read `state.base_ref` directly (without re-resolving) when they speak to recipe-tool-specific APIs. The fallback chain (upstream tracking branch → `origin/main` → `origin/master` → `HEAD~1`) lives in the resolution helper, not in `Shell`.
+
+- **`verdict_path` is not in v0.1.** §3.5 originally implied a `verdict_path` field on `CheckConfig`. The shipped `CheckConfig` struct has exactly four fields (`name`, `triggers`, `source`, `timeout_secs`). The Shell source maps child exit codes to `Verdict::Pass | Fail` directly; richer parsing waits for v0.2's named recipes, which know their tool's output format internally and don't need a generic JSON-path projection. See [`recipes.md` §What's next](./recipes.md#whats-next).
+
+- **`klasp-core` and `klasp-agents-claude` are publishable.** The 3-crate workspace (§2) was initially scoped with `klasp-core` and `klasp-agents-claude` as `publish = false` — only the `klasp` binary crate would publish. W5 (PR [#15](https://github.com/klasp-dev/klasp/pull/15)) flipped both library crates to publishable so `cargo publish` of the binary doesn't fail on missing path-dependency versions. Plugin authors targeting v0.3 will depend on `klasp-core` from crates.io as designed. No surface change; the design intent is honoured.
+
+- **`x86_64-apple-darwin` is in the release matrix, not per-PR CI.** §9 names five v0.1 targets including darwin-x64. Per-PR CI runs four of them (the macOS-x64 runner is significantly slower and was dropped from the per-PR matrix during W3); the tag-triggered release workflow ([`release.yml`](../.github/workflows/release.yml)) builds darwin-x64 alongside the other four. Tracking issue: [#9](https://github.com/klasp-dev/klasp/issues/9) — reintroduce darwin-x64 to per-PR CI once a faster runner is available.
+
+- **W3 follow-ups (PR [#14](https://github.com/klasp-dev/klasp/pull/14), issue [#12](https://github.com/klasp-dev/klasp/issues/12) closed).** Two correctness bugs surfaced after the W3 merge: a `CheckSource` runtime error was being mapped to `Verdict::Warn` rather than fail-open `Verdict::Pass`, and the Shell source could leak its child process on timeout/interrupt. Both are fixed; both have regression tests. Documented in [`CHANGELOG.md`](../CHANGELOG.md) under the W3 follow-ups bullet.
+
+- **W5 follow-ups (issue [#16](https://github.com/klasp-dev/klasp/issues/16) open).** Distribution wiring landed in W5 with three minor follow-ups still tracked on the issue (none blocking the v0.1.0 tag). Surface drift from the design is `none`; the items are pipeline polish.
+
+For the milestone-by-milestone delivery record, see [`roadmap.md` §v0.1](./roadmap.md#v01--mvp-shipped-target-4-6-weeks-actual-7-weeks-w1-w7).

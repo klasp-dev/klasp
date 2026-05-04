@@ -12,7 +12,13 @@ follow the migration notes attached to each minor release.
 
 Nothing pending.
 
-## [0.1.0]
+## [0.1.0] — pending tag push
+
+Implementation merged on `main` at
+[`234908e`](https://github.com/klasp-dev/klasp/commit/234908e) on 2026-05-04
+([PR #17](https://github.com/klasp-dev/klasp/pull/17), W6-7). The release
+date below is filled in when the maintainer pushes the `v0.1.0` tag and the
+`release.yml` workflow publishes to crates.io / npm / PyPI / GitHub Releases.
 
 The MVP. Claude Code only. Shell-command checks. One-command install. See
 [`docs/roadmap.md` §v0.1](./docs/roadmap.md) for the full milestone definition.
