@@ -197,8 +197,20 @@ fn check_hook(repo_root: &Path, surface: &dyn AgentSurface, c: &mut Counters) {
 
 /// Check 3 — settings JSON exists, parses, and contains klasp's
 /// `PreToolUse[Bash]` entry.
+///
+/// JSON-shaped only — the Codex surface's `settings_path` points at an
+/// `AGENTS.md` markdown file with no JSON inside. Doctor's W3 contract is
+/// "don't FAIL on a healthy Codex install"; v0.3 will add a typed
+/// per-surface health check on the trait so this special-case can go away.
 fn check_settings(repo_root: &Path, surface: &dyn AgentSurface, c: &mut Counters) {
     let agent_id = surface.agent_id();
+    if agent_id != klasp_agents_claude::ClaudeCodeSurface::AGENT_ID {
+        // Non-Claude surfaces have their own format (e.g. AGENTS.md
+        // managed-block for Codex). The hook-script byte-equality check
+        // run by `check_hook` is the surface-agnostic health signal; the
+        // settings-parse logic below is Claude-specific.
+        return;
+    }
     let settings_path = surface.settings_path(repo_root);
 
     let raw = match std::fs::read_to_string(&settings_path) {
