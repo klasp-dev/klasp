@@ -70,6 +70,31 @@ fn write_klasp_toml(project_dir: &Path, body: &str) {
     std::fs::write(project_dir.join("klasp.toml"), body).expect("write klasp.toml");
 }
 
+/// Initialise a fresh git repo with `commits` empty-ish commits. Used by the
+/// `KLASP_BASE_REF` test to give `compute_base_ref` something to resolve
+/// (`HEAD~1` requires at least two commits).
+fn init_repo_with_commits(dir: &Path, commits: usize) {
+    run_git(dir, &["init", "--initial-branch=main"]);
+    run_git(dir, &["config", "user.email", "klasp-test@example.com"]);
+    run_git(dir, &["config", "user.name", "klasp-test"]);
+    run_git(dir, &["config", "commit.gpgsign", "false"]);
+    for i in 0..commits {
+        std::fs::write(dir.join(format!("f{i}.txt")), format!("commit {i}"))
+            .expect("write fixture file");
+        run_git(dir, &["add", "."]);
+        run_git(dir, &["commit", "-m", &format!("c{i}")]);
+    }
+}
+
+fn run_git(cwd: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .status()
+        .expect("spawn git");
+    assert!(status.success(), "git {args:?} failed");
+}
+
 #[test]
 fn fail_check_blocks_with_exit_2() {
     let project = TempDir::new().expect("tempdir");
@@ -182,6 +207,66 @@ fn missing_klasp_toml_fails_open() {
     assert!(
         stderr.contains("klasp-gate:"),
         "expected fail-open notice on stderr, got: {stderr:?}",
+    );
+}
+
+#[test]
+fn klasp_base_ref_is_exposed_to_shell_checks() {
+    // End-to-end: the gate runtime computes a merge-base and threads it
+    // through `RepoState` → `ShellSource::run` → the child's `KLASP_BASE_REF`
+    // env var. Without a remote, `compute_base_ref` falls back to `HEAD~1`,
+    // which is what the check command below asserts on.
+    //
+    // The check command writes the env var's value to a sentinel file in the
+    // repo root, then exits 1 if it's empty. Reading the file after the
+    // gate runs gives us the captured value to assert on without bolting
+    // any additional ingestion plumbing onto the gate.
+    let project = TempDir::new().expect("tempdir");
+
+    // Initialise a minimal git repo so `compute_base_ref` has something to
+    // resolve. Two commits give `HEAD~1` a target.
+    init_repo_with_commits(project.path(), 2);
+
+    let sentinel = project.path().join("base_ref.txt");
+    write_klasp_toml(
+        project.path(),
+        &format!(
+            r#"
+                version = 1
+
+                [gate]
+                agents = ["claude_code"]
+                policy = "any_fail"
+
+                [[checks]]
+                name = "echo-base-ref"
+                triggers = [{{ on = ["commit"] }}]
+                timeout_secs = 5
+                [checks.source]
+                type = "shell"
+                command = 'printf "$KLASP_BASE_REF" > {sentinel}; test -n "$KLASP_BASE_REF"'
+            "#,
+            sentinel = sentinel.display(),
+        ),
+    );
+
+    let (code, stderr) = spawn_gate(FIXTURE_GIT_COMMIT, project.path(), &[]);
+    assert_eq!(
+        code,
+        Some(0),
+        "check passes only if KLASP_BASE_REF is non-empty in the child env\nstderr:\n{stderr}",
+    );
+
+    let captured = std::fs::read_to_string(&sentinel).expect("read sentinel file");
+    assert!(
+        !captured.is_empty(),
+        "KLASP_BASE_REF must be exported with a non-empty value, got: {captured:?}",
+    );
+    // Without an upstream / `origin/main`, the runtime falls back to
+    // `HEAD~1`. With two commits, that resolves cleanly.
+    assert_eq!(
+        captured, "HEAD~1",
+        "no-remote fallback must be HEAD~1, got: {captured:?}",
     );
 }
 

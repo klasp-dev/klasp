@@ -1,0 +1,65 @@
+# klasp.toml — klasp's own dogfood config (canonical v0.1 reference example)
+# Docs: https://github.com/klasp-dev/klasp
+# Verify this install:  klasp doctor
+#
+# Patterns illustrated below:
+#   - commit triggers run on every agent-attempted `git commit` (fast feedback)
+#   - push triggers run on every `git push` (slower checks the agent sees later)
+#   - ${KLASP_BASE_REF} is set by the gate to the merge-base of HEAD against the
+#     remote tracking branch; use it to scope checks to the diff (cuts wall time
+#     dramatically on large repos). Not used here because cargo's incremental
+#     build already scopes work to changed crates.
+#
+# Recipes for other ecosystems (pre-commit, fallow, pytest, eslint/biome, ruff)
+# live in docs/recipes.md.
+
+version = 1
+
+[gate]
+# Agent surfaces that klasp intercepts. v0.1 supports "claude_code"; Codex
+# arrives in v0.2. See docs/roadmap.md.
+agents = ["claude_code"]
+# "any_fail" blocks the agent if any check returns Fail. Only policy in v0.1.
+policy = "any_fail"
+
+# ---------------------------------------------------------------------------
+# Fast type/borrow check on every commit attempt. cargo check is the cheapest
+# way to catch a broken build before it reaches the agent's commit message.
+# Runs in well under a second on a warm target/ — appropriate for the commit
+# trigger.
+# ---------------------------------------------------------------------------
+[[checks]]
+name = "cargo-check"
+triggers = [{ on = ["commit", "push"] }]
+timeout_secs = 60
+[checks.source]
+type = "shell"
+command = "cargo check --all-targets --workspace"
+
+# ---------------------------------------------------------------------------
+# Lint with -D warnings on commit and push. clippy is slower than cargo check
+# but still tractable on every commit because the workspace is small. The
+# launch-demo workflow (block on a clippy fail, agent re-attempts after fix)
+# relies on this check living on the commit trigger.
+# ---------------------------------------------------------------------------
+[[checks]]
+name = "cargo-clippy"
+triggers = [{ on = ["commit", "push"] }]
+timeout_secs = 180
+[checks.source]
+type = "shell"
+command = "cargo clippy --all-targets --workspace -- -D warnings"
+
+# ---------------------------------------------------------------------------
+# Full workspace tests on push only. Tests are far slower than clippy and the
+# agent will already have seen cargo check + clippy verdicts at commit time;
+# blocking on push is the right place to catch test regressions before they
+# reach the remote.
+# ---------------------------------------------------------------------------
+[[checks]]
+name = "cargo-test"
+triggers = [{ on = ["push"] }]
+timeout_secs = 300
+[checks.source]
+type = "shell"
+command = "cargo test --workspace"

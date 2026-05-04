@@ -77,7 +77,7 @@ impl CheckSource for ShellSource {
         let CheckSourceConfig::Shell { command } = &config.source;
 
         let timeout = Duration::from_secs(config.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
-        let outcome = run_with_timeout(command, &state.root, timeout)?;
+        let outcome = run_with_timeout(command, &state.root, &state.base_ref, timeout)?;
 
         let verdict = exit_status_to_verdict(&config.name, outcome.status_code, &outcome.stderr);
         Ok(CheckResult {
@@ -109,6 +109,10 @@ struct ShellOutcome {
 ///   quoting rules on Windows.
 /// - `cwd` is set to the repo root so commands like `cargo test` resolve
 ///   relative paths the way users expect.
+/// - `KLASP_BASE_REF` is exported into the child env per
+///   [docs/design.md §3.5] so diff-aware tools (`pre-commit`, `fallow`)
+///   can scope themselves to changed-since-base. The gate runtime computed
+///   the value via `git merge-base` before assembling [`RepoState`].
 /// - Stdio is captured via background reader threads. Buffering the streams
 ///   on the main thread risks the child blocking on a full pipe before we
 ///   call `wait`; `wait_with_output` would solve that but doesn't compose
@@ -116,12 +120,14 @@ struct ShellOutcome {
 fn run_with_timeout(
     command: &str,
     cwd: &std::path::Path,
+    base_ref: &str,
     timeout: Duration,
 ) -> Result<ShellOutcome, CheckSourceError> {
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(command)
         .current_dir(cwd)
+        .env("KLASP_BASE_REF", base_ref)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -293,6 +299,7 @@ mod tests {
         RepoState {
             root: cwd(),
             git_event: GitEvent::Commit,
+            base_ref: "HEAD~1".to_string(),
         }
     }
 
@@ -351,6 +358,28 @@ mod tests {
             .run(&check("hello", "printf hello", Some(5)), &state())
             .expect("ok");
         assert_eq!(result.raw_stdout.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn child_sees_klasp_base_ref_env_var() {
+        // The child's `printf "$KLASP_BASE_REF"` echoes the env var back via
+        // stdout — that's the contract we ship to recipe authors. If this
+        // test starts failing, the user-facing `${KLASP_BASE_REF}` recipes
+        // (pre-commit, fallow) silently turn into empty-string substitutions
+        // and the diff-aware tools lint the entire tree on every commit.
+        let custom_state = RepoState {
+            root: cwd(),
+            git_event: GitEvent::Commit,
+            base_ref: "deadbeefcafebabe".to_string(),
+        };
+        let result = ShellSource::new()
+            .run(
+                &check("base-ref-probe", "printf \"$KLASP_BASE_REF\"", Some(5)),
+                &custom_state,
+            )
+            .expect("ok");
+        assert_eq!(result.raw_stdout.as_deref(), Some("deadbeefcafebabe"));
+        assert!(matches!(result.verdict, Verdict::Pass));
     }
 
     #[test]

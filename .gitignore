@@ -25,3 +25,11 @@ dist/
 .claude/
 .claude-flow/
 **/.claude-flow/
+
+# ...but klasp's own dogfooded gate files MUST be tracked, so worktrees and
+# remote agents inherit the install. These un-ignore patterns are scoped to
+# the repo-root .claude/ only (subdirectory .claude/ folders stay ignored).
+!/.claude/
+!/.claude/settings.json
+!/.claude/hooks/
+!/.claude/hooks/klasp-gate.sh

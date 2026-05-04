@@ -40,10 +40,23 @@ pub enum CheckSourceError {
 }
 
 /// Snapshot of repo metadata passed to every check execution.
+///
+/// `base_ref` is the merge-base ref between `HEAD` and the upstream tracking
+/// branch — the "branch divergence point" diff-aware tools (`pre-commit
+/// run --from-ref`, `fallow audit --base`) want. The gate runtime exposes it
+/// to shell checks via the `KLASP_BASE_REF` env var; sources that talk to
+/// other check tools (named recipes in v0.2, subprocess plugins in v0.3) read
+/// it directly off this struct.
+///
+/// Falls back to `HEAD~1` when no upstream is configured (a fresh checkout,
+/// a detached HEAD, or a branch that has never been pushed). The fallback is
+/// best-effort — diff-aware tools that don't recognise the ref simply lint
+/// the whole tree, which is the same behaviour they'd have without klasp.
 #[derive(Debug, Clone)]
 pub struct RepoState {
     pub root: PathBuf,
     pub git_event: GitEvent,
+    pub base_ref: String,
 }
 
 /// Outcome of a single `CheckSource::run` invocation.
