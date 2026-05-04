@@ -6,34 +6,121 @@
 
 > Block AI coding agents (Claude Code today; Codex, Cursor, Aider next) on the same quality gates your humans hit at `git commit`.
 
-**Status: v0.1 implementation complete; awaiting `v0.1.0` tag push to publish to registries.** All v0.1 work (W1-W7) is merged on `main`, the test suite is green (119 tests, CI 7/7), and klasp gates its own commits via [`/klasp.toml`](./klasp.toml) and [`.claude/`](./.claude). Until the maintainer pushes `v0.1.0`, `cargo install klasp` / `npm i -g @klasp-dev/klasp` / `pip install klasp` still resolve to the original `0.0.0` name-reservation publishes. Install from this repo directly (see [Quickstart](#quickstart) below) or wait for the tag push.
-
 ## What klasp does
 
 You write one `klasp.toml`. You run `klasp install`. Every AI agent on the repo (Claude Code today, more coming) is now blocked on the same `pre-commit`, `cargo clippy`, `pytest`, or any-shell-command gate your humans see at `git commit`. The agent gets a structured "blocked, here's why" reply at its tool-call surface (Claude Code's `PreToolUse` hook) so it self-corrects rather than retrying with `--no-verify`. That retry path is the failure mode burning every team running agents at scale.
 
-## Quickstart
+## Why klasp
 
-### Today (pre-tag, install from this repo)
+### 1. Stops the `--no-verify` escape hatch
+
+Your agent runs the test suite, sees a red, decides the failure is "unrelated to my task", and commits with `--no-verify` (or amends past the hook). The bad path lands on `main`, CI catches it a few minutes later, and you're the one cleaning up.
+
+klasp blocks at the Claude Code `PreToolUse` surface, before the agent's `Bash` call ever runs `git commit`. Failure detail is returned inline so the agent retries against the gate instead of around it.
+
+### 2. CI parity at the agent surface
+
+Agent ships a green-locally PR. CI runs the team's pre-commit, linter, and type-check. PR turns red 30 seconds later and you triage.
+
+One `klasp.toml` declares the same checks. Pass-locally now means pass-CI.
+
+```toml
+[[checks]]
+name = "pre-commit"
+triggers = [{ on = ["commit"] }]
+[checks.source]
+type = "shell"
+command = "pre-commit run --from-ref $KLASP_BASE_REF --to-ref HEAD"
+```
+
+### 3. Diff-scoped checks on big repos
+
+Agent edits one file. The full test suite kicks off. 90 seconds later the agent has lost the thread and you're paying for tokens spent waiting.
+
+Every shell check sees `KLASP_BASE_REF`, set to the merge-base of `HEAD` against the upstream tracking branch. Scope linters, formatters, and audits to the diff:
+
+```toml
+[[checks]]
+name = "fallow-audit"
+triggers = [{ on = ["commit", "push"] }]
+[checks.source]
+type = "shell"
+command = "fallow audit --base $KLASP_BASE_REF"
+```
+
+### 4. Protected-path guards
+
+Agent debugs a flaky test by reverting your schema migration. Or your i18n bundle. Or the generated API client. The PR looks clean and the regression surfaces in prod a week later.
+
+Add a check that fails when a staged file lives in a path the agent shouldn't have touched without sign-off:
+
+```toml
+[[checks]]
+name = "no-migration-edits-without-marker"
+triggers = [{ on = ["commit"] }]
+[checks.source]
+type = "shell"
+command = '''
+  if git diff --cached --name-only | grep -q "^migrations/"; then
+    test -f .agent-migration-allowed && exit 0
+    echo "Migration files staged. If intentional, drop a .agent-migration-allowed marker and re-stage."
+    exit 1
+  fi
+'''
+```
+
+### 5. Polyglot stacks
+
+Agent onboards a repo with a TS frontend, Go API, and Python ML pipeline. Three test runners, three lint configs, three formatters. Agent guesses wrong and someone has to walk back its commits.
+
+`klasp.toml` declares each surface once:
+
+```toml
+[[checks]]
+name = "frontend"
+triggers = [{ on = ["commit"] }]
+[checks.source]
+type = "shell"
+command = "cd web && pnpm typecheck && pnpm lint"
+
+[[checks]]
+name = "api"
+triggers = [{ on = ["commit"] }]
+[checks.source]
+type = "shell"
+command = "cd api && go test ./... && go vet ./..."
+
+[[checks]]
+name = "ml"
+triggers = [{ on = ["commit"] }]
+[checks.source]
+type = "shell"
+command = "cd ml && uv run pytest && uv run ruff check"
+```
+
+Worked configs for pre-commit, fallow, pytest, cargo, ESLint/Biome, and ruff live in [`docs/recipes.md`](./docs/recipes.md).
+
+## Install
+
+Pick the package manager that matches your primary stack. All three ship the same binary:
 
 ```bash
-cargo install --git https://github.com/klasp-dev/klasp klasp
+cargo install klasp                        # Rust (also the right pick for x86 Macs — no prebuilt wheel)
+npm i -g @klasp-dev/klasp                  # JS / TS (biome-style platform shim)
+pip install klasp                          # Python (maturin wheel)
+```
+
+Prebuilt binaries cover `darwin-arm64`, `linux-x64-gnu`, `linux-arm64-gnu`, and `win32-x64`. On x86 Macs and other unsupported targets, `cargo install klasp` builds from source.
+
+### Set up a repo
+
+```bash
 cd your-project
 klasp init                                 # writes klasp.toml at repo root
 $EDITOR klasp.toml                         # add your checks (see below)
 klasp install --agent claude_code          # writes .claude/hooks/klasp-gate.sh + merges .claude/settings.json
 klasp doctor                               # verify the install is healthy
 ```
-
-### Post-tag (once `v0.1.0` ships to registries)
-
-```bash
-cargo install klasp                        # Rust
-npm i -g @klasp-dev/klasp                  # Node (biome-style platform shim)
-pip install klasp                          # Python (maturin wheel)
-```
-
-Then the same `klasp init` / edit / `klasp install` / `klasp doctor` flow.
 
 ### Uninstall
 
