@@ -11,4 +11,3 @@ publish = false
 
 [dependencies]
 klasp-core = { path = "../klasp-core" }
-serde_json = { workspace = true }
