@@ -6,11 +6,11 @@
 
 > Block AI coding agents (Claude Code today; Codex, Cursor, Aider next) on the same quality gates your humans hit at `git commit`.
 
-**Status: v0.1 implementation complete; awaiting `v0.1.0` tag push to publish to registries.** All v0.1 work (W1-W7) is merged on `main`, the test suite is green (119 tests, CI 7/7), and klasp gates its own commits via [`/klasp.toml`](./klasp.toml) and [`.claude/`](./.claude). Until the maintainer pushes `v0.1.0`, `cargo install klasp` / `npm i -g @klasp-dev/klasp` / `pip install klasp` still resolve to the original `0.0.0` name-reservation publishes — install from this repo directly (see [Quickstart](#quickstart) below) or wait for the tag push.
+**Status: v0.1 implementation complete; awaiting `v0.1.0` tag push to publish to registries.** All v0.1 work (W1-W7) is merged on `main`, the test suite is green (119 tests, CI 7/7), and klasp gates its own commits via [`/klasp.toml`](./klasp.toml) and [`.claude/`](./.claude). Until the maintainer pushes `v0.1.0`, `cargo install klasp` / `npm i -g @klasp-dev/klasp` / `pip install klasp` still resolve to the original `0.0.0` name-reservation publishes. Install from this repo directly (see [Quickstart](#quickstart) below) or wait for the tag push.
 
 ## What klasp does
 
-You write one `klasp.toml`. You run `klasp install`. Every AI agent on the repo (Claude Code today, more coming) is now blocked on the same `pre-commit`, `cargo clippy`, `pytest`, or any-shell-command gate your humans see at `git commit`. The agent gets a structured "blocked, here's why" reply at its tool-call surface (Claude Code's `PreToolUse` hook) so it self-corrects rather than retrying with `--no-verify` — the failure mode that's burning every team running agents at scale.
+You write one `klasp.toml`. You run `klasp install`. Every AI agent on the repo (Claude Code today, more coming) is now blocked on the same `pre-commit`, `cargo clippy`, `pytest`, or any-shell-command gate your humans see at `git commit`. The agent gets a structured "blocked, here's why" reply at its tool-call surface (Claude Code's `PreToolUse` hook) so it self-corrects rather than retrying with `--no-verify`. That retry path is the failure mode burning every team running agents at scale.
 
 ## Quickstart
 
@@ -97,7 +97,7 @@ type = "shell"
 command = "cargo test --workspace"
 ```
 
-Every shell check sees `KLASP_BASE_REF` in its environment — set to the merge-base of `HEAD` against the upstream tracking branch (falling back to `origin/main`, `origin/master`, then `HEAD~1`) — so diff-aware tools (`pre-commit run --from-ref`, `fallow audit --base`) can scope themselves to the diff without an agent-side wrapper. See [`docs/recipes.md`](./docs/recipes.md) for worked examples in pre-commit, fallow, pytest, ESLint/Biome, ruff.
+Every shell check sees `KLASP_BASE_REF` in its environment, set to the merge-base of `HEAD` against the upstream tracking branch (falling back to `origin/main`, `origin/master`, then `HEAD~1`). Diff-aware tools (`pre-commit run --from-ref`, `fallow audit --base`) can scope themselves to the diff without an agent-side wrapper. See [`docs/recipes.md`](./docs/recipes.md) for worked examples in pre-commit, fallow, pytest, ESLint/Biome, ruff.
 
 ## Documentation
 
