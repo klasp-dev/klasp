@@ -36,10 +36,14 @@ jobs:
   #
   # Native runners across the v0.1 matrix (design.md §9):
   #   - aarch64-apple-darwin       on macos-14
-  #   - x86_64-apple-darwin        on macos-13
   #   - x86_64-unknown-linux-gnu   on ubuntu-latest
   #   - aarch64-unknown-linux-gnu  on ubuntu-24.04-arm (native; no cross container)
   #   - x86_64-pc-windows-msvc     on windows-latest
+  #
+  # x86_64-apple-darwin (macos-13) intentionally dropped: GitHub-hosted x86 mac
+  # runners are materially slower / queue-prone, gating the whole release.
+  # Apple Silicon dominates the macOS dev population in 2025+ and a v0.1 user
+  # on x86 mac can `cargo install klasp` from source.
   #
   # Each job uploads the raw binary as a workflow artifact. Downstream jobs
   # download those artifacts and stage them into npm sub-packages and
@@ -53,7 +57,6 @@ jobs:
       matrix:
         target:
           - { os: macos-14, triple: aarch64-apple-darwin, ext: "" }
-          - { os: macos-13, triple: x86_64-apple-darwin, ext: "" }
           - { os: ubuntu-latest, triple: x86_64-unknown-linux-gnu, ext: "" }
           - { os: ubuntu-24.04-arm, triple: aarch64-unknown-linux-gnu, ext: "" }
           - { os: windows-latest, triple: x86_64-pc-windows-msvc, ext: ".exe" }
@@ -133,7 +136,6 @@ jobs:
             cp LICENSE "npm/${pkgdir}/LICENSE"
           }
           stage klasp-aarch64-apple-darwin       darwin-arm64    klasp
-          stage klasp-x86_64-apple-darwin        darwin-x64      klasp
           stage klasp-x86_64-unknown-linux-gnu   linux-x64-gnu   klasp
           stage klasp-aarch64-unknown-linux-gnu  linux-arm64-gnu klasp
           stage klasp-x86_64-pc-windows-msvc     win32-x64       klasp.exe
@@ -150,7 +152,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          for pkg in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64; do
+          for pkg in darwin-arm64 linux-x64-gnu linux-arm64-gnu win32-x64; do
             echo "::group::npm publish @klasp-dev/klasp-$pkg"
             (cd "npm/$pkg" && npm publish --access public --provenance)
             echo "::endgroup::"
@@ -188,7 +190,6 @@ jobs:
           # widest glibc compatibility, and "auto" on non-Linux as a no-op
           # placeholder so the matrix entries stay shape-compatible.
           - { os: macos-14, triple: aarch64-apple-darwin, manylinux: "auto" }
-          - { os: macos-13, triple: x86_64-apple-darwin, manylinux: "auto" }
           - { os: ubuntu-latest, triple: x86_64-unknown-linux-gnu, manylinux: "2014" }
           - { os: ubuntu-24.04-arm, triple: aarch64-unknown-linux-gnu, manylinux: "2014" }
           - { os: windows-latest, triple: x86_64-pc-windows-msvc, manylinux: "auto" }

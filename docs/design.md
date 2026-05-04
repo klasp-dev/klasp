@@ -467,13 +467,12 @@ This is **not implemented in v0.1**. The trait shape is the v0.1 commitment; the
 **PyPI: how maturin builds platform wheels.** `pyproject.toml` declares `[build-system] build-backend = "maturin"` and `[tool.maturin] bindings = "bin"`. CI runs maturin once per target platform; each run produces a wheel like `klasp-0.1.0-py3-none-macosx_11_0_arm64.whl`. The wheel contains the binary in its `<distname>.data/scripts/` directory. pip's standard wheel-tag resolution picks the right one for the user's machine. No PyO3, no Python code — the wheel exists purely to deliver the binary into a venv's `bin/`.
 
 **Platform matrix for v0.1:**
-- `x86_64-apple-darwin`
 - `aarch64-apple-darwin`
 - `x86_64-unknown-linux-gnu`
 - `aarch64-unknown-linux-gnu`
 - `x86_64-pc-windows-msvc`
 
-Five platforms cover ~98% of users at the v0.1 scale. musl, win-arm64, freebsd are deferred until somebody files an issue.
+Four platforms cover ~95% of users at the v0.1 scale. `x86_64-apple-darwin` is intentionally excluded: GitHub-hosted x86 mac runners are materially slower and were gating release-pipeline completion; Apple Silicon dominates the macOS dev population in 2025+, and an x86 mac user can `cargo install klasp` from source. musl, win-arm64, freebsd, x86 mac are deferred until someone files an issue with a concrete need.
 
 **Release pipeline.** GitHub Actions matrix on tag push: build per-platform binary, upload artifact, then a publish job downloads all artifacts, stages them into the npm sub-packages and the PyPI wheel directories, and publishes in order: per-platform npm packages → main npm package (so `optionalDependencies` resolve) → PyPI wheels → cargo publish → GitHub Release.
 
@@ -580,7 +579,7 @@ The v0.1 implementation followed this design closely; the items below are the pl
 
 - **`klasp-core` and `klasp-agents-claude` are publishable.** The 3-crate workspace (§2) was initially scoped with `klasp-core` and `klasp-agents-claude` as `publish = false` — only the `klasp` binary crate would publish. W5 (PR [#15](https://github.com/klasp-dev/klasp/pull/15)) flipped both library crates to publishable so `cargo publish` of the binary doesn't fail on missing path-dependency versions. Plugin authors targeting v0.3 will depend on `klasp-core` from crates.io as designed. No surface change; the design intent is honoured.
 
-- **`x86_64-apple-darwin` is in the release matrix, not per-PR CI.** §9 names five v0.1 targets including darwin-x64. Per-PR CI runs four of them (the macOS-x64 runner is significantly slower and was dropped from the per-PR matrix during W3); the tag-triggered release workflow ([`release.yml`](../.github/workflows/release.yml)) builds darwin-x64 alongside the other four. Tracking issue: [#9](https://github.com/klasp-dev/klasp/issues/9) — reintroduce darwin-x64 to per-PR CI once a faster runner is available.
+- **`x86_64-apple-darwin` was dropped from the platform matrix entirely.** The original §9 design named five v0.1 targets. macOS-x64 was dropped from per-PR CI during W3 (slow runner, queue-prone) and dropped from the release pipeline at v0.1.0 launch when it was gating publish for >10 minutes on a queued macos-13 runner. The four-platform shipped matrix is documented above; x86 mac users install via `cargo install klasp` from source. Issue [#9](https://github.com/klasp-dev/klasp/issues/9) closed as won't-fix.
 
 - **W3 follow-ups (PR [#14](https://github.com/klasp-dev/klasp/pull/14), issue [#12](https://github.com/klasp-dev/klasp/issues/12) closed).** Two W3 follow-up items landed after the W3 merge. First: a test-coverage gap on the existing source-runtime-error fail-open path. The W3 implementation in `gate.rs::run` (PR [#11](https://github.com/klasp-dev/klasp/pull/11)) already mapped `CheckSource` runtime errors to fail-open exit 0 with a stderr notice, but no end-to-end test exercised that wiring; PR #14 added the `source_runtime_error_fails_open` regression test (no behaviour change to the gate). Second: a real bug — the `Shell` source could leak its child process on timeout/interrupt; PR #14 added child-process reaping with regression coverage so killed-by-signal paths surface the signal in the finding. Documented in [`CHANGELOG.md`](../CHANGELOG.md) under the W3 follow-ups bullets.
 

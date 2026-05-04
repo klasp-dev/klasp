@@ -37,7 +37,7 @@ Post-1.0, breaking changes require a major version and a deprecation cycle.
 - [x] `ClaudeCodeSurface` impl: surgical `.claude/settings.json` merge, generated `klasp-gate.sh` with `KLASP_GATE_SCHEMA=1`, idempotent install/uninstall [W2]
 - [x] 3-tier `Verdict` (Pass / Warn / Fail) with structured `Finding` rendering [W1]
 - [x] Trigger pattern matching for `git commit` / `git push` [W3]
-- [x] Five-platform binary release: darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win-x64 [W5]
+- [x] Four-platform binary release: darwin-arm64, linux-x64-gnu, linux-arm64-gnu, win-x64 [W5; darwin-x64 dropped at v0.1.0 launch — see "What v0.1 actually delivered" below]
 - [x] Distribution: `cargo install klasp`, `npm i -g @klasp-dev/klasp` (biome-style shim), `pip install klasp` (maturin wheel) [W5, [#5](https://github.com/klasp-dev/klasp/issues/5)]
 - [x] GitHub Actions release workflow on tag push [W5]
 - [x] Test suite: trait-mocked unit tests, integration tests with real Claude tool-call fixtures, contract test for `GATE_SCHEMA_VERSION`, snapshot tests for the generated script (119 tests passing)
@@ -49,7 +49,7 @@ Post-1.0, breaking changes require a major version and a deprecation cycle.
 - [x] `klasp install` is idempotent (run twice = no diff).
 - [x] `klasp uninstall` is idempotent and preserves sibling hooks in `.claude/settings.json`.
 - [x] `klasp doctor` correctly diagnoses: missing config, missing hook, schema mismatch, unreachable check command.
-- [x] Five-platform CI matrix is green (per-PR runs 4 platforms; darwin-x64 in release-only matrix — see [#9](https://github.com/klasp-dev/klasp/issues/9)).
+- [x] Four-platform CI matrix is green (darwin-arm64, linux-x64-gnu, linux-arm64-gnu, win-x64). darwin-x64 dropped — see "What v0.1 actually delivered" below.
 - [x] No telemetry. No network calls outside `cargo install` / `npm install` / `pip install` themselves.
 
 ### Explicitly out of scope for v0.1
@@ -87,7 +87,7 @@ The honest delta between this section's checkboxes and what real-world implement
 
 - **`KLASP_BASE_REF` was an accidental gap caught in W6-7.** The design ([`design.md` §3.5](./design.md#35-configv1-versioned-config)) committed to exporting `KLASP_BASE_REF` to every shell child, but the W3 `Shell` source originally hardcoded a placeholder. W6-7 wired the merge-base resolution through `RepoState::base_ref` and into `Shell::run_with_timeout`, with the documented fallback chain (upstream → `origin/main` → `origin/master` → `HEAD~1`). Caught in dogfood, fixed in [PR #17](https://github.com/klasp-dev/klasp/pull/17).
 - **`verdict_path` was deferred.** The original design implied a `verdict_path` field on `CheckConfig` for parsing recipe-tool JSON. The shipped `CheckConfig` has 4 fields (`name`, `triggers`, `source`, `timeout_secs`) and v0.1's only source (`Shell`) maps exit code → verdict directly. Recipe-specific output parsing is the v0.2 named-recipe scope. Tracked in [`design.md` §14](./design.md#14-open-questions--known-gaps); will be revisited as part of the v0.2 named-recipe scope when the recipe-output schema lands.
-- **`x86_64-apple-darwin` was dropped from per-PR CI.** The design committed to a five-platform matrix; the per-PR matrix runs four (the macOS-x64 GitHub-hosted runner is materially slower than the others and was removed during W3 to keep PR cycle times reasonable). The tag-triggered release workflow still builds darwin-x64. Reintroduction tracked in [#9](https://github.com/klasp-dev/klasp/issues/9).
+- **`x86_64-apple-darwin` was dropped entirely.** The design committed to a five-platform matrix. macOS-x64 was first dropped from per-PR CI during W3 (slow runner, queue-prone) and then from the release pipeline at v0.1.0 launch when a queued macos-13 runner gated publish for >10 minutes. The four-platform shipped matrix (darwin-arm64, linux-x64-gnu, linux-arm64-gnu, win-x64) covers ~95% of users; x86 mac users `cargo install klasp` from source. Issue [#9](https://github.com/klasp-dev/klasp/issues/9) closed as won't-fix.
 - **Two follow-up issues filed during the milestone.** [#16](https://github.com/klasp-dev/klasp/issues/16) (W5 distribution polish, open) and [#12](https://github.com/klasp-dev/klasp/issues/12) (W3 gate-runtime correctness, closed by PR [#14](https://github.com/klasp-dev/klasp/pull/14)). Both surface drift from the design is `none` — these are correctness bugs and pipeline polish, not architectural changes.
 - **The 4-6 week target slipped to 7 weeks.** W1-W5 hit their original schedule; W6-7 dogfood ran 1.5 weeks as planned. The extra week is in the W6-7 window where the recipes doc, the `KLASP_BASE_REF` wiring fix, and the `cargo publish`/`maturin build` shake-out for distribution all landed. The dogfood-buffer hypothesis (above) held: real installs reliably surface 2-3 non-trivial edge cases.
 
