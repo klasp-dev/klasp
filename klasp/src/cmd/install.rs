@@ -180,7 +180,7 @@ fn map_config_err(e: KlaspError) -> anyhow::Error {
 
 fn unknown_agent(name: &str, registry: &SurfaceRegistry) -> anyhow::Error {
     let supported = registry.agent_ids().join(", ");
-    anyhow!("unknown agent \"{name}\"; supported: {supported}, all")
+    anyhow!("unknown agent \"{name}\"; supported: {supported} (or \"all\" to fan out across [gate].agents)")
 }
 
 /// Apply auto-detection unless the user passed `--force`. `--force` keeps

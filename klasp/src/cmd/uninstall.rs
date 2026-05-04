@@ -33,14 +33,16 @@ fn try_run(args: &UninstallArgs) -> Result<ExitCode> {
     let repo_root = resolve_repo_root(args.repo_root.as_deref())?;
     let registry = SurfaceRegistry::default();
 
-    // Uninstall is the safety-net: when the user says `--agent all`,
-    // walk every REGISTERED surface regardless of `klasp.toml`'s
-    // `[gate].agents`. If a user installed `["claude_code", "codex"]`,
-    // edited their config to drop one, then ran `uninstall --agent all`,
-    // the dropped surface's hook scripts and managed blocks would
-    // otherwise be orphaned. Single-agent (`--agent codex`) and the
-    // omitted case still flow through `resolve_selection` — only the
-    // wildcard branch diverges from install.
+    // Uninstall safety-net: `--agent all` walks every REGISTERED
+    // surface, ignoring `klasp.toml`'s `[gate].agents`. Today this is
+    // operationally equivalent to the no-`--agent` path (which also
+    // returns `registry.iter().collect()` via `resolve_selection`),
+    // but the explicit branch is forward-defensive: if a future change
+    // ever makes the no-arg path config-driven, the wildcard branch
+    // here still catches orphans (a surface the user once installed,
+    // then dropped from `[gate].agents` before running uninstall).
+    // Install can't carry the same orphan-safety contract because it
+    // would surprise users by writing surfaces they didn't ask for.
     let selection = if args.agent.as_deref() == Some(AGENT_ALL) {
         Selection::Surfaces(registry.iter().collect())
     } else {
