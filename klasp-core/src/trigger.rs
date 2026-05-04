@@ -101,6 +101,25 @@ mod tests {
     }
 
     #[test]
+    fn matches_subshell_parens() {
+        // Subshell-grouped invocation: `(git commit ...)` is a common idiom
+        // when chaining `cd dir && (git commit ...) && other`. The leading
+        // `(` is in the boundary-character set so the regex anchors cleanly.
+        assert_eq!(
+            Trigger::classify("(git commit -m 'wip')"),
+            Some(GitEvent::Commit),
+        );
+    }
+
+    #[test]
+    fn matches_subshell_push() {
+        assert_eq!(
+            Trigger::classify("(cd subdir && git push origin main)"),
+            Some(GitEvent::Push),
+        );
+    }
+
+    #[test]
     fn rejects_forgit() {
         assert_eq!(Trigger::classify("forgit commit"), None);
     }
@@ -115,6 +134,9 @@ mod tests {
         // Hypothetical command that mentions the substring "commit" but isn't
         // a git commit invocation.
         assert_eq!(Trigger::classify("git committed-files-tool"), None);
+        // Bare `git committed` — the `(?:\s|$)` tail anchor must reject the
+        // `t` after `commit` here too, not just whatever-follows-a-dash.
+        assert_eq!(Trigger::classify("git committed"), None);
     }
 
     #[test]
@@ -141,5 +163,50 @@ mod tests {
             Trigger::classify("git -c user.email=x@y.z commit"),
             Some(GitEvent::Commit),
         );
+    }
+
+    /// Deliberate non-goal per [docs/design.md §6]: a `bash -c "git push"`
+    /// payload hides the trigger inside a quoted argument the regex never
+    /// inspects. Honest agents don't do this; adversarial ones can bypass
+    /// klasp trivially anyway (`bash -c "$(echo ... | base64 -d)"`).
+    #[test]
+    #[ignore = "design §6 deliberate non-goal; klasp gates honest agents"]
+    fn deliberately_misses_bash_c_quoted() {
+        assert_eq!(
+            Trigger::classify(r#"bash -c "git push""#),
+            Some(GitEvent::Push),
+        );
+    }
+
+    /// Deliberate non-goal per [docs/design.md §6]: `eval` defers
+    /// classification to a runtime-constructed string the regex can't see.
+    #[test]
+    #[ignore = "design §6 deliberate non-goal; klasp gates honest agents"]
+    fn deliberately_misses_eval_quoted() {
+        assert_eq!(
+            Trigger::classify(r#"eval "git commit""#),
+            Some(GitEvent::Commit),
+        );
+    }
+
+    /// Deliberate non-goal per [docs/design.md §6]: env-var-prefixed
+    /// invocations such as `GIT_DIR=/elsewhere git push` are uncommon outside
+    /// scripts. v0.2 may add a leading-env-assignment skip.
+    #[test]
+    #[ignore = "design §6 deliberate non-goal; v0.2 candidate"]
+    fn deliberately_misses_env_prefixed() {
+        assert_eq!(
+            Trigger::classify("GIT_DIR=/elsewhere git push"),
+            Some(GitEvent::Push),
+        );
+    }
+
+    /// Deliberate non-goal per [docs/design.md §6]: shell aliases such as
+    /// `gp = git push` resolve at the shell layer. The regex inspects the
+    /// raw tool-input command, not the post-alias-expansion form.
+    #[test]
+    #[ignore = "design §6 deliberate non-goal; shell aliases are out of scope"]
+    fn deliberately_misses_alias() {
+        assert_eq!(Trigger::classify("gp"), Some(GitEvent::Push));
     }
 }
