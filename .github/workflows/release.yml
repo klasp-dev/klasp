@@ -1,0 +1,358 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # softprops/action-gh-release needs this to upload assets
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Derive version from the pushed tag (`v0.1.0` -> `0.1.0`) and surface it
+  # to every downstream job as an output. The bump scripts in build-binaries,
+  # publish-npm, publish-pypi, and publish-cargo all consume this same value
+  # to keep manifests in lockstep with the tag.
+  # ---------------------------------------------------------------------------
+  prepare-version:
+    name: prepare version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: derive version
+        id: version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing klasp $VERSION (tag: $GITHUB_REF_NAME)"
+
+  # ---------------------------------------------------------------------------
+  # 2. Build per-platform binaries.
+  #
+  # Native runners across the v0.1 matrix (design.md §9):
+  #   - aarch64-apple-darwin       on macos-14
+  #   - x86_64-apple-darwin        on macos-13
+  #   - x86_64-unknown-linux-gnu   on ubuntu-latest
+  #   - aarch64-unknown-linux-gnu  on ubuntu-24.04-arm (native; no cross container)
+  #   - x86_64-pc-windows-msvc     on windows-latest
+  #
+  # Each job uploads the raw binary as a workflow artifact. Downstream jobs
+  # download those artifacts and stage them into npm sub-packages and
+  # maturin wheels.
+  # ---------------------------------------------------------------------------
+  build-binaries:
+    name: build / ${{ matrix.target.triple }}
+    needs: prepare-version
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { os: macos-14, triple: aarch64-apple-darwin, ext: "" }
+          - { os: macos-13, triple: x86_64-apple-darwin, ext: "" }
+          - { os: ubuntu-latest, triple: x86_64-unknown-linux-gnu, ext: "" }
+          - { os: ubuntu-24.04-arm, triple: aarch64-unknown-linux-gnu, ext: "" }
+          - { os: windows-latest, triple: x86_64-pc-windows-msvc, ext: ".exe" }
+    runs-on: ${{ matrix.target.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target.triple }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target.triple }}
+
+      - name: bump source versions
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: node scripts/bump-source-versions.mjs "$VERSION"
+
+      - name: cargo build --release
+        run: cargo build --release --target ${{ matrix.target.triple }} --bin klasp
+
+      - name: stage binary
+        shell: bash
+        run: |
+          mkdir -p staging
+          cp "target/${{ matrix.target.triple }}/release/klasp${{ matrix.target.ext }}" "staging/klasp${{ matrix.target.ext }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: klasp-${{ matrix.target.triple }}
+          path: staging/klasp${{ matrix.target.ext }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # 3. Publish to npm.
+  #
+  # Order matters: per-platform sub-packages MUST publish first, otherwise
+  # the main package's `optionalDependencies` resolve to nothing on installer
+  # machines until the sub-packages catch up. We publish the main package
+  # last for the same reason.
+  # ---------------------------------------------------------------------------
+  publish-npm:
+    name: publish npm
+    needs: [prepare-version, build-binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # for npm provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: stage per-platform binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Map: GitHub artifact name -> npm sub-package directory
+          stage() {
+            local artifact="$1" pkgdir="$2" filename="$3"
+            local src="artifacts/${artifact}/${filename}"
+            local dst="npm/${pkgdir}/${filename}"
+            cp "$src" "$dst"
+            chmod +x "$dst" || true
+            cp LICENSE "npm/${pkgdir}/LICENSE"
+          }
+          stage klasp-aarch64-apple-darwin       darwin-arm64    klasp
+          stage klasp-x86_64-apple-darwin        darwin-x64      klasp
+          stage klasp-x86_64-unknown-linux-gnu   linux-x64-gnu   klasp
+          stage klasp-aarch64-unknown-linux-gnu  linux-arm64-gnu klasp
+          stage klasp-x86_64-pc-windows-msvc     win32-x64       klasp.exe
+
+      - name: bump npm versions in lockstep
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: node scripts/bump-npm-versions.mjs "$VERSION"
+
+      - name: publish per-platform sub-packages
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for pkg in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64; do
+            echo "::group::npm publish @klasp-dev/klasp-$pkg"
+            (cd "npm/$pkg" && npm publish --access public --provenance)
+            echo "::endgroup::"
+          done
+
+      - name: publish main package
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Published last so the optionalDependencies above are resolvable
+          # the moment a user runs `npm install @klasp-dev/klasp`.
+          (cd npm/klasp && npm publish --access public --provenance)
+
+  # ---------------------------------------------------------------------------
+  # 4. Publish to PyPI.
+  #
+  # We rebuild wheels via maturin per target rather than reusing the binaries
+  # from build-binaries — maturin needs to wrap them in a properly-tagged wheel.
+  # The fastest path is `maturin-action` which knows how to set up Rust, target
+  # toolchains, and (for linux) a manylinux container.
+  #
+  # Trusted publishing (OIDC) is preferred. Falls back to PYPI_TOKEN if the
+  # repo isn't yet registered as a trusted publisher on pypi.org.
+  # ---------------------------------------------------------------------------
+  publish-pypi:
+    name: publish pypi / ${{ matrix.target.triple }}
+    needs: [prepare-version, build-binaries]
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # `manylinux` is only meaningful on Linux targets; the action ignores
+          # it elsewhere. We set "2014" on Linux to produce wheels with the
+          # widest glibc compatibility, and "auto" on non-Linux as a no-op
+          # placeholder so the matrix entries stay shape-compatible.
+          - { os: macos-14, triple: aarch64-apple-darwin, manylinux: "auto" }
+          - { os: macos-13, triple: x86_64-apple-darwin, manylinux: "auto" }
+          - { os: ubuntu-latest, triple: x86_64-unknown-linux-gnu, manylinux: "2014" }
+          - { os: ubuntu-24.04-arm, triple: aarch64-unknown-linux-gnu, manylinux: "2014" }
+          - { os: windows-latest, triple: x86_64-pc-windows-msvc, manylinux: "auto" }
+    runs-on: ${{ matrix.target.os }}
+    permissions:
+      contents: read
+      id-token: write # for PyPI trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: bump source versions
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: node scripts/bump-source-versions.mjs "$VERSION"
+
+      - name: build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: pypi
+          target: ${{ matrix.target.triple }}
+          manylinux: ${{ matrix.target.manylinux }}
+          args: --release --out dist
+          # Sccache speeds up repeated builds across the matrix.
+          sccache: "true"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-wheel-${{ matrix.target.triple }}
+          path: pypi/dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-pypi-collect:
+    name: publish pypi (upload)
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: collect wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pypi-wheel-*
+          path: dist
+          merge-multiple: true
+
+      - name: list wheels
+        run: ls -la dist/
+
+      - name: publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # If trusted publishing is configured, leave password empty.
+          # If only an API token is configured, set PYPI_TOKEN as a repo secret.
+          password: ${{ secrets.PYPI_TOKEN }}
+          skip-existing: true
+
+  # ---------------------------------------------------------------------------
+  # 5. Publish to crates.io.
+  #
+  # cargo publish builds from source on the registry side, so it doesn't need
+  # the per-platform binaries. We still gate on `build-binaries` so a tag that
+  # cannot produce a single binary doesn't pollute crates.io with a release
+  # the other channels skipped.
+  #
+  # Order: klasp-core -> klasp-agents-claude -> klasp. Each upstream crate
+  # must be live on crates.io before the downstream `cargo publish` accepts
+  # its dependency.
+  # ---------------------------------------------------------------------------
+  publish-cargo:
+    name: publish cargo
+    needs: [prepare-version, build-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: bump source versions
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: node scripts/bump-source-versions.mjs "$VERSION"
+
+      - name: publish klasp-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+        run: cargo publish -p klasp-core --no-verify
+
+      - name: wait for klasp-core to land
+        run: sleep 30
+
+      - name: publish klasp-agents-claude
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+        run: cargo publish -p klasp-agents-claude --no-verify
+
+      - name: wait for klasp-agents-claude to land
+        run: sleep 30
+
+      - name: publish klasp
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+        run: cargo publish -p klasp --no-verify
+
+  # ---------------------------------------------------------------------------
+  # 6. GitHub Release.
+  #
+  # Attach the per-platform binaries (tarballs for unix, zip for windows) so
+  # users without npm / pip / cargo can grab a binary directly.
+  # ---------------------------------------------------------------------------
+  github-release:
+    name: github release
+    needs: [publish-npm, publish-pypi-collect, publish-cargo]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: klasp-*
+          path: artifacts
+          merge-multiple: false
+
+      - name: package binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          for triple_dir in artifacts/klasp-*/; do
+            triple="$(basename "$triple_dir" | sed 's/^klasp-//')"
+            archive_name="klasp-${GITHUB_REF_NAME}-${triple}"
+            if [[ "$triple" == *windows* ]]; then
+              (cd "$triple_dir" && zip -j "../../release-assets/${archive_name}.zip" klasp.exe)
+            else
+              chmod +x "${triple_dir}klasp"
+              tar -C "$triple_dir" -czf "release-assets/${archive_name}.tar.gz" klasp
+            fi
+          done
+          ls -la release-assets/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}

@@ -1,0 +1,40 @@
+{
+  "name": "@klasp-dev/klasp",
+  "version": "0.0.0",
+  "description": "Block AI coding agents (Claude Code, Cursor, Codex, Aider) on the same quality gates your humans hit at git commit.",
+  "homepage": "https://klasp.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/klasp-dev/klasp.git",
+    "directory": "npm/klasp"
+  },
+  "bugs": {
+    "url": "https://github.com/klasp-dev/klasp/issues"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "git-hooks",
+    "pre-commit",
+    "quality"
+  ],
+  "author": "klasp authors",
+  "license": "Apache-2.0",
+  "bin": {
+    "klasp": "bin/klasp.js"
+  },
+  "files": [
+    "bin/klasp.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@klasp-dev/klasp-darwin-arm64": "0.0.0",
+    "@klasp-dev/klasp-darwin-x64": "0.0.0",
+    "@klasp-dev/klasp-linux-x64-gnu": "0.0.0",
+    "@klasp-dev/klasp-linux-arm64-gnu": "0.0.0",
+    "@klasp-dev/klasp-win32-x64": "0.0.0"
+  }
+}

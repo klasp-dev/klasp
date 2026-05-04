@@ -1,0 +1,37 @@
+{
+  "name": "@klasp-dev/klasp-linux-x64-gnu",
+  "version": "0.0.0",
+  "description": "Per-platform binary for klasp on Linux x64 (glibc). Installed automatically as an optional dependency of @klasp-dev/klasp.",
+  "homepage": "https://klasp.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/klasp-dev/klasp.git",
+    "directory": "npm/linux-x64-gnu"
+  },
+  "bugs": {
+    "url": "https://github.com/klasp-dev/klasp/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "klasp authors",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "main": "klasp",
+  "bin": {
+    "klasp": "./klasp"
+  },
+  "files": [
+    "klasp",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

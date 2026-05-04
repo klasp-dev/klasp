@@ -70,19 +70,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - working-directory: npm
+      # Validate the main package only — per-platform sub-packages have their
+      # binaries staged at release time (see .github/workflows/release.yml)
+      # and would fail dry-run today because the binary file is gitignored.
+      - working-directory: npm/klasp
         run: npm publish --dry-run --access public
 
   pypi-validate:
-    name: pypi build + twine check
+    name: pypi maturin build + twine check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - uses: astral-sh/setup-uv@v3
-      - working-directory: pypi
+      - name: build wheel via maturin
+        working-directory: pypi
         run: |
-          uvx --from build pyproject-build --wheel --sdist
+          uvx --from "maturin>=1.7,<2.0" maturin build --release --out dist
           uvx twine check dist/*

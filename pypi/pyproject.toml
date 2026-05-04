@@ -1,18 +1,18 @@
 [build-system]
-requires = ["hatchling>=1.26"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "klasp"
 version = "0.0.0"
-description = "Placeholder for klasp — block AI coding agents on the same quality gates your humans hit."
+description = "Block AI coding agents (Claude Code, Cursor, Codex, Aider) on the same quality gates your humans hit at git commit."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "Apache-2.0"
 keywords = ["ai", "agents", "git-hooks", "pre-commit", "quality"]
 authors = [{ name = "klasp authors" }]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
@@ -22,6 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Software Development :: Version Control :: Git",
 ]
@@ -31,8 +32,17 @@ Homepage = "https://klasp.dev"
 Repository = "https://github.com/klasp-dev/klasp"
 Issues = "https://github.com/klasp-dev/klasp/issues"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/klasp"]
+[tool.maturin]
+# `bindings = "bin"` produces a wheel that ships a binary into <venv>/bin/
+# rather than a Python extension module. No PyO3, no Python source code —
+# the wheel is a vehicle for the compiled `klasp` executable so that
+# `pip install klasp` puts `klasp` on PATH inside the env.
+bindings = "bin"
 
-[tool.hatch.build.targets.sdist]
-include = ["src/klasp", "README.md", "pyproject.toml"]
+# The wheel is built from the binary crate at the workspace root. The
+# pyproject.toml lives alongside other distribution scaffolding in pypi/,
+# so we point maturin at the actual Cargo manifest.
+manifest-path = "../klasp/Cargo.toml"
+
+# Strip release binaries to keep wheels small.
+strip = true
