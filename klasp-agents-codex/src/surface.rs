@@ -87,9 +87,10 @@ impl AgentSurface for CodexSurface {
         let merged = agents_md::install_block(&existing, DEFAULT_BLOCK_BODY)
             .map_err(|e| agents_md_error(&settings_path, e))?;
 
-        let already_installed = merged == existing
-            && agents_md::contains_block(&existing)
-                .map_err(|e| agents_md_error(&settings_path, e))?;
+        // `install_block` only returns the input unchanged when a managed
+        // block was already present with identical content, so equality
+        // implies "already installed" — no second `contains_block` scan.
+        let already_installed = merged == existing;
 
         if ctx.dry_run {
             return Ok(InstallReport {
@@ -124,14 +125,11 @@ impl AgentSurface for CodexSurface {
         let settings_path = self.settings_path(repo_root);
         let mut paths = Vec::new();
 
-        if !settings_path.exists() {
-            return Ok(paths);
-        }
-
-        let existing = fs::read_to_string(&settings_path).map_err(|e| InstallError::Io {
-            path: settings_path.clone(),
-            source: e,
-        })?;
+        // `read_or_empty` collapses missing-file → empty-string. An empty
+        // input is also unchanged by `uninstall_block`, so the `stripped ==
+        // existing` early-return below covers the missing-file case
+        // without a separate `exists()` check.
+        let existing = read_or_empty(&settings_path)?;
 
         let stripped =
             agents_md::uninstall_block(&existing).map_err(|e| agents_md_error(&settings_path, e))?;

@@ -167,34 +167,35 @@ struct Span {
 }
 
 fn find_block(existing: &str) -> Result<Option<Span>, AgentsMdError> {
-    let start_count = existing.matches(MANAGED_START).count();
-    let end_count = existing.matches(MANAGED_END).count();
+    let (Some(start), Some(end_marker_start)) =
+        (existing.find(MANAGED_START), existing.find(MANAGED_END))
+    else {
+        // Either marker present without the other → malformed; both absent → no block.
+        return if existing.contains(MANAGED_START) || existing.contains(MANAGED_END) {
+            Err(AgentsMdError::MalformedMarkers)
+        } else {
+            Ok(None)
+        };
+    };
 
-    match (start_count, end_count) {
-        (0, 0) => Ok(None),
-        (1, 1) => {
-            let start = existing
-                .find(MANAGED_START)
-                .expect("count==1 implies find succeeds");
-            let end_marker_start = existing
-                .find(MANAGED_END)
-                .expect("count==1 implies find succeeds");
-            if end_marker_start < start {
-                return Err(AgentsMdError::MalformedMarkers);
-            }
-            // Span end = end of MANAGED_END line, including the trailing
-            // newline if there is one. This makes the replace operation a
-            // clean cut.
-            let after_marker = end_marker_start + MANAGED_END.len();
-            let end = if existing.as_bytes().get(after_marker) == Some(&b'\n') {
-                after_marker + 1
-            } else {
-                after_marker
-            };
-            Ok(Some(Span { start, end }))
-        }
-        _ => Err(AgentsMdError::MalformedMarkers),
+    // Reject duplicates and crossed pairs in one pass: a well-formed block
+    // has `find == rfind` for both markers, with the start before the end.
+    if existing.rfind(MANAGED_START) != Some(start)
+        || existing.rfind(MANAGED_END) != Some(end_marker_start)
+        || end_marker_start < start
+    {
+        return Err(AgentsMdError::MalformedMarkers);
     }
+
+    // Span end = end of MANAGED_END line, including the trailing newline if
+    // there is one. This makes the replace operation a clean cut.
+    let after_marker = end_marker_start + MANAGED_END.len();
+    let end = if existing.as_bytes().get(after_marker) == Some(&b'\n') {
+        after_marker + 1
+    } else {
+        after_marker
+    };
+    Ok(Some(Span { start, end }))
 }
 
 #[cfg(test)]

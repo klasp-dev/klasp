@@ -29,7 +29,7 @@ fn install_creates_agents_md_when_missing() {
 
     let report = surface.install(&ctx(dir.path().to_path_buf())).unwrap();
 
-    assert_eq!(report.agent_id, "codex");
+    assert_eq!(report.agent_id, CodexSurface::AGENT_ID);
     assert!(!report.already_installed);
     assert_eq!(report.paths_written.len(), 1);
 
