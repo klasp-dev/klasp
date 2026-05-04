@@ -12,7 +12,13 @@ follow the migration notes attached to each minor release.
 
 Nothing pending.
 
-## [0.1.0]
+## [0.1.0] — pending tag push
+
+Implementation merged on `main` at
+[`234908e`](https://github.com/klasp-dev/klasp/commit/234908e) on 2026-05-04
+([PR #17](https://github.com/klasp-dev/klasp/pull/17), W6-7). The release
+date below is filled in when the maintainer pushes the `v0.1.0` tag and the
+`release.yml` workflow publishes to crates.io / npm / PyPI / GitHub Releases.
 
 The MVP. Claude Code only. Shell-command checks. One-command install. See
 [`docs/roadmap.md` §v0.1](./docs/roadmap.md) for the full milestone definition.
@@ -71,9 +77,11 @@ The MVP. Claude Code only. Shell-command checks. One-command install. See
 
 ### Fixed (W3 follow-ups)
 
-- `Verdict::Pass` instead of `Verdict::Warn` when a `CheckSource` raises a
-  runtime error mid-gate, so a flaky check tool doesn't degrade the verdict
-  for the whole gate. Added regression test. [#14]
+- Added a regression test (`source_runtime_error_fails_open`) confirming the
+  fail-open path in `gate.rs::run` exits 0 with a stderr notice when a
+  `CheckSource` raises a runtime error mid-gate. The behaviour was already
+  correct in W3 (PR [#11](https://github.com/klasp-dev/klasp/pull/11)); this
+  closes a test-coverage gap surfaced during W3 follow-up review. [#14]
 - `Shell` `CheckSource` reaps its child process on timeout / interrupt
   rather than leaking it; killed-by-signal paths surface the signal in the
   finding. [#14]

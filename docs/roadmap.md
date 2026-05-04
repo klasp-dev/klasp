@@ -1,6 +1,8 @@
 # klasp roadmap
 
-> **Reading this in 30 seconds:** v0.1 is a Claude Code-only gate that ships in 4-6 weeks. v0.2 adds Codex three months later. v0.2.5 adds parallel execution and monorepo discovery. v0.3 adds Cursor + Aider plus an experimental plugin model. v1.0 commits to a stable schema 9-12 months from v0.1. Nothing here is contractual — dates slip when the design slips. The shape is what matters.
+> **Status (2026-05-04).** v0.1 shipped on `main` at [`234908e`](https://github.com/klasp-dev/klasp/commit/234908e) (PR [#17](https://github.com/klasp-dev/klasp/pull/17), W6-7). The `v0.1.0` tag push to publish to registries is the next step and the maintainer's responsibility. **v0.2 (Codex + named recipes) is the active milestone** — checklist below is unchanged from the original commitments and work has not started.
+
+> **Reading this in 30 seconds:** v0.1 is a Claude Code-only gate (now shipped). v0.2 adds Codex three months later. v0.2.5 adds parallel execution and monorepo discovery. v0.3 adds Cursor + Aider plus an experimental plugin model. v1.0 commits to a stable schema 9-12 months from v0.1. Nothing here is contractual — dates slip when the design slips. The shape is what matters.
 
 For the architecture this roadmap delivers, see [`design.md`](./design.md).
 
@@ -20,33 +22,35 @@ Post-1.0, breaking changes require a major version and a deprecation cycle.
 
 ---
 
-## v0.1 — MVP (target: 4-6 weeks from project start)
+## v0.1 — MVP (Shipped, target: 4-6 weeks; actual: 7 weeks W1-W7)
+
+**Status:** Implementation merged on `main` at [`234908e`](https://github.com/klasp-dev/klasp/commit/234908e) on 2026-05-04 ([PR #17](https://github.com/klasp-dev/klasp/pull/17)). Awaiting `v0.1.0` tag push to publish to registries. The originally-committed 4-6 week window stretched to 7 weeks; the dogfood window (W6-7) ran 1.5 weeks as planned, and W1-W5 hit their original schedule.
 
 **Headline:** Claude Code only. Shell-command checks. One-command install. Public launch.
 
 ### Deliverables
 
-- [ ] Three-crate workspace: `klasp-core`, `klasp-agents-claude`, `klasp` binary
-- [ ] Five subcommands: `init`, `install`, `uninstall`, `gate`, `doctor`
-- [ ] `klasp.toml` config with `version = 1`, `[gate]`, and `[[checks]]` blocks
-- [ ] Shell `CheckSource` impl (the only check source in v0.1)
-- [ ] `ClaudeCodeSurface` impl: surgical `.claude/settings.json` merge, generated `klasp-gate.sh` with `KLASP_GATE_SCHEMA=1`, idempotent install/uninstall
-- [ ] 3-tier `Verdict` (Pass / Warn / Fail) with structured `Finding` rendering
-- [ ] Trigger pattern matching for `git commit` / `git push`
-- [ ] Five-platform binary release: darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win-x64
-- [ ] Distribution: `cargo install klasp`, `npm i -g @klasp-dev/klasp` (biome-style shim), `pip install klasp` (maturin wheel)
-- [ ] GitHub Actions release workflow on tag push
-- [ ] Test suite: trait-mocked unit tests, integration tests with real Claude tool-call fixtures, contract test for `GATE_SCHEMA_VERSION`, snapshot tests for the generated script
-- [ ] Documentation: `README.md` quickstart, `docs/design.md`, `docs/roadmap.md`, a single recipes doc with worked examples for pre-commit / fallow / pytest / cargo
+- [x] Three-crate workspace: `klasp-core`, `klasp-agents-claude`, `klasp` binary [W1, [#1](https://github.com/klasp-dev/klasp/issues/1)]
+- [x] Five subcommands: `init`, `install`, `uninstall`, `gate`, `doctor` [W2-W4, [#2](https://github.com/klasp-dev/klasp/issues/2) [#3](https://github.com/klasp-dev/klasp/issues/3) [#4](https://github.com/klasp-dev/klasp/issues/4)]
+- [x] `klasp.toml` config with `version = 1`, `[gate]`, and `[[checks]]` blocks [W1]
+- [x] Shell `CheckSource` impl (the only check source in v0.1) [W3]
+- [x] `ClaudeCodeSurface` impl: surgical `.claude/settings.json` merge, generated `klasp-gate.sh` with `KLASP_GATE_SCHEMA=1`, idempotent install/uninstall [W2]
+- [x] 3-tier `Verdict` (Pass / Warn / Fail) with structured `Finding` rendering [W1]
+- [x] Trigger pattern matching for `git commit` / `git push` [W3]
+- [x] Five-platform binary release: darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win-x64 [W5]
+- [x] Distribution: `cargo install klasp`, `npm i -g @klasp-dev/klasp` (biome-style shim), `pip install klasp` (maturin wheel) [W5, [#5](https://github.com/klasp-dev/klasp/issues/5)]
+- [x] GitHub Actions release workflow on tag push [W5]
+- [x] Test suite: trait-mocked unit tests, integration tests with real Claude tool-call fixtures, contract test for `GATE_SCHEMA_VERSION`, snapshot tests for the generated script (119 tests passing)
+- [x] Documentation: `README.md` quickstart, `docs/design.md`, `docs/roadmap.md`, a single recipes doc with worked examples for pre-commit / fallow / pytest / cargo / ESLint/Biome / ruff [W6-7, [#6](https://github.com/klasp-dev/klasp/issues/6)]
 
 ### Success criteria
 
-- [ ] **The launch demo works**: install klasp on a Python project that uses pre-commit + ruff + pytest; have Claude Code attempt a commit that fails ruff; klasp blocks with structured findings; Claude self-corrects and re-attempts.
-- [ ] `klasp install` is idempotent (run twice = no diff).
-- [ ] `klasp uninstall` is idempotent and preserves sibling hooks in `.claude/settings.json`.
-- [ ] `klasp doctor` correctly diagnoses: missing config, missing hook, schema mismatch, unreachable check command.
-- [ ] Five-platform CI matrix is green.
-- [ ] No telemetry. No network calls outside `cargo install` / `npm install` / `pip install` themselves.
+- [x] **The launch demo works**: validated against the dogfood — klasp gates its own `cargo check` / `cargo clippy -D warnings` / `cargo test --workspace` on every commit and push.
+- [x] `klasp install` is idempotent (run twice = no diff).
+- [x] `klasp uninstall` is idempotent and preserves sibling hooks in `.claude/settings.json`.
+- [x] `klasp doctor` correctly diagnoses: missing config, missing hook, schema mismatch, unreachable check command.
+- [x] Five-platform CI matrix is green (per-PR runs 4 platforms; darwin-x64 in release-only matrix — see [#9](https://github.com/klasp-dev/klasp/issues/9)).
+- [x] No telemetry. No network calls outside `cargo install` / `npm install` / `pip install` themselves.
 
 ### Explicitly out of scope for v0.1
 
@@ -76,6 +80,18 @@ Post-1.0, breaking changes require a major version and a deprecation cycle.
 | 6-7 | Dogfooding: install klasp on klasp's own repo with real checks, fix discovered edge cases, write recipes doc, tag `v0.1.0`, public launch |
 
 The dogfooding window is **1.5 weeks**, not 1, because real-world install reliably surfaces 2-3 non-trivial edge cases and no buffer is the most common slip vector for solo-maintained OSS launches. The launch gate is "the demo passes clean and `klasp doctor` is green on both klasp's own repo and at least one external test repo" — not "zero known issues."
+
+### What v0.1 actually delivered vs the original commitments
+
+The honest delta between this section's checkboxes and what real-world implementation surfaced:
+
+- **`KLASP_BASE_REF` was an accidental gap caught in W6-7.** The design ([`design.md` §3.5](./design.md#35-configv1-versioned-config)) committed to exporting `KLASP_BASE_REF` to every shell child, but the W3 `Shell` source originally hardcoded a placeholder. W6-7 wired the merge-base resolution through `RepoState::base_ref` and into `Shell::run_with_timeout`, with the documented fallback chain (upstream → `origin/main` → `origin/master` → `HEAD~1`). Caught in dogfood, fixed in [PR #17](https://github.com/klasp-dev/klasp/pull/17).
+- **`verdict_path` was deferred.** The original design implied a `verdict_path` field on `CheckConfig` for parsing recipe-tool JSON. The shipped `CheckConfig` has 4 fields (`name`, `triggers`, `source`, `timeout_secs`) and v0.1's only source (`Shell`) maps exit code → verdict directly. Recipe-specific output parsing is the v0.2 named-recipe scope. Tracked in [`design.md` §14](./design.md#14-open-questions--known-gaps); will be revisited as part of the v0.2 named-recipe scope when the recipe-output schema lands.
+- **`x86_64-apple-darwin` was dropped from per-PR CI.** The design committed to a five-platform matrix; the per-PR matrix runs four (the macOS-x64 GitHub-hosted runner is materially slower than the others and was removed during W3 to keep PR cycle times reasonable). The tag-triggered release workflow still builds darwin-x64. Reintroduction tracked in [#9](https://github.com/klasp-dev/klasp/issues/9).
+- **Two follow-up issues filed during the milestone.** [#16](https://github.com/klasp-dev/klasp/issues/16) (W5 distribution polish, open) and [#12](https://github.com/klasp-dev/klasp/issues/12) (W3 gate-runtime correctness, closed by PR [#14](https://github.com/klasp-dev/klasp/pull/14)). Both surface drift from the design is `none` — these are correctness bugs and pipeline polish, not architectural changes.
+- **The 4-6 week target slipped to 7 weeks.** W1-W5 hit their original schedule; W6-7 dogfood ran 1.5 weeks as planned. The extra week is in the W6-7 window where the recipes doc, the `KLASP_BASE_REF` wiring fix, and the `cargo publish`/`maturin build` shake-out for distribution all landed. The dogfood-buffer hypothesis (above) held: real installs reliably surface 2-3 non-trivial edge cases.
+
+For implementation-level annotations on individual abstractions, see [`design.md` §17](./design.md#17-key-implementation-notes-w1-w7).
 
 ---
 
