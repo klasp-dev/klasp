@@ -2,9 +2,9 @@
 
 > **Status:** v0.1 design, pre-implementation. The repo currently ships only `0.0.0` name-reservation placeholders on crates.io / npm / PyPI. This document is the build target.
 
-This is the architectural reference for klasp v0.1. It describes the abstractions, runtime flows, and trade-offs the implementation will commit to. Where a decision could plausibly go either way, the alternative is named and the choice is justified.
+klasp v0.1 commits to five core abstractions — `AgentSurface`, `CheckSource`, `GateProtocol`, `Verdict`, and `ConfigV1` — and accepts ~450 LOC of overhead to buy a plugin-ready design that won't break existing users when v0.3 lands. This document explains each choice and names the alternatives rejected. For the milestone-by-milestone shape from v0.1 → v1.0, see [`roadmap.md`](./roadmap.md).
 
-For the milestone-by-milestone shape from v0.1 → v1.0, see [`roadmap.md`](./roadmap.md).
+> **Implementation status.** The `Cargo.toml`, `npm/package.json`, and `pypi/pyproject.toml` shipped at `0.0.0` are deliberately thin name-reservation stubs — single-package Cargo manifest (no workspace), npm package without `optionalDependencies`, PyPI build with Hatchling rather than maturin. The v0.1 implementation work replaces all three with the architecture described below: a 3-crate Cargo workspace, biome-style npm shim with per-platform sub-packages, and maturin-based PyPI wheels.
 
 ---
 
@@ -15,8 +15,10 @@ AI coding agents (Claude Code, Codex, Cursor, Aider, …) commit and push code o
 The natural response is *"just use git pre-commit hooks"*. Three things are wrong with that:
 
 1. **Git hooks are bypassable.** `git commit --no-verify` exists, and an agent that's trained to be helpful when commits fail will absolutely use it.
-2. **Git hooks fire too late.** By the time the hook runs, the agent has already typed the command. The agent's tool-call surface (Claude Code's `PreToolUse`, etc.) fires *before* the shell ever sees `git`. That's the point of intervention where a structured "blocked, here's why" reply makes the agent self-correct rather than retry-with-no-verify.
+2. **Git hooks fire too late.** By the time the hook runs, the agent has already typed the command. The agent's tool-call surface — Claude Code's `PreToolUse` hook (the callback Claude Code fires before executing any shell command) — fires *before* the shell ever sees `git`. That's the point of intervention where a structured "blocked, here's why" reply makes the agent self-correct rather than retry-with-no-verify.
 3. **Git hooks don't ride along with clones.** A fresh worktree, a remote agent, a CI runner, a teammate's machine — none of them inherit `.git/hooks/`. They inherit `.claude/`, `AGENTS.md`, and the project's `klasp.toml` from the working tree.
+
+Not every agent exposes a programmatic gate. **Claude Code does** (PreToolUse). **Codex does not** — its `AGENTS.md` is plain Markdown context, read by the model but not enforced by the runtime. v0.2's Codex support compensates by installing `git pre-commit` / `pre-push` hooks for actual enforcement, with the AGENTS.md managed block as the model-side advisory layer.
 
 [fallow-rs/fallow](https://github.com/fallow-rs/fallow) recognised this pattern first and shipped `fallow setup-hooks` to install a Claude Code gate around its own audit command. **klasp generalises that pattern**: any check command (pre-commit, fallow, pytest, ruff, custom shell), any AI agent surface, one config file.
 
@@ -37,7 +39,7 @@ klasp/
 
 The split is not premature. It is the contract surface for the v0.3 plugin model, six months early. Plugin authors will depend on `klasp-core` and ship binaries that the main `klasp` CLI dispatches to. Putting that crate boundary in place at v0.1 means v0.3 plugins are an additive change, not a refactor that breaks compatibility for any existing user.
 
-The runtime topology at the user's machine:
+The runtime topology at the user's machine is a thin bash shim that exec's the Rust binary. The shim exists for **auditability** (a human reviewing the repo can see exactly what gets executed without trusting an opaque binary path in `.claude/settings.json`) and for the **schema-version handshake** (detailed in §3.3): the shim exports `KLASP_GATE_SCHEMA=N` before exec'ing the binary, so old shims and new binaries detect mismatch instead of silently misbehaving. The full topology:
 
 ```
 ┌──────────────────────┐                    ┌────────────────────┐
@@ -59,8 +61,6 @@ The runtime topology at the user's machine:
                                             │ ▶ aggregate Verdict│
                                             └────────────────────┘
 ```
-
-The bash shim is intentionally trivial. It exists for **auditability** (a human reviewing the repo can see exactly what gets executed without trusting an opaque binary path in `.claude/settings.json`) and for the **schema-version handshake**: the shim exports `KLASP_GATE_SCHEMA=N` before exec'ing the binary, so old shims and new binaries detect mismatch instead of silently misbehaving.
 
 ---
 
@@ -91,12 +91,14 @@ pub trait AgentSurface: Send + Sync {
 
 ```rust
 pub trait CheckSource: Send + Sync {
-    fn source_id(&self) -> &'static str;
+    fn source_id(&self) -> &str;
     fn supports_config(&self, config: &CheckConfig) -> bool;
     fn run(&self, config: &CheckConfig, state: &RepoState)
         -> Result<CheckResult, anyhow::Error>;
 }
 ```
+
+Note that `source_id` returns `&str` (tied to `&self`'s lifetime), not `&'static str` — v0.3's subprocess plugins are discovered at runtime and have dynamic IDs (the binary's filename), which a `'static` return type cannot express.
 
 v0.1 ships exactly one impl: `Shell`. The trait is right anyway because v0.2 adds **named recipes** — `pre-commit` (knows pre-commit's stage flags and `--from-ref` semantics), `fallow` (knows the audit JSON schema), `pytest` (parses xdist output) — and v0.3 adds **subprocess plugins** that speak a defined protocol.
 
@@ -119,17 +121,23 @@ pub struct GateInput {
     pub tool_name: String,
     pub tool_input: ToolInput,
 }
+
+#[derive(Deserialize)]
+pub struct ToolInput {
+    pub command: Option<String>,
+}
 ```
 
 The wire-protocol version is **separate from klasp's semver**. The hook script is generated once and committed to the repo. The `klasp` binary is upgraded independently. A user installing klasp 0.1, then upgrading to 0.2 without re-running `klasp install`, must not get silent wrong behaviour.
 
-**Why an env var, not a JSON field.** The shim exports `KLASP_GATE_SCHEMA=1` before calling `klasp gate`. The binary reads it from the environment, not from `tool_input`. The agent never controls the env var, so an agent that put `schema_version: 99` into its tool input cannot force a fail-open path.
+**Why an env var, not a JSON field.** The shim exports `KLASP_GATE_SCHEMA=1` before calling `klasp gate`. The binary reads it from the environment, not from `tool_input`. This specifically defends against the **JSON-injection** attack: an agent that put `schema_version: 99` into its tool input cannot force a fail-open path, because the binary never reads schema from stdin. It does **not** defend against an agent that overwrites `klasp-gate.sh` directly — a fully adversarial agent can trivially do that, and klasp's threat model (§6) already accepts this. The env-var design buys protection against the cheap attack, not the expensive one.
 
 **Mismatch behaviour.** If `KLASP_GATE_SCHEMA` differs from the binary's `GATE_SCHEMA_VERSION`, the gate emits a one-line stderr notice (`"klasp-gate: schema mismatch (script=1, binary=2). Re-run 'klasp install' to update the hook. Failing open."`) and exits 0. Fail-open on every tooling error is non-negotiable; a broken gate must never wedge legitimate work.
 
 ### 3.4 `Verdict` (3-tier enum)
 
 ```rust
+#[derive(Debug, Clone)]
 pub enum Verdict {
     Pass,
     Warn { findings: Vec<Finding>, message: Option<String> },
@@ -137,7 +145,7 @@ pub enum Verdict {
 }
 ```
 
-Three tiers, not two: `Warn` is the gradient that lets new checks roll out without immediately blocking commits the day they turn on. The structured `Vec<Finding>` carries `{rule, message, file, line, severity}` so the block message rendered to Claude's stderr is actionable rather than a raw JSON dump.
+Three tiers, not two: `Warn` is the gradient that lets new checks roll out without immediately blocking commits the day they turn on. The structured `Vec<Finding>` carries `{rule, message, file, line, severity}` so the block message rendered to Claude's stderr is actionable rather than a raw JSON dump. `Finding` derives `Clone` for the same reason — verdicts are aggregated and rendered, which requires copies.
 
 **Alternative:** a `bool` (pass/fail). Rejected because Warn is genuinely needed for staged rollouts. **Alternative 2:** a `Verdict { score: f64 }` per [SonarQube]. Rejected because checks rarely return continuous scores, and tier semantics (block vs notice vs pass) is the actual decision the runtime makes.
 
@@ -156,6 +164,33 @@ pub struct ConfigV1 {
 ```
 
 Every `klasp.toml` declares `version = 1` at the top. When v2 arrives, the parser fails fast with a clear "this config is for klasp 0.5+, you're on 0.2" message rather than silently ignoring new sections. `CheckSourceConfig` is `#[serde(tag = "type")]`-tagged so unknown source types are also caught at parse time.
+
+A real `klasp.toml` looks like this:
+
+```toml
+version = 1
+
+[gate]
+agents = ["claude_code"]
+policy = "any_fail"
+
+[[checks]]
+name = "ruff"
+triggers = [{ on = ["commit"] }]
+[checks.source]
+type = "shell"
+command = "ruff check ."
+
+[[checks]]
+name = "pytest"
+triggers = [{ on = ["push"] }]
+timeout_secs = 120
+[checks.source]
+type = "shell"
+command = "pytest -q"
+```
+
+Every shell check sees `KLASP_BASE_REF` in its env (set to the merge-base ref klasp computed) so checks can scope themselves to the diff. Future versions add `[[trigger]]` blocks for non-git triggers and `[plugin]` sections for v0.3 subprocess plugins; v0.1 fails parsing on those sections, guiding the user to upgrade.
 
 This sets up multi-version compatibility from day one without needing it yet.
 
@@ -327,7 +362,7 @@ pub fn run(args: &GateArgs) -> Result<ExitCode> {
         }
     }
 
-    // 7. Aggregate
+    // 7. Aggregate (Verdict derives Clone — see §3.4)
     let verdicts: Vec<Verdict> = results.iter().map(|r| r.verdict.clone()).collect();
     let final_verdict = Verdict::merge(verdicts, config.gate.policy.clone());
 
@@ -344,13 +379,15 @@ pub fn run(args: &GateArgs) -> Result<ExitCode> {
 }
 ```
 
-The trigger regex (in `trigger.rs`) mirrors fallow's pattern, ported to the `regex` crate and compiled once via `OnceLock`:
+The trigger regex (in `trigger.rs`) is a Rust port of fallow's POSIX ERE pattern. Functionally equivalent — same edge cases — but compiled once via `OnceLock`:
 
 ```
 (?:^|[\s;|&()])git\s+(?:commit|push)(?:\s|$)
 ```
 
 Edge cases the regex deliberately misses (and the design accepts): `bash -c "git push"`, `eval "git commit"`, env-prefixed `GIT_DIR=... git push`, aliases like `gp`. The threat model is **honest agents we want to help**, not adversarial ones — the gate is best-effort, not a security boundary. Adversarial inputs can bypass it trivially (the agent could `bash -c "$(echo Z2l0... | base64 -d)"`); anyone treating klasp as a security boundary is misusing it.
+
+The gate is **synchronous, no async runtime**. v0.1 runs checks sequentially via `Command::output()`. v0.2 will add parallel execution via `rayon` (chosen over `tokio` to keep the gate runtime free of an async runtime dependency).
 
 ---
 
@@ -377,7 +414,7 @@ The `klasp-core` crate declares `pub const GATE_SCHEMA_VERSION: u32 = 1;`. The g
 
 The version is a **monotone integer**, not semver. Schema bumps happen when the wire protocol changes — adding required fields, renaming verdict tiers, changing the JSON schema for findings. Binary releases bump semver freely; the schema only bumps when truly necessary.
 
-A contract test in `klasp/tests/protocol_contract.rs` reads the golden fixture script in `tests/fixtures/klasp-gate-v1.sh`, parses its `KLASP_GATE_SCHEMA` export, and asserts equality with `GATE_SCHEMA_VERSION`. When a developer bumps the constant, this test fails until they ship a new fixture — forcing the conversation about backward compatibility.
+A contract test in `klasp/tests/protocol_contract.rs` does two things: parses the golden fixture script in `tests/fixtures/klasp-gate-v1.sh` for its `KLASP_GATE_SCHEMA` export and asserts equality with `GATE_SCHEMA_VERSION`, **and** invokes `ClaudeCodeSurface::render_hook_script` and asserts the output also contains `KLASP_GATE_SCHEMA={GATE_SCHEMA_VERSION}`. Both must agree, so a developer who bumps the constant cannot satisfy the test by editing only the fixture.
 
 ---
 
@@ -398,11 +435,12 @@ impl CheckSource for SubprocessPlugin {
         -> Result<CheckResult, anyhow::Error>
     {
         let payload = serde_json::to_vec(&PluginRequest { config, state })?;
-        let output = Command::new(&self.binary)
+        let mut child = Command::new(&self.binary)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .spawn()?
-            .wait_with_input(&payload)?;
+            .spawn()?;
+        child.stdin.as_mut().unwrap().write_all(&payload)?;
+        let output = child.wait_with_output()?;
         Ok(serde_json::from_slice(&output.stdout)?)
     }
 }
@@ -419,8 +457,12 @@ This is **not implemented in v0.1**. The trait shape is the v0.1 commitment; the
 | Channel | Package | Mechanism |
 |---|---|---|
 | **cargo** | `klasp` (binary crate) | `cargo install klasp` builds from source. Fastest path for Rust devs. |
-| **npm** | `@klasp-dev/klasp` (main) + `@klasp-dev/klasp-<platform>-<arch>` (per-platform) | Biome-style ~20-line JS shim using `optionalDependencies` + `require.resolve`. No install-time download — npm's tarball integrity is the trust mechanism. |
-| **PyPI** | `klasp` | maturin wheel, one per platform tag (`klasp-0.1.0-py3-none-macosx_11_0_arm64.whl`). `[tool.maturin] bindings = "bin"` — no PyO3, just the binary. |
+| **npm** | `@klasp-dev/klasp` (main) + `@klasp-dev/klasp-<platform>-<arch>` (per-platform) | Biome-style ~20-line JS shim. See prose below. |
+| **PyPI** | `klasp` | maturin wheel, one per platform tag. See prose below. |
+
+**npm: how `optionalDependencies` avoids install-time downloads.** The main `@klasp-dev/klasp` package declares each per-platform sub-package (`@klasp-dev/klasp-darwin-arm64`, etc.) under `optionalDependencies`. Each sub-package's own `package.json` sets `os` and `cpu` fields. npm resolves only the sub-package matching the installer's machine and skips the rest. The main package's `bin/klasp.js` shim is a ~20-line script that uses `require.resolve('@klasp-dev/klasp-<platform>-<arch>')` to find the binary in the resolved sub-package and `child_process.spawnSync`s it. **No install-time network fetch** — the binary arrives as a verified npm tarball with the registry's standard SHA integrity check.
+
+**PyPI: how maturin builds platform wheels.** `pyproject.toml` declares `[build-system] build-backend = "maturin"` and `[tool.maturin] bindings = "bin"`. CI runs maturin once per target platform; each run produces a wheel like `klasp-0.1.0-py3-none-macosx_11_0_arm64.whl`. The wheel contains the binary in its `<distname>.data/scripts/` directory. pip's standard wheel-tag resolution picks the right one for the user's machine. No PyO3, no Python code — the wheel exists purely to deliver the binary into a venv's `bin/`.
 
 **Platform matrix for v0.1:**
 - `x86_64-apple-darwin`
@@ -449,7 +491,7 @@ Five platforms cover ~98% of users at the v0.1 scale. musl, win-arm64, freebsd a
 
 - `install_claude_code.rs`: temp dir + `.git/`, run `ClaudeCodeSurface::install`, assert script exists with correct `KLASP_GATE_SCHEMA`, assert `settings.json` has the right entry, assert second install is no-op.
 - `gate_flow.rs`: spawn `klasp gate` with synthetic Claude payload on stdin, assert exit 2 on `Fail`, exit 0 on `Pass`/`Warn`/`Error`.
-- `protocol_contract.rs`: parse fixture script's `KLASP_GATE_SCHEMA` export, assert equality with `GATE_SCHEMA_VERSION`.
+- `protocol_contract.rs`: parses fixture script's `KLASP_GATE_SCHEMA` AND invokes `render_hook_script()`; asserts both equal `GATE_SCHEMA_VERSION`. See §7.
 
 ### Mock-based tests (trait surface)
 
@@ -463,50 +505,40 @@ Five platforms cover ~98% of users at the v0.1 scale. musl, win-arm64, freebsd a
 
 ## 11. Trade-offs and honest cost accounting
 
-The clean-abstractions design pays for itself in five concrete places. Here's where v0.1 takes a hit so v0.2 and beyond don't:
+The clean-abstractions design pays for itself in five concrete places. Each is rationalised in §3 — this section is the LOC bottom line.
 
-1. **`AgentSurface` trait — ~150 LOC over an enum + match.** Pays off the day Codex lands as a new crate, zero changes to existing code.
+| Cost | Approx. LOC | Pays off at |
+|---|---|---|
+| `AgentSurface` trait | ~150 | v0.2 — Codex lands as a new crate, zero changes to existing code |
+| `CheckSource` trait | ~100 | v0.2 — named recipes ship as new impls; v0.3 — plugins |
+| `GateProtocol` schema versioning | ~80 | First binary upgrade post-install: clear message instead of silent wrong behaviour |
+| 3-crate workspace | ~1 day setup friction | v0.3 — plugin authors depend on `klasp-core` cleanly |
+| `ConfigV1` `version` field + `#[serde(tag)]` | ~20 (config side) + strict failure | v0.2 — old binaries reject unknown source types loudly |
 
-2. **`CheckSource` trait — ~100 LOC over a `Check.kind` enum.** Pays off in v0.2 when named recipes ship and v0.3 when subprocess plugins ship. The Shell impl in v0.1 is fully testable in isolation.
-
-3. **`GateProtocol` schema versioning — ~80 LOC** (constant, env read, mismatch check, contract test, fixture). A v0.1-only tool would skip this. Pays off the first time a user upgrades klasp without re-running `klasp install` and gets a clear message instead of silent wrong behaviour.
-
-4. **3-crate workspace — ~1 day of setup friction.** Workspace manifest, three `Cargo.toml` files, cross-crate import paths. Pays off in v0.3 when plugin authors depend on `klasp-core` without pulling in the binary or Claude impl.
-
-5. **`ConfigV1` with `version` field and `#[serde(tag = "type")]` enums — strict failure mode.** Typos in `klasp.toml` produce hard parse errors instead of silently being ignored. More friction for early users. Pays off when v0.2 ships `Recipe` as a new source type and v0.1 users get a clear "upgrade klasp" message.
-
-**Total extra LOC vs minimal MVP: ~450.** Total v0.1 LOC: ~1800-2200. Within the 2500-line ceiling the architect set.
+**Total extra LOC vs minimal MVP: ~450.** Total v0.1 LOC: ~1800-2200.
 
 ---
 
 ## 12. External crates
 
-| Crate | Why |
-|---|---|
-| `clap` (derive) | CLI parsing. Derive over builder for documentation-as-types. |
-| `serde` + `serde_json` + `toml` | Config and protocol (de)serialization. |
-| `thiserror` + `anyhow` | Typed errors at module boundaries (`thiserror`), ergonomic propagation in CLI (`anyhow`). |
-| `tracing` | Structured logging on the gate path. `RUST_LOG=debug` for diagnosis. |
-| `regex` | Trigger pattern. Compiled once via `OnceLock`. |
-| `tempfile` | Integration tests; atomic writes for `settings.json`. |
-| `which` | Binary detection in `AgentSurface::detect` and gate runner resolution. |
-| `insta` | Snapshot tests for the generated script. |
+| Crate | Type | Why |
+|---|---|---|
+| `clap` (derive) | runtime | CLI parsing. Derive over builder for documentation-as-types. |
+| `serde` + `serde_json` + `toml` | runtime | Config and protocol (de)serialization. |
+| `thiserror` + `anyhow` | runtime | Typed errors at module boundaries (`thiserror`), ergonomic propagation in CLI (`anyhow`). |
+| `tracing` | runtime | Structured logging on the gate path. `RUST_LOG=debug` for diagnosis. |
+| `regex` | runtime | Trigger pattern. Compiled once via `OnceLock`. |
+| `which` | runtime | Binary detection in `AgentSurface::detect` and gate runner resolution. |
+| `tempfile` | runtime + dev | Atomic writes for `settings.json` (production) and temp dirs in integration tests. |
+| `insta` | dev only | Snapshot tests for the generated script. |
 
-No async runtime. The gate is sequential `Command::output()`. No HTTP client. No global state. All crates are mature and minimally maintained.
+No HTTP client, no global state. All crates are mature and minimally maintained.
 
 ---
 
 ## 13. What v0.1 explicitly does not include
 
-- **Codex / AGENTS.md surface** — v0.2.
-- **Cursor / Aider surfaces** — v0.3.
-- **Named recipes** (`type = "pre_commit"`, `type = "fallow"`) — v0.2.
-- **Subprocess plugins** — v0.3 / v1.0.
-- **Parallel check execution** — v0.2 (with `tokio` or `rayon`).
-- **Hosted runtime / team rollups** — v1.0+.
-- **Telemetry of any kind.** Never. Dev tools that phone home get torched on day one.
-- **A `klasp run` that bypasses agents and just runs the checks** — useful but out of scope; users have `pre-commit run` for that.
-- **Auto-fix capabilities** — out of scope, intentional. klasp gates; it doesn't write code.
+Versioned scope (Codex, named recipes, parallel execution, Cursor/Aider, plugins, hosted runtime) and permanent non-goals (telemetry, auto-fix, security-boundary semantics) are listed in [`roadmap.md`](./roadmap.md). The one v0.1-specific deferred item not in the roadmap: **a `klasp run` subcommand** that runs the configured checks from the CLI without involving an agent. Useful, but `pre-commit run` covers the same use case and adding it now bloats the v0.1 surface for marginal value. Reconsider in v0.2.
 
 ---
 
@@ -529,6 +561,6 @@ No async runtime. The gate is sequential `Command::output()`. No HTTP client. No
 
 ## 16. Document conventions
 
-This document uses Rust pseudocode where signatures are load-bearing for the design. The actual implementation will diverge in surface details (error type imports, lifetime annotations, derives) but must preserve the contracts described here. Where the design names a specific exit code, regex, env var name, or JSON path, those are commitments — changing them is a `GATE_SCHEMA_VERSION` bump.
+This document uses Rust pseudocode where signatures are load-bearing for the design. The actual implementation will diverge in surface details (error type imports, lifetime annotations, derive macros) but must preserve the contracts described here. Where the design names a specific exit code, regex, env var name, or JSON path, those are commitments — changing them is a `GATE_SCHEMA_VERSION` bump.
 
 Discussion happens on GitHub issues. Major design changes go through an `RFC-NNNN.md` PR in `docs/rfcs/` (a directory that doesn't exist yet — created when needed).
