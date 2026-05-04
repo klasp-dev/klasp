@@ -131,8 +131,8 @@ impl AgentSurface for CodexSurface {
         // without a separate `exists()` check.
         let existing = read_or_empty(&settings_path)?;
 
-        let stripped =
-            agents_md::uninstall_block(&existing).map_err(|e| agents_md_error(&settings_path, e))?;
+        let stripped = agents_md::uninstall_block(&existing)
+            .map_err(|e| agents_md_error(&settings_path, e))?;
 
         if stripped == existing {
             return Ok(paths);

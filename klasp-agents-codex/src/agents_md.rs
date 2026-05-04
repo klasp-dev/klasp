@@ -337,9 +337,8 @@ mod tests {
 
     #[test]
     fn duplicate_start_marker_is_rejected() {
-        let pre = format!(
-            "{MANAGED_START}\none\n{MANAGED_END}\n{MANAGED_START}\ntwo\n{MANAGED_END}\n"
-        );
+        let pre =
+            format!("{MANAGED_START}\none\n{MANAGED_END}\n{MANAGED_START}\ntwo\n{MANAGED_END}\n");
         let err = install_block(&pre, body()).expect_err("must fail");
         assert!(matches!(err, AgentsMdError::MalformedMarkers));
     }

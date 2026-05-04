@@ -90,7 +90,10 @@ fn install_is_idempotent_running_twice_produces_no_diff() {
     let report2 = surface.install(&ctx(dir.path().to_path_buf())).unwrap();
     let after_second = read(&agents_md);
 
-    assert_eq!(after_first, after_second, "running install twice changed bytes");
+    assert_eq!(
+        after_first, after_second,
+        "running install twice changed bytes"
+    );
     assert!(report2.already_installed);
     assert!(report2.paths_written.is_empty());
 }
@@ -167,7 +170,10 @@ fn hook_path_points_at_pre_commit() {
 fn settings_path_is_repo_root_agents_md() {
     let dir = tempfile::tempdir().unwrap();
     let surface = CodexSurface;
-    assert_eq!(surface.settings_path(dir.path()), dir.path().join("AGENTS.md"));
+    assert_eq!(
+        surface.settings_path(dir.path()),
+        dir.path().join("AGENTS.md")
+    );
 }
 
 #[test]
@@ -176,5 +182,8 @@ fn render_hook_script_is_empty_in_w1() {
     // "no hook script written yet" contract structurally obvious.
     let surface = CodexSurface;
     let dir = tempfile::tempdir().unwrap();
-    assert_eq!(surface.render_hook_script(&ctx(dir.path().to_path_buf())), "");
+    assert_eq!(
+        surface.render_hook_script(&ctx(dir.path().to_path_buf())),
+        ""
+    );
 }
