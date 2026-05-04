@@ -140,9 +140,15 @@ impl AgentSurface for CodexSurface {
 
         if !dry_run {
             if stripped.is_empty() {
-                // The file existed only because klasp created it; remove it
-                // so uninstall is a true round-trip from the missing-file
-                // install path.
+                // Strip-to-empty fires in two cases: (1) the file existed
+                // only because klasp created it (round-trip from the
+                // missing-file install path), or (2) a pre-existing empty
+                // / whitespace-only AGENTS.md was the input — install
+                // replaced the whitespace with the block, uninstall now
+                // strips back to empty. Either way, removing the file is
+                // the right move: an empty AGENTS.md is non-canonical
+                // markdown, and `detect()` already returns `false` when
+                // the file is missing, so the surface state is clean.
                 fs::remove_file(&settings_path).map_err(|e| InstallError::Io {
                     path: settings_path.clone(),
                     source: e,

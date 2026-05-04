@@ -11,12 +11,16 @@
 //!   block contents are anchored by the [`MANAGED_START`] / [`MANAGED_END`]
 //!   marker lines; re-running install replaces only what's between them.
 //! - **Preservation.** Bytes outside the managed block are returned
-//!   unchanged. This includes any prose another tool emitted (no shared
-//!   markers), pre-existing user notes, and trailing whitespace structure.
-//! - **Round-trip.** `uninstall(install(input))` == `input` for any input
-//!   that didn't already contain a managed block. When install *appended*
-//!   the block (rather than replacing one in place), uninstall also drops
-//!   the leading blank-line separator install added.
+//!   unchanged, with one tolerated normalisation noted below. This includes
+//!   any prose another tool emitted (no shared markers) and pre-existing
+//!   user notes.
+//! - **Round-trip.** `uninstall(install(input))` is `input` after
+//!   normalising the trailing-newline state to a single `\n` (or the empty
+//!   string when `input` was empty or whitespace-only). Inputs that already
+//!   end in exactly one `\n` round-trip byte-for-byte; an input without a
+//!   trailing newline gains one. This canonicalises markdown to the POSIX
+//!   "files end in `\n`" convention rather than preserving idiosyncratic
+//!   trailing-whitespace state across an install/uninstall cycle.
 //!
 //! The markers are deliberately namespaced (`klasp:managed:start` /
 //! `klasp:managed:end`) so they don't collide with other tools that emit
