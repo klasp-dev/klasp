@@ -1,0 +1,22 @@
+[package]
+name = "klasp-agents-codex"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Codex agent surface for klasp — writes the AGENTS.md managed-block that documents the gate."
+documentation = "https://docs.rs/klasp-agents-codex"
+readme = "../README.md"
+keywords = ["ai", "agents", "codex", "klasp"]
+categories = ["development-tools", "command-line-utilities"]
+
+[dependencies]
+klasp-core = { path = "../klasp-core", version = "0.0.0" }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
