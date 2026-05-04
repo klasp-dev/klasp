@@ -249,12 +249,29 @@ jobs:
       - name: list wheels
         run: ls -la dist/
 
-      - name: publish to PyPI
+      - name: report auth method
+        shell: bash
+        env:
+          HAS_TOKEN: ${{ secrets.PYPI_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" = "true" ]; then
+            echo "PyPI auth: using PYPI_TOKEN secret (API token)"
+          else
+            echo "PyPI auth: using OIDC trusted publisher (no PYPI_TOKEN set)"
+          fi
+
+      - name: publish to PyPI via OIDC (trusted publisher)
+        if: ${{ secrets.PYPI_TOKEN == '' }}
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           packages-dir: dist/
-          # If trusted publishing is configured, leave password empty.
-          # If only an API token is configured, set PYPI_TOKEN as a repo secret.
+          skip-existing: true
+
+      - name: publish to PyPI via API token
+        if: ${{ secrets.PYPI_TOKEN != '' }}
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        with:
+          packages-dir: dist/
           password: ${{ secrets.PYPI_TOKEN }}
           skip-existing: true
 
