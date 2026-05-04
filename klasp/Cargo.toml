@@ -15,4 +15,10 @@ categories = ["development-tools", "command-line-utilities"]
 
 [dependencies]
 klasp-core = { path = "../klasp-core" }
+klasp-agents-claude = { path = "../klasp-agents-claude" }
 clap = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }

@@ -6,6 +6,7 @@
 
 mod cli;
 mod cmd;
+mod registry;
 
 fn main() -> std::process::ExitCode {
     cli::run()
