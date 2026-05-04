@@ -11,3 +11,10 @@ publish = false
 
 [dependencies]
 klasp-core = { path = "../klasp-core" }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+insta = { version = "1", features = ["yaml"] }
+tempfile = { workspace = true }
