@@ -373,9 +373,11 @@ fn ensure_parent(path: &Path) -> Result<(), InstallError> {
     })
 }
 
-/// Atomic write via tempfile + rename. `mode` is applied after the rename
-/// (Unix only) — without it the destination silently inherits
-/// `NamedTempFile`'s `0o600` default.
+/// Atomic write via tempfile + rename. `mode` is applied to the *temp*
+/// file before the rename so the published file is never visible at
+/// `NamedTempFile`'s `0o600` default — a concurrent `git commit` between
+/// `persist` and a post-rename `chmod` would otherwise see a hook with
+/// the executable bit cleared and abort with EACCES.
 fn atomic_write(path: &Path, contents: &[u8], mode: u32) -> Result<(), InstallError> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let mut tf = tempfile::NamedTempFile::new_in(dir).map_err(|e| InstallError::Io {
@@ -390,11 +392,11 @@ fn atomic_write(path: &Path, contents: &[u8], mode: u32) -> Result<(), InstallEr
         path: tf.path().to_path_buf(),
         source: e,
     })?;
+    apply_mode(tf.path(), mode)?;
     tf.persist(path).map_err(|e| InstallError::Io {
         path: path.to_path_buf(),
         source: e.error,
     })?;
-    apply_mode(path, mode)?;
     Ok(())
 }
 

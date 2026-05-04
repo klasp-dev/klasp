@@ -24,5 +24,10 @@ pub use agents_md::{
     contains_block, install_block, render_managed_block, uninstall_block, AgentsMdError,
     DEFAULT_BLOCK_BODY, MANAGED_END, MANAGED_START,
 };
-pub use git_hooks::{HookConflict, HookError, HookKind, HookWarning};
+// `HookError` stays accessible via the `git_hooks` submodule path for the
+// few callers that need it (it's the return type of the pure block-writer
+// helpers `install_block` / `uninstall_block` / `contains_block`); we
+// don't surface it at the crate root because the public install / uninstall
+// API on `CodexSurface` returns `InstallError`, not `HookError`.
+pub use git_hooks::{HookConflict, HookKind, HookWarning};
 pub use surface::{CodexInstallReport, CodexSurface};

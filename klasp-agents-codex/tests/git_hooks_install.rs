@@ -21,9 +21,10 @@ use klasp_agents_codex::{
     git_hooks::{self, HookConflict, HookKind, HookWarning, MANAGED_END, MANAGED_START},
     CodexSurface,
 };
-use klasp_core::{AgentSurface, InstallContext};
+use klasp_core::{AgentSurface, InstallContext, GATE_SCHEMA_VERSION};
 
 const FIXTURE_HUSKY: &str = include_str!("fixtures/githooks/pre-commit-husky.sh");
+const FIXTURE_HUSKY_V9: &str = include_str!("fixtures/githooks/pre-commit-husky-v9.sh");
 const FIXTURE_LEFTHOOK: &str = include_str!("fixtures/githooks/pre-commit-lefthook.sh");
 const FIXTURE_PRECOMMIT_FRAMEWORK: &str =
     include_str!("fixtures/githooks/pre-commit-pre-commit-framework.sh");
@@ -34,7 +35,7 @@ fn ctx(repo_root: PathBuf) -> InstallContext {
         repo_root,
         dry_run: false,
         force: false,
-        schema_version: 1,
+        schema_version: GATE_SCHEMA_VERSION,
     }
 }
 
@@ -76,8 +77,9 @@ fn install_fresh_creates_pre_commit_with_shebang_block_and_executable_bit() {
     assert!(body.contains(MANAGED_END));
     // Schema env-var must be exported on the same line as the exec
     // so the schema-mismatch path in `klasp gate` can detect drift.
+    let expected_schema_export = format!("KLASP_GATE_SCHEMA={GATE_SCHEMA_VERSION} exec klasp gate");
     assert!(
-        body.contains("KLASP_GATE_SCHEMA=1 exec klasp gate"),
+        body.contains(&expected_schema_export),
         "schema export must precede the exec on the same line; got:\n{body}",
     );
     assert!(body.contains("--agent codex"));
@@ -183,7 +185,7 @@ fn install_appends_block_to_existing_user_hook() {
     // klasp block tacked on at the end.
     assert!(body.contains(MANAGED_START));
     assert!(body.contains(MANAGED_END));
-    assert!(body.contains("KLASP_GATE_SCHEMA=1"));
+    assert!(body.contains(&format!("KLASP_GATE_SCHEMA={GATE_SCHEMA_VERSION}")));
     // No warnings — this is a plain user hook, not a foreign tool's.
     assert!(report.warnings.is_empty());
 }
@@ -387,6 +389,26 @@ fn detect_conflict_returns_husky_for_real_husky_fixture() {
         git_hooks::detect_conflict(FIXTURE_HUSKY),
         Some(HookConflict::Husky),
     );
+}
+
+#[test]
+fn detect_conflict_returns_husky_for_husky_v9_h_shim() {
+    // husky v9 shortened the shim path from `_/husky.sh` to `_/h`. Without
+    // the `_/h"` substring in `detect_conflict`, klasp would silently
+    // append its block to a husky-managed hook on any v9-or-newer repo.
+    assert_eq!(
+        git_hooks::detect_conflict(FIXTURE_HUSKY_V9),
+        Some(HookConflict::Husky),
+    );
+}
+
+#[test]
+fn detect_conflict_does_not_false_positive_on_husky_in_user_comment() {
+    // A user comment merely mentioning husky must not trip the husky
+    // arm. The pre-fix detection used a bare `.husky/` substring which
+    // would have false-positived this hook.
+    let user_hook = "#!/usr/bin/env sh\n# Migrated from .husky/ — now managed manually\nnpm test\n";
+    assert_eq!(git_hooks::detect_conflict(user_hook), None);
 }
 
 #[test]
