@@ -5,7 +5,6 @@
 //! `Clone` because verdicts are merged across multiple `CheckResult`s — the
 //! aggregation in `Verdict::merge` requires copies of the input findings.
 
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use serde::{Deserialize, Serialize};
@@ -27,8 +26,12 @@ pub enum Severity {
 pub struct Finding {
     pub rule: String,
     pub message: String,
+    /// File path the finding refers to, formatted via `Path::to_string_lossy()`
+    /// at construction time. Stored as `String` (not `PathBuf`) so JSON
+    /// serialisation on Windows can't fail on non-UTF-8 paths — findings are
+    /// human-rendered anyway, lossy display is acceptable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub file: Option<PathBuf>,
+    pub file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
     pub severity: Severity,
