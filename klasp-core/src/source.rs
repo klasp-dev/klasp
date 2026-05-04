@@ -75,5 +75,6 @@ pub trait CheckSource: Send + Sync {
     /// output) — semantic failures (lint hits, test failures) ride inside
     /// `Verdict::Fail`. Use `CheckSourceError::Other` for impl-specific
     /// errors that don't fit the predefined variants.
-    fn run(&self, config: &CheckConfig, state: &RepoState) -> Result<CheckResult, CheckSourceError>;
+    fn run(&self, config: &CheckConfig, state: &RepoState)
+        -> Result<CheckResult, CheckSourceError>;
 }
