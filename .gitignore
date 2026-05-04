@@ -33,3 +33,8 @@ dist/
 !/.claude/settings.json
 !/.claude/hooks/
 !/.claude/hooks/klasp-gate.sh
+
+# AgentDB / ruvector local cache (rebuilt per-session)
+ruvector.db
+ruvector.db-shm
+ruvector.db-wal
