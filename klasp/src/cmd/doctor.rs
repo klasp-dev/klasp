@@ -263,24 +263,36 @@ fn check_settings(repo_root: &Path, surface: &dyn AgentSurface, c: &mut Counters
     }
 }
 
-/// Check 4 — for each shell check, resolve its leading executable on
-/// PATH. WARN-only: a missing dev tool isn't an install bug, but the user
+/// Check 4 — for each shell-flavoured check, resolve its leading executable
+/// on PATH. WARN-only: a missing dev tool isn't an install bug, but the user
 /// should know the gate will fail at runtime if invoked.
+///
+/// Recipe sources (v0.2 W4: `pre_commit`) advertise a known argv0 directly
+/// — the recipe knows which binary it shells out to even before the gate
+/// renders the full command.
 fn check_paths(config: &ConfigV1, c: &mut Counters) {
     for check in &config.checks {
-        let CheckSourceConfig::Shell { command } = &check.source;
-        match extract_argv0(command) {
-            Some(argv0) => match which::which(argv0) {
-                Ok(_) => c.ok(&format!("path[{}]: `{argv0}` found in PATH", check.name)),
-                Err(_) => c.warn(&format!(
-                    "path[{}]: `{argv0}` not found in PATH (command: `{command}`)",
+        match &check.source {
+            CheckSourceConfig::Shell { command } => match extract_argv0(command) {
+                Some(argv0) => match which::which(argv0) {
+                    Ok(_) => c.ok(&format!("path[{}]: `{argv0}` found in PATH", check.name)),
+                    Err(_) => c.warn(&format!(
+                        "path[{}]: `{argv0}` not found in PATH (command: `{command}`)",
+                        check.name
+                    )),
+                },
+                None => c.warn(&format!(
+                    "path[{}]: could not determine executable from command `{command}`",
                     check.name
                 )),
             },
-            None => c.warn(&format!(
-                "path[{}]: could not determine executable from command `{command}`",
-                check.name
-            )),
+            CheckSourceConfig::PreCommit { .. } => match which::which("pre-commit") {
+                Ok(_) => c.ok(&format!("path[{}]: `pre-commit` found in PATH", check.name)),
+                Err(_) => c.warn(&format!(
+                    "path[{}]: `pre-commit` not found in PATH (recipe: pre_commit)",
+                    check.name
+                )),
+            },
         }
     }
 }

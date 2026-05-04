@@ -1,14 +1,16 @@
-# klasp recipes (v0.1)
+# klasp recipes (v0.1, v0.2)
 
 Worked `klasp.toml` snippets for the most common check tools. Every snippet is
 copy-pasteable into the `[[checks]]` section of your config; for the surrounding
 shape, see [`design.md` §3.5](./design.md#35-configv1-versioned-config) or the
 project's own dogfood config at [`/klasp.toml`](../klasp.toml).
 
-> v0.1 ships exactly one check source: `type = "shell"`. v0.2 adds named
-> recipes (`type = "pre_commit"`, `type = "fallow"`, `type = "pytest"`,
-> `type = "cargo"`) so users can drop the verbose `command = "..."` lines —
-> see [roadmap.md §v0.2](./roadmap.md#v02--codex--named-recipes-target-3-months-from-v01).
+> v0.1 shipped exactly one check source: `type = "shell"`. v0.2 W4 adds the
+> first typed recipe — `type = "pre_commit"` — alongside it. v0.2 W5/W6 will
+> add `type = "fallow"`, `type = "pytest"`, and `type = "cargo"` along the
+> same shape. The shell form continues to work unchanged for any tool a
+> recipe doesn't cover yet — see
+> [roadmap.md §v0.2](./roadmap.md#v02--codex--named-recipes-target-3-months-from-v01).
 
 ## Patterns
 
@@ -77,6 +79,41 @@ Runs the [pre-commit](https://pre-commit.com/) framework against the diff,
 exactly as you'd run it locally. Use the same flags pre-commit uses internally
 when invoked from its own `pre-commit` git hook so the agent hits identical
 gates to a human typing `git commit`.
+
+### Typed recipe form (v0.2 W4) — preferred
+
+```toml
+[[checks]]
+name = "pre-commit"
+triggers = [{ on = ["commit"] }]
+timeout_secs = 120
+[checks.source]
+type = "pre_commit"
+# Optional. Defaults shown.
+# hook_stage = "pre-commit"
+# config_path = ".pre-commit-config.yaml"
+```
+
+The typed recipe builds the equivalent `pre-commit run --hook-stage <stage>
+--from-ref ${KLASP_BASE_REF} --to-ref HEAD [-c <config_path>]` invocation
+internally, then parses pre-commit's per-hook stdout into structured findings
+the agent can act on (`hook \`ruff\` failed`, `hook \`mypy\` failed`) instead
+of a single opaque "exit 1" message. Pre-commit 3.x and 4.x are both
+supported; outside that range the recipe surfaces a stderr warning but keeps
+running on the bet that pre-commit's stable stdout format stays stable.
+
+`hook_stage` accepts any of pre-commit's documented stages
+(`pre-commit`, `pre-push`, `commit-msg`, `pre-merge-commit`, …). `config_path`
+is forwarded as `-c <path>`; omit it to let pre-commit's own discovery find
+`.pre-commit-config.yaml` at the repo root.
+
+> v0.1 shipped a `verdict_path` field on `CheckConfig` that the design briefly
+> implied; it was deferred to a future milestone (see
+> [`design.md` §14](./design.md#14-open-questions--known-gaps) for the
+> deferral note). The typed recipes don't need it — each recipe owns its
+> tool's output format.
+
+### v0.1 shell form (still supported)
 
 ```toml
 [[checks]]
@@ -247,23 +284,26 @@ without retrying the wrong fix.
 ## What's next
 
 v0.2 introduces named recipes — typed `CheckSource` impls that hide the
-verbose `command = "..."` line behind a `type = "<recipe>"` shorthand:
+verbose `command = "..."` line behind a `type = "<recipe>"` shorthand. The
+first one (`type = "pre_commit"`) shipped in W4 — see the
+[pre-commit](#pre-commit) section above. W5/W6 add `fallow`, `pytest`, and
+`cargo`:
 
 ```toml
-[[checks]]
-name = "lint"
-triggers = [{ on = ["commit"] }]
-[checks.source]
-type = "pre_commit"   # knows --hook-stage / --from-ref semantics
-
 [[checks]]
 name = "audit"
 triggers = [{ on = ["commit", "push"] }]
 [checks.source]
-type = "fallow"       # parses fallow's JSON, surfaces structured findings
+type = "fallow"       # v0.2 W5: parses fallow's JSON, surfaces structured findings
+
+[[checks]]
+name = "tests"
+triggers = [{ on = ["push"] }]
+[checks.source]
+type = "pytest"       # v0.2 W6
 ```
 
-Same for `pytest` and `cargo`. Existing v0.1 `type = "shell"` configs continue
-working unchanged (no schema bump). See
+Existing v0.1 `type = "shell"` configs continue working unchanged (no schema
+bump). See
 [roadmap.md §v0.2](./roadmap.md#v02--codex--named-recipes-target-3-months-from-v01)
 for the full plan.

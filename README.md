@@ -25,6 +25,17 @@ Agent ships a green-locally PR. CI runs the team's pre-commit, linter, and type-
 One `klasp.toml` declares the same checks. Pass-locally now means pass-CI.
 
 ```toml
+# Typed recipe form (v0.2 W4) — preferred for pre-commit setups.
+[[checks]]
+name = "pre-commit"
+triggers = [{ on = ["commit"] }]
+[checks.source]
+type = "pre_commit"           # optional: hook_stage, config_path
+```
+
+The typed `type = "pre_commit"` recipe handles the `--hook-stage`, `--from-ref`, `--to-ref` flags internally and parses pre-commit's per-hook output into structured findings the agent can act on. The v0.1 shell form still works:
+
+```toml
 [[checks]]
 name = "pre-commit"
 triggers = [{ on = ["commit"] }]
@@ -137,8 +148,9 @@ klasp uninstall --agent claude_code        # removes the hook + settings entry, 
 | `klasp init` / `install` / `uninstall` / `gate` / `doctor` | Shipped in v0.1 |
 | `KLASP_BASE_REF` env var for diff-aware checks | Shipped in v0.1 |
 | Four-platform binary distribution (cargo / npm / PyPI) | Shipped in v0.1 (live post-tag); darwin-arm64, linux-x64-gnu, linux-arm64-gnu, win-x64. x86 mac → `cargo install klasp` from source. |
-| Codex via `AGENTS.md` + git hooks | v0.2 |
-| Named recipes (`type = "pre_commit"` / `"fallow"` / `"pytest"` / `"cargo"`) | v0.2 |
+| Codex via `AGENTS.md` + git hooks | v0.2 (W1-W3 shipped) |
+| Named recipe: `type = "pre_commit"` | Shipped in v0.2 W4 |
+| Named recipes: `type = "fallow"` / `"pytest"` / `"cargo"` | v0.2 (W5-W6) |
 | Parallel check execution | v0.2.5 |
 | Cursor / Aider surfaces | v0.3 |
 | Plugin protocol | v0.3 (experimental) → v1.0 (stable) |

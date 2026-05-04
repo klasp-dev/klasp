@@ -1,15 +1,16 @@
 //! `CheckSource` implementations for the klasp binary.
 //!
-//! v0.1 ships exactly one source — `Shell` — registered at startup. v0.2 will
-//! add named recipes (`pre_commit`, `fallow`, `pytest`, `cargo`) as new
-//! impls; v0.3 will add the subprocess plugin model. Per
-//! [docs/design.md §3.2], every new source is an additive change.
+//! v0.1 shipped exactly one source — `Shell`. v0.2 W4 adds the first named
+//! recipe — `PreCommit` — as a sibling impl; W5/W6 add `fallow`, `pytest`,
+//! and `cargo` along the same shape. v0.3 will add the subprocess plugin
+//! model. Per [docs/design.md §3.2], every new source is an additive change.
 //!
 //! A `SourceRegistry` is the dispatch table the gate runtime uses to find
-//! the right source for a `CheckConfig`. v0.1's registry is a fixed `Vec`
-//! pre-populated with the built-in `Shell` source; the v0.3 plugin model
+//! the right source for a `CheckConfig`. The registry is a fixed `Vec`
+//! pre-populated with the built-in sources; the v0.3 plugin model
 //! will append discovered subprocess plugins to the same vec.
 
+pub mod pre_commit;
 pub mod shell;
 
 use klasp_core::{CheckConfig, CheckSource};
@@ -22,9 +23,17 @@ pub struct SourceRegistry {
 }
 
 impl SourceRegistry {
-    /// Build the default registry: `Shell` only in v0.1.
+    /// Build the default registry. Order doesn't affect correctness
+    /// (each source's `supports_config` claims a disjoint subset of
+    /// `CheckSourceConfig` variants), but more-specific recipes go
+    /// before more-general ones so future variants that overlap with
+    /// `Shell` (none today, but the v0.3 plugin model could add them)
+    /// don't get short-circuited by the catch-all.
     pub fn default_v1() -> Self {
-        let sources: Vec<Box<dyn CheckSource>> = vec![Box::new(shell::ShellSource::new())];
+        let sources: Vec<Box<dyn CheckSource>> = vec![
+            Box::new(pre_commit::PreCommitSource::new()),
+            Box::new(shell::ShellSource::new()),
+        ];
         Self { sources }
     }
 
@@ -63,6 +72,18 @@ mod tests {
         }
     }
 
+    fn pre_commit_check() -> CheckConfig {
+        CheckConfig {
+            name: "lint".into(),
+            triggers: vec![],
+            source: CheckSourceConfig::PreCommit {
+                hook_stage: None,
+                config_path: None,
+            },
+            timeout_secs: None,
+        }
+    }
+
     #[test]
     fn registry_dispatches_shell_check_to_shell_source() {
         let registry = SourceRegistry::default_v1();
@@ -70,5 +91,14 @@ mod tests {
             .find_for(&shell_check())
             .expect("shell source must claim shell config");
         assert_eq!(source.source_id(), "shell");
+    }
+
+    #[test]
+    fn registry_dispatches_pre_commit_check_to_pre_commit_source() {
+        let registry = SourceRegistry::default_v1();
+        let source = registry
+            .find_for(&pre_commit_check())
+            .expect("pre_commit source must claim pre_commit config");
+        assert_eq!(source.source_id(), "pre_commit");
     }
 }

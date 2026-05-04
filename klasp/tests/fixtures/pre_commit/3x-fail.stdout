@@ -1,0 +1,19 @@
+trim trailing whitespace.................................................Passed
+fix end of files.........................................................Passed
+check yaml...........................................(no files to check)Skipped
+check for added large files..............................................Passed
+ruff.....................................................................Failed
+- hook id: ruff
+- exit code: 1
+
+src/main.py:3:1: F401 [*] `os` imported but unused
+src/main.py:7:80: E501 line too long (102 > 79)
+Found 2 errors.
+
+ruff-format..............................................................Failed
+- hook id: ruff-format
+- files were modified by this hook
+
+1 file reformatted
+
+mypy.....................................................................Passed
