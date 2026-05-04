@@ -109,10 +109,11 @@ command = "fallow audit --base ${KLASP_BASE_REF} --quiet --format json"
 ```
 
 > v0.1 surfaces fallow's findings only via its non-zero exit code and
-> redirected stdout/stderr — klasp does not parse fallow's JSON. The named
-> `type = "fallow"` recipe in v0.2 will read fallow's structured output and
-> render typed findings into the gate's block message. (The ConfigV1 schema
-> reserves the `verdict_path` field for this transition; ignore it for now.)
+> redirected stdout/stderr — klasp does not parse fallow's JSON. The v0.2
+> named recipes (`type = "fallow"`, `type = "pytest"`) will own JSON-output
+> parsing for tools that emit structured verdicts and render typed findings
+> into the gate's block message. Until then, fall back on the check tool's
+> exit code (any non-zero blocks).
 
 ## pytest
 
