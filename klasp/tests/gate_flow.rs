@@ -29,8 +29,12 @@ fn klasp_bin() -> &'static str {
 }
 
 /// Spawn `klasp gate` with the given stdin and env overrides; return the
-/// exit code (or `None` on terminating signal).
-fn spawn_gate(stdin_payload: &str, project_dir: &Path, extra_env: &[(&str, &str)]) -> Option<i32> {
+/// exit code (or `None` on terminating signal) and the captured stderr.
+fn spawn_gate(
+    stdin_payload: &str,
+    project_dir: &Path,
+    extra_env: &[(&str, &str)],
+) -> (Option<i32>, String) {
     let mut cmd = Command::new(klasp_bin());
     cmd.arg("gate")
         .env("KLASP_GATE_SCHEMA", GATE_SCHEMA_VERSION.to_string())
@@ -52,15 +56,14 @@ fn spawn_gate(stdin_payload: &str, project_dir: &Path, extra_env: &[(&str, &str)
         .expect("write stdin");
     let output = child.wait_with_output().expect("wait for klasp");
 
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
     // Surface stderr in test logs so a failing assertion has the runtime
     // notices visible without re-running with `--nocapture`.
-    if !output.stderr.is_empty() {
-        eprintln!(
-            "klasp gate stderr:\n{}",
-            String::from_utf8_lossy(&output.stderr),
-        );
+    if !stderr.is_empty() {
+        eprintln!("klasp gate stderr:\n{stderr}");
     }
-    output.status.code()
+    (output.status.code(), stderr)
 }
 
 fn write_klasp_toml(project_dir: &Path, body: &str) {
@@ -89,7 +92,7 @@ fn fail_check_blocks_with_exit_2() {
         "#,
     );
 
-    let code = spawn_gate(FIXTURE_GIT_COMMIT, project.path(), &[]);
+    let (code, _stderr) = spawn_gate(FIXTURE_GIT_COMMIT, project.path(), &[]);
     assert_eq!(
         code,
         Some(2),
@@ -119,7 +122,7 @@ fn pass_check_returns_exit_0() {
         "#,
     );
 
-    let code = spawn_gate(FIXTURE_GIT_COMMIT, project.path(), &[]);
+    let (code, _stderr) = spawn_gate(FIXTURE_GIT_COMMIT, project.path(), &[]);
     assert_eq!(code, Some(0), "passing check must exit 0");
 }
 
@@ -136,6 +139,7 @@ fn non_git_command_skips_checks_and_returns_0() {
 
             [gate]
             agents = ["claude_code"]
+            policy = "any_fail"
 
             [[checks]]
             name = "always-fail"
@@ -153,7 +157,7 @@ fn non_git_command_skips_checks_and_returns_0() {
         "tool_input": { "command": "ls -la" }
     }"#;
 
-    let code = spawn_gate(payload, project.path(), &[]);
+    let (code, _stderr) = spawn_gate(payload, project.path(), &[]);
     assert_eq!(
         code,
         Some(0),
@@ -166,10 +170,59 @@ fn missing_klasp_toml_fails_open() {
     let project = TempDir::new().expect("tempdir");
     // Deliberately do *not* create klasp.toml — the gate runtime must
     // emit a notice and fail open.
-    let code = spawn_gate(FIXTURE_GIT_COMMIT, project.path(), &[]);
+    let (code, stderr) = spawn_gate(FIXTURE_GIT_COMMIT, project.path(), &[]);
     assert_eq!(
         code,
         Some(0),
         "missing klasp.toml must fail open with exit 0, never block",
+    );
+    // Anchor on the notice prefix so a future refactor that silently
+    // returns `Ok(default_config)` instead of `Err(ConfigNotFound)` doesn't
+    // bypass the fail-open notice without breaking this test.
+    assert!(
+        stderr.contains("klasp-gate:"),
+        "expected fail-open notice on stderr, got: {stderr:?}",
+    );
+}
+
+#[test]
+fn source_runtime_error_fails_open() {
+    // Configure a check whose `ShellSource::run` returns
+    // `CheckSourceError::Timeout` mid-flight — the gate handler must emit a
+    // per-check notice and continue (no verdict appended). With no verdicts
+    // and `policy = "any_fail"`, the aggregate is `Verdict::Pass` → exit 0.
+    let project = TempDir::new().expect("tempdir");
+    write_klasp_toml(
+        project.path(),
+        r#"
+            version = 1
+
+            [gate]
+            agents = ["claude_code"]
+            policy = "any_fail"
+
+            [[checks]]
+            name = "always-times-out"
+            triggers = [{ on = ["commit"] }]
+            timeout_secs = 0
+            [checks.source]
+            type = "shell"
+            command = "sleep 1"
+        "#,
+    );
+
+    let (code, stderr) = spawn_gate(FIXTURE_GIT_COMMIT, project.path(), &[]);
+    assert_eq!(
+        code,
+        Some(0),
+        "source runtime error must fail open (exit 0), got code = {code:?}\nstderr:\n{stderr}",
+    );
+    assert!(
+        stderr.contains("klasp-gate:"),
+        "expected fail-open notice on stderr, got: {stderr:?}",
+    );
+    assert!(
+        stderr.contains("always-times-out"),
+        "notice should mention the check name, got: {stderr:?}",
     );
 }
