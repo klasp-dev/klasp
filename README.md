@@ -42,6 +42,7 @@ Every shell check sees `KLASP_BASE_REF`, set to the merge-base of `HEAD` against
 ```toml
 [[checks]]
 name = "fallow-audit"
+triggers = [{ on = ["commit", "push"] }]
 [checks.source]
 type = "shell"
 command = "fallow audit --base $KLASP_BASE_REF"
@@ -77,18 +78,21 @@ Agent onboards a repo with a TS frontend, Go API, and Python ML pipeline. Three 
 ```toml
 [[checks]]
 name = "frontend"
+triggers = [{ on = ["commit"] }]
 [checks.source]
 type = "shell"
 command = "cd web && pnpm typecheck && pnpm lint"
 
 [[checks]]
 name = "api"
+triggers = [{ on = ["commit"] }]
 [checks.source]
 type = "shell"
 command = "cd api && go test ./... && go vet ./..."
 
 [[checks]]
 name = "ml"
+triggers = [{ on = ["commit"] }]
 [checks.source]
 type = "shell"
 command = "cd ml && uv run pytest && uv run ruff check"
