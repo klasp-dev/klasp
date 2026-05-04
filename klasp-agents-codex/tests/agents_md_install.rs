@@ -31,7 +31,12 @@ fn install_creates_agents_md_when_missing() {
 
     assert_eq!(report.agent_id, CodexSurface::AGENT_ID);
     assert!(!report.already_installed);
-    assert_eq!(report.paths_written.len(), 1);
+    // W2 (#28): install now writes AGENTS.md *and* the two git hooks
+    // (pre-commit, pre-push). Coverage of those file contents lives in
+    // `tests/git_hooks_install.rs` — here we assert only that the
+    // markdown surface still creates AGENTS.md and that the report
+    // surfaces all three paths.
+    assert_eq!(report.paths_written.len(), 3);
 
     let agents_md = dir.path().join("AGENTS.md");
     assert!(agents_md.is_file());
@@ -108,7 +113,11 @@ fn round_trip_install_then_uninstall_restores_original() {
     surface.install(&ctx(dir.path().to_path_buf())).unwrap();
     let paths = surface.uninstall(dir.path(), false).unwrap();
 
-    assert_eq!(paths.len(), 1);
+    // W2 (#28): uninstall touches AGENTS.md plus both klasp-managed
+    // hooks (created by install in this fresh tempdir). Hook-side
+    // coverage lives in `tests/git_hooks_install.rs`; we only check
+    // here that the AGENTS.md round-trip is byte-for-byte clean.
+    assert_eq!(paths.len(), 3);
     let restored = read(&agents_md);
     assert_eq!(restored, FIXTURE, "round-trip mutated the file");
 }
@@ -177,13 +186,16 @@ fn settings_path_is_repo_root_agents_md() {
 }
 
 #[test]
-fn render_hook_script_is_empty_in_w1() {
-    // W2 (#28) will fill this in. For W1, an empty render makes the
-    // "no hook script written yet" contract structurally obvious.
+fn render_hook_script_emits_pre_commit_body_in_w2() {
+    // W1 left this as the empty string (placeholder). W2 (#28) wires
+    // the real pre-commit body in, exposing the schema-version env-var
+    // export so callers' `--dry-run` can preview what'll be written.
+    // The pre-push body is reachable via `git_hooks::install_block`
+    // directly when callers want both.
     let surface = CodexSurface;
     let dir = tempfile::tempdir().unwrap();
-    assert_eq!(
-        surface.render_hook_script(&ctx(dir.path().to_path_buf())),
-        ""
-    );
+    let rendered = surface.render_hook_script(&ctx(dir.path().to_path_buf()));
+    assert!(rendered.contains("KLASP_GATE_SCHEMA=1"));
+    assert!(rendered.contains("--agent codex"));
+    assert!(rendered.contains("--trigger commit"));
 }
