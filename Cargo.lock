@@ -269,6 +269,7 @@ dependencies = [
  "anyhow",
  "clap",
  "klasp-agents-claude",
+ "klasp-agents-codex",
  "klasp-core",
  "serde_json",
  "tempfile",

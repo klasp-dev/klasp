@@ -1,21 +1,49 @@
 //! `klasp install` — discover agent surfaces and install klasp's gate hook.
 //!
-//! Implementation follows [docs/design.md §5] verbatim: build a
-//! [`SurfaceRegistry`], filter by `--agent` and `detect()`, dispatch to each
-//! surface's `install()`, render reports.
+//! Implementation follows [docs/design.md §5]: build a [`SurfaceRegistry`],
+//! resolve the user's `--agent` choice (single agent / `all` / omitted) into
+//! the set of surfaces to drive, dispatch to each surface's `install()`, and
+//! render reports + non-fatal warnings.
+//!
+//! ## Selection rules
+//!
+//! - `--agent <name>` — install exactly that surface. Unknown name → hard
+//!   error with the list of supported agents.
+//! - `--agent all` — read `klasp.toml`, intersect `[gate].agents` with the
+//!   registry. Unknown entries in the config fail loudly. An empty
+//!   `[gate].agents = []` array is a no-op + warning, not an error
+//!   (acceptance #4 of issue #29).
+//! - omitted — fall back to the v0.1 behaviour: every registered surface
+//!   that auto-detects (or all of them under `--force`).
+//!
+//! ## Codex warnings
+//!
+//! [`klasp_agents_codex::CodexSurface`] returns
+//! [`HookWarning::Skipped`](klasp_agents_codex::HookWarning) when a foreign
+//! hook manager (husky / lefthook / pre-commit framework) owns the
+//! `.git/hooks/pre-commit` (or `pre-push`) file. We render those to stderr
+//! as a non-fatal `warning:` line per acceptance #2 of issue #28; the
+//! install completes successfully.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{anyhow, Context, Result};
-use klasp_core::{AgentSurface, InstallContext, InstallReport, GATE_SCHEMA_VERSION};
+use klasp_agents_codex::{CodexSurface, HookKind, HookWarning};
+use klasp_core::{
+    AgentSurface, ConfigV1, InstallContext, InstallReport, KlaspError, GATE_SCHEMA_VERSION,
+};
 
 use crate::cli::InstallArgs;
 use crate::registry::SurfaceRegistry;
 
+/// Special value of `--agent` that fans installation out across every
+/// surface declared in `klasp.toml`'s `[gate].agents` array.
+pub const AGENT_ALL: &str = "all";
+
 pub fn run(args: &InstallArgs) -> ExitCode {
     match try_run(args) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(exit) => exit,
         Err(e) => {
             eprintln!("klasp install: {e:#}");
             ExitCode::from(1)
@@ -23,17 +51,20 @@ pub fn run(args: &InstallArgs) -> ExitCode {
     }
 }
 
-fn try_run(args: &InstallArgs) -> Result<()> {
+fn try_run(args: &InstallArgs) -> Result<ExitCode> {
     let repo_root = resolve_repo_root(args.repo_root.as_deref())?;
-
     let registry = SurfaceRegistry::default();
-    let agent_filter = args.agent.as_deref();
-    let surfaces: Vec<&dyn AgentSurface> = registry
-        .iter()
-        .filter(|s| agent_filter.map_or(true, |a| s.agent_id() == a))
-        .filter(|s| args.force || s.detect(&repo_root))
-        .collect();
 
+    let selection = resolve_selection(args.agent.as_deref(), &registry, &repo_root)?;
+    let surfaces = match selection {
+        Selection::Empty { reason } => {
+            eprintln!("warning: {reason}; nothing to install");
+            return Ok(ExitCode::SUCCESS);
+        }
+        Selection::Surfaces(s) => s,
+    };
+
+    let surfaces = filter_by_detect(&registry, surfaces, &repo_root, args.force);
     if surfaces.is_empty() {
         return Err(anyhow!(
             "no matching agent surfaces detected at {}; pass --force to install anyway",
@@ -50,14 +81,115 @@ fn try_run(args: &InstallArgs) -> Result<()> {
 
     let mut reports = Vec::with_capacity(surfaces.len());
     for s in &surfaces {
-        let report = s
-            .install(&ctx)
-            .with_context(|| format!("installing {}", s.agent_id()))?;
-        reports.push(report);
+        if s.agent_id() == CodexSurface::AGENT_ID {
+            // Detailed entry-point so we can surface hook-conflict warnings.
+            let detailed = CodexSurface
+                .install_detailed(&ctx)
+                .with_context(|| format!("installing {}", s.agent_id()))?;
+            for warning in &detailed.warnings {
+                print_hook_warning(warning);
+            }
+            reports.push(detailed.report);
+        } else {
+            let report = s
+                .install(&ctx)
+                .with_context(|| format!("installing {}", s.agent_id()))?;
+            reports.push(report);
+        }
     }
 
     print_reports(&reports, args.dry_run);
-    Ok(())
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Resolved agent-selection state for one invocation of `klasp install`
+/// or `klasp uninstall`.
+pub(crate) enum Selection<'a> {
+    /// At least one surface to act on.
+    Surfaces(Vec<&'a dyn AgentSurface>),
+    /// Nothing to do — `[gate].agents = []` under `--agent all`. Render
+    /// the carried `reason` as a `warning:` line and exit 0.
+    Empty { reason: String },
+}
+
+/// Resolve `--agent` into the list of surfaces the CLI must drive.
+///
+/// Errors map onto user-facing scenarios:
+///
+/// - unknown agent name → `"unknown agent ..."` listing supported names
+/// - `[gate].agents` entries the registry doesn't recognise → same shape
+/// - `[gate].agents` missing config when `--agent all` was requested →
+///   the underlying [`KlaspError::ConfigNotFound`]
+pub(crate) fn resolve_selection<'a>(
+    requested: Option<&str>,
+    registry: &'a SurfaceRegistry,
+    repo_root: &Path,
+) -> Result<Selection<'a>> {
+    match requested {
+        None => Ok(Selection::Surfaces(registry.iter().collect())),
+        Some(name) if name == AGENT_ALL => resolve_all(registry, repo_root),
+        Some(name) => match registry.get(name) {
+            Some(s) => Ok(Selection::Surfaces(vec![s])),
+            None => Err(unknown_agent(name, registry)),
+        },
+    }
+}
+
+fn resolve_all<'a>(registry: &'a SurfaceRegistry, repo_root: &Path) -> Result<Selection<'a>> {
+    let config = ConfigV1::load(repo_root).map_err(map_config_err)?;
+
+    if config.gate.agents.is_empty() {
+        return Ok(Selection::Empty {
+            reason: "`[gate].agents = []` in klasp.toml".to_string(),
+        });
+    }
+
+    let mut surfaces = Vec::with_capacity(config.gate.agents.len());
+    for name in &config.gate.agents {
+        match registry.get(name) {
+            Some(s) => surfaces.push(s),
+            None => return Err(unknown_agent(name, registry)),
+        }
+    }
+    Ok(Selection::Surfaces(surfaces))
+}
+
+/// Translate a [`KlaspError`] from `ConfigV1::load` into an `anyhow::Error`
+/// with a top-level message that reads naturally after `klasp install: `.
+fn map_config_err(e: KlaspError) -> anyhow::Error {
+    match e {
+        KlaspError::ConfigNotFound { searched } => {
+            let paths: Vec<String> = searched.iter().map(|p| p.display().to_string()).collect();
+            anyhow!(
+                "--agent all requires klasp.toml; not found (searched: {})",
+                paths.join(", ")
+            )
+        }
+        other => anyhow!(other),
+    }
+}
+
+fn unknown_agent(name: &str, registry: &SurfaceRegistry) -> anyhow::Error {
+    let supported = registry.agent_ids().join(", ");
+    anyhow!("unknown agent \"{name}\"; supported: {supported}, all")
+}
+
+/// Apply auto-detection unless the user passed `--force`. `--force` keeps
+/// every surface in the selection so the user can bootstrap a missing
+/// surface from scratch (W1 contract).
+fn filter_by_detect<'a>(
+    _registry: &'a SurfaceRegistry,
+    surfaces: Vec<&'a dyn AgentSurface>,
+    repo_root: &Path,
+    force: bool,
+) -> Vec<&'a dyn AgentSurface> {
+    if force {
+        return surfaces;
+    }
+    surfaces
+        .into_iter()
+        .filter(|s| s.detect(repo_root))
+        .collect()
 }
 
 fn print_reports(reports: &[InstallReport], dry_run: bool) {
@@ -82,6 +214,38 @@ fn print_reports(reports: &[InstallReport], dry_run: bool) {
         println!("{}: installed", r.agent_id);
         for path in &r.paths_written {
             println!("  wrote {}", path.display());
+        }
+    }
+}
+
+/// Render a non-fatal hook conflict to stderr. The format matches the
+/// "actionable suggestion is mandatory" requirement from issue #29: tell
+/// the user *exactly* what to do next.
+fn print_hook_warning(warning: &HookWarning) {
+    match warning {
+        HookWarning::Skipped {
+            path,
+            kind,
+            conflict,
+        } => {
+            let hook_label = match kind {
+                HookKind::Commit => "pre-commit",
+                HookKind::Push => "pre-push",
+            };
+            let trigger = kind.trigger_arg();
+            let tool = conflict.tool();
+            eprintln!(
+                "warning: skipping {hook_label} hook ({}) — file is managed by {tool}.",
+                path.display()
+            );
+            eprintln!(
+                "         Install klasp's gate manually by adding `klasp gate \
+                 --agent codex --trigger {trigger} \"$@\"`"
+            );
+            eprintln!(
+                "         to your existing hook, or remove the foreign tool and \
+                 re-run `klasp install --agent codex`."
+            );
         }
     }
 }

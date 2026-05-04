@@ -1,23 +1,27 @@
 //! `klasp uninstall` — remove klasp's gate hook from every agent surface.
 //!
-//! Symmetric counterpart to `install` (see [docs/design.md §5]). Honours
-//! `--agent` to scope removal, `--dry-run` to preview, and never touches
-//! sibling tools' hooks (those are filtered out at the
-//! `klasp_agents_claude::settings::unmerge_hook_entry` layer).
+//! Symmetric counterpart to `install` (see [docs/design.md §5]). Shares the
+//! `--agent` resolution rules with install via
+//! [`crate::cmd::install::resolve_selection`]: single agent, `all` (driven
+//! from `klasp.toml`'s `[gate].agents`), or omitted (every registered
+//! surface). Sibling tools' hooks are filtered out at the surface level —
+//! `klasp_agents_claude::settings::unmerge_hook_entry` and
+//! `klasp_agents_codex::git_hooks::uninstall_block` both refuse to touch
+//! foreign content.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use klasp_core::AgentSurface;
 
 use crate::cli::UninstallArgs;
-use crate::cmd::install::resolve_repo_root;
+use crate::cmd::install::{resolve_repo_root, resolve_selection, Selection};
 use crate::registry::SurfaceRegistry;
 
 pub fn run(args: &UninstallArgs) -> ExitCode {
     match try_run(args) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(exit) => exit,
         Err(e) => {
             eprintln!("klasp uninstall: {e:#}");
             ExitCode::from(1)
@@ -25,22 +29,18 @@ pub fn run(args: &UninstallArgs) -> ExitCode {
     }
 }
 
-fn try_run(args: &UninstallArgs) -> Result<()> {
+fn try_run(args: &UninstallArgs) -> Result<ExitCode> {
     let repo_root = resolve_repo_root(args.repo_root.as_deref())?;
-
     let registry = SurfaceRegistry::default();
-    let agent_filter = args.agent.as_deref();
-    let surfaces: Vec<&dyn AgentSurface> = registry
-        .iter()
-        .filter(|s| agent_filter.map_or(true, |a| s.agent_id() == a))
-        .collect();
 
-    if surfaces.is_empty() {
-        return Err(anyhow!(
-            "no matching agent surfaces (filter: {:?})",
-            agent_filter,
-        ));
-    }
+    let selection = resolve_selection(args.agent.as_deref(), &registry, &repo_root)?;
+    let surfaces: Vec<&dyn AgentSurface> = match selection {
+        Selection::Empty { reason } => {
+            eprintln!("warning: {reason}; nothing to remove");
+            return Ok(ExitCode::SUCCESS);
+        }
+        Selection::Surfaces(s) => s,
+    };
 
     for s in &surfaces {
         let touched = s
@@ -49,7 +49,7 @@ fn try_run(args: &UninstallArgs) -> Result<()> {
         report(s.agent_id(), &touched, args.dry_run);
     }
 
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 fn report(agent_id: &str, paths: &[PathBuf], dry_run: bool) {
