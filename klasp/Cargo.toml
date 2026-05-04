@@ -1,0 +1,20 @@
+[package]
+name = "klasp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Block AI coding agents on the same quality gates your humans hit. See https://github.com/klasp-dev/klasp"
+documentation = "https://docs.rs/klasp"
+readme = "../README.md"
+keywords = ["ai", "agents", "git-hooks", "pre-commit", "quality"]
+categories = ["development-tools", "command-line-utilities"]
+
+[dependencies]
+klasp-core = { path = "../klasp-core" }
+klasp-agents-claude = { path = "../klasp-agents-claude" }
+clap = { workspace = true }
+anyhow = { workspace = true }
