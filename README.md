@@ -8,29 +8,48 @@
 
 ## What klasp will be
 
-One `gates.yaml`, one `klasp install`, and every agent-initiated `git commit` and `git push` runs through `pre-commit`, `fallow`, your test suite, or any shell command — blocking on failure exactly like a human's git hook would.
+One `klasp.toml`, one `klasp install`, and every agent-initiated `git commit` / `git push` runs through `pre-commit`, `fallow`, your test suite, or any shell command — blocking on failure exactly like a human's git hook would.
 
-```yaml
-# gates.yaml
-version: 1
-agents: auto                # detect Claude Code, Cursor, Codex, Aider
-gates:
-  - id: pre-commit
-    triggers: [git_commit]
-    run: pre-commit run --hook-stage pre-commit --from-ref {base} --to-ref HEAD
-  - id: fallow
-    triggers: [git_commit, git_push]
-    run: fallow audit --base {base} --quiet
-    when: exists('.fallowrc.json')
+```toml
+# klasp.toml
+version = 1
+
+[gate]
+agents = ["claude_code"]   # v0.1; Codex in v0.2; Cursor + Aider in v0.3
+policy = "any_fail"
+
+[[checks]]
+name = "pre-commit"
+triggers = [{ on = ["commit"] }]
+[checks.source]
+type = "shell"
+command = "pre-commit run --hook-stage pre-commit --from-ref ${KLASP_BASE_REF} --to-ref HEAD"
+
+[[checks]]
+name = "fallow"
+triggers = [{ on = ["commit", "push"] }]
+[checks.source]
+type = "shell"
+command = "fallow audit --base ${KLASP_BASE_REF} --quiet"
 ```
 
-## Distribution layout
+## Documentation
 
-| Package | Path | Purpose |
-|---|---|---|
-| Rust crate | `./` (root) | Canonical implementation |
-| npm wrapper | `./npm/` | Distributes the binary to Node ecosystems |
-| PyPI wrapper | `./pypi/` | Distributes the binary to Python ecosystems |
+- [`docs/design.md`](./docs/design.md) — v0.1 architecture, abstractions, and rationale
+- [`docs/roadmap.md`](./docs/roadmap.md) — milestones from v0.1 → v1.0
+
+## Repository layout
+
+| Path | Purpose |
+|---|---|
+| `klasp-core/` *(planned)* | Library crate — public traits, types, gate protocol |
+| `klasp-agents-claude/` *(planned)* | `AgentSurface` impl for Claude Code |
+| `klasp/` *(planned)* | Binary crate — the CLI |
+| `npm/` | Biome-style npm distribution shim |
+| `pypi/` | maturin-based PyPI distribution wrapper |
+| `docs/` | Architecture docs and roadmap |
+
+The `klasp-core` / `klasp-agents-claude` / `klasp` workspace split lands during the v0.1 implementation work; the placeholder `Cargo.toml` at the repo root is the single-crate `0.0.0` publish that reserves the crates.io name.
 
 ## License
 
