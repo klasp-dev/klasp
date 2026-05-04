@@ -41,6 +41,11 @@ pub enum GateError {
          Re-run `klasp install` to update the hook."
     )]
     SchemaMismatch { script: u32, binary: u32 },
+    #[error(
+        "KLASP_GATE_SCHEMA is not set. Re-run `klasp install` to regenerate \
+         the hook script."
+    )]
+    SchemaMissing,
 }
 
 pub struct GateProtocol;
@@ -49,6 +54,21 @@ impl GateProtocol {
     /// Parse the JSON payload Claude Code writes to the hook's stdin.
     pub fn parse(stdin: &str) -> Result<GateInput, GateError> {
         serde_json::from_str(stdin).map_err(|e| GateError::Parse(e.to_string()))
+    }
+
+    /// Read `KLASP_GATE_SCHEMA` from the environment and parse it as a `u32`.
+    ///
+    /// Returns `GateError::SchemaMissing` when the variable is not set, and
+    /// `GateError::Parse` when the value cannot be parsed as an integer.
+    /// Designed to be composed with `check_schema_env`.
+    pub fn read_schema_from_env() -> Result<u32, GateError> {
+        match std::env::var("KLASP_GATE_SCHEMA") {
+            Err(std::env::VarError::NotPresent) => Err(GateError::SchemaMissing),
+            Err(e) => Err(GateError::Parse(format!("KLASP_GATE_SCHEMA env var: {e}"))),
+            Ok(s) => s
+                .parse::<u32>()
+                .map_err(|e| GateError::Parse(format!("KLASP_GATE_SCHEMA = {s:?}: {e}"))),
+        }
     }
 
     /// Compare the env-var schema (set by the shim) with the binary's
@@ -136,9 +156,33 @@ mod tests {
 
     #[test]
     fn schema_zero_is_mismatch() {
-        // The shim must always export KLASP_GATE_SCHEMA; a missing/zero
-        // env var should be treated as a mismatch (the binary defaults to 0
-        // when the var is unset, so this guards the fail-open path).
-        assert!(GateProtocol::check_schema_env(0).is_err());
+        // The shim must always export KLASP_GATE_SCHEMA; a zero value should
+        // be treated as a mismatch (the binary starts at schema 1).
+        let err = GateProtocol::check_schema_env(0).expect_err("zero should be mismatch");
+        assert!(matches!(err, GateError::SchemaMismatch { .. }));
+    }
+
+    #[test]
+    fn schema_missing_env_returns_schema_missing() {
+        // Note: env-var tests are inherently racy in multi-threaded test
+        // runners. This test is self-contained: it saves, unsets, asserts,
+        // then restores the variable. It assumes no other test in this
+        // process concurrently reads KLASP_GATE_SCHEMA.
+        let saved = std::env::var("KLASP_GATE_SCHEMA").ok();
+        // SAFETY: single-threaded access pattern; see note above.
+        unsafe {
+            std::env::remove_var("KLASP_GATE_SCHEMA");
+        }
+        let result = GateProtocol::read_schema_from_env();
+        if let Some(v) = saved {
+            // SAFETY: restoring a previously-set env var.
+            unsafe {
+                std::env::set_var("KLASP_GATE_SCHEMA", v);
+            }
+        }
+        assert!(
+            matches!(result, Err(GateError::SchemaMissing)),
+            "expected SchemaMissing, got {result:?}",
+        );
     }
 }
