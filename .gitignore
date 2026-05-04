@@ -20,3 +20,8 @@ dist/
 *.swp
 .idea/
 .vscode/
+
+# Agent tooling (claude-flow / claude worktrees / per-user config)
+.claude/
+.claude-flow/
+**/.claude-flow/

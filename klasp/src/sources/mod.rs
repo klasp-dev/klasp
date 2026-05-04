@@ -1,0 +1,74 @@
+//! `CheckSource` implementations for the klasp binary.
+//!
+//! v0.1 ships exactly one source — `Shell` — registered at startup. v0.2 will
+//! add named recipes (`pre_commit`, `fallow`, `pytest`, `cargo`) as new
+//! impls; v0.3 will add the subprocess plugin model. Per
+//! [docs/design.md §3.2], every new source is an additive change.
+//!
+//! A `SourceRegistry` is the dispatch table the gate runtime uses to find
+//! the right source for a `CheckConfig`. v0.1's registry is a fixed `Vec`
+//! pre-populated with the built-in `Shell` source; the v0.3 plugin model
+//! will append discovered subprocess plugins to the same vec.
+
+pub mod shell;
+
+use klasp_core::{CheckConfig, CheckSource};
+
+/// Registry of known `CheckSource` impls. Cheap to construct, cheap to
+/// query — v0.1's `Vec` linear scan is O(n) over a single-digit number of
+/// sources, no need for a `HashMap` until v0.3.
+pub struct SourceRegistry {
+    sources: Vec<Box<dyn CheckSource>>,
+}
+
+impl SourceRegistry {
+    /// Build the default registry: `Shell` only in v0.1.
+    pub fn default_v1() -> Self {
+        let sources: Vec<Box<dyn CheckSource>> = vec![Box::new(shell::ShellSource::new())];
+        Self { sources }
+    }
+
+    /// Find the first source that claims to support the given check config.
+    /// Returns `None` if no source matches — the gate runtime treats that as
+    /// a fail-open skip with a stderr notice (see
+    /// [docs/design.md §6] step 6).
+    pub fn find_for(&self, check: &CheckConfig) -> Option<&dyn CheckSource> {
+        self.sources
+            .iter()
+            .find(|s| s.supports_config(check))
+            .map(|b| b.as_ref())
+    }
+}
+
+impl Default for SourceRegistry {
+    fn default() -> Self {
+        Self::default_v1()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use klasp_core::{CheckConfig, CheckSourceConfig};
+
+    use super::*;
+
+    fn shell_check() -> CheckConfig {
+        CheckConfig {
+            name: "demo".into(),
+            triggers: vec![],
+            source: CheckSourceConfig::Shell {
+                command: "true".into(),
+            },
+            timeout_secs: None,
+        }
+    }
+
+    #[test]
+    fn registry_dispatches_shell_check_to_shell_source() {
+        let registry = SourceRegistry::default_v1();
+        let source = registry
+            .find_for(&shell_check())
+            .expect("shell source must claim shell config");
+        assert_eq!(source.source_id(), "shell");
+    }
+}
