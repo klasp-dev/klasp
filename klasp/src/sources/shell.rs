@@ -129,9 +129,11 @@ fn run_with_timeout(
         .map_err(|source| CheckSourceError::Spawn { source })?;
 
     // Drain stdout / stderr in background threads so a chatty check can't
-    // wedge on a full OS pipe buffer while we're polling `try_wait`.
-    let stdout_handle = child.stdout.take().map(spawn_drain);
-    let stderr_handle = child.stderr.take().map(spawn_drain);
+    // wedge on a full OS pipe buffer while we're polling `try_wait`. Held in
+    // mutable Options so error / timeout paths can `.take()` and join them
+    // before propagating, rather than detaching.
+    let mut stdout_handle = child.stdout.take().map(spawn_drain);
+    let mut stderr_handle = child.stderr.take().map(spawn_drain);
 
     let started = Instant::now();
     let exit_status = loop {
@@ -141,13 +143,32 @@ fn run_with_timeout(
                 if started.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
+                    if let Some(h) = stdout_handle.take() {
+                        let _ = h.join();
+                    }
+                    if let Some(h) = stderr_handle.take() {
+                        let _ = h.join();
+                    }
                     return Err(CheckSourceError::Timeout {
                         secs: timeout.as_secs(),
                     });
                 }
                 thread::sleep(POLL_INTERVAL);
             }
-            Err(source) => return Err(CheckSourceError::Spawn { source }),
+            Err(source) => {
+                // `try_wait` errors are kernel-level (rare); reap the child
+                // and join the readers so we don't orphan the process or
+                // detach the drain threads.
+                let _ = child.kill();
+                let _ = child.wait();
+                if let Some(h) = stdout_handle.take() {
+                    let _ = h.join();
+                }
+                if let Some(h) = stderr_handle.take() {
+                    let _ = h.join();
+                }
+                return Err(CheckSourceError::Spawn { source });
+            }
         }
     };
 
