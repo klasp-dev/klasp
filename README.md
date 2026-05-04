@@ -1,5 +1,7 @@
 # klasp
 
+[![ci](https://github.com/klasp-dev/klasp/actions/workflows/ci.yml/badge.svg)](https://github.com/klasp-dev/klasp/actions/workflows/ci.yml)
+
 [**klasp.dev**](https://klasp.dev) · [crates.io](https://crates.io/crates/klasp) · [npm](https://www.npmjs.com/package/@klasp-dev/klasp) · [PyPI](https://pypi.org/project/klasp/) · [GitHub](https://github.com/klasp-dev/klasp)
 
 > Block AI coding agents (Claude Code, Cursor, Codex, Aider) on the same quality gates your humans hit at `git commit`.
