@@ -5,9 +5,13 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
-description = "Public traits, types, and protocol for klasp."
-publish = false
+description = "Public traits, types, and protocol for klasp — block AI coding agents on the same quality gates humans hit at git commit."
+documentation = "https://docs.rs/klasp-core"
+readme = "../README.md"
+keywords = ["ai", "agents", "git-hooks", "klasp"]
+categories = ["development-tools", "command-line-utilities"]
 
 [dependencies]
 serde = { workspace = true }
