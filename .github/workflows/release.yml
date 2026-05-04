@@ -294,7 +294,7 @@ jobs:
       - name: publish klasp-core
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
-        run: cargo publish -p klasp-core --no-verify
+        run: cargo publish -p klasp-core --no-verify --allow-dirty
 
       - name: wait for klasp-core to land
         run: sleep 30
@@ -302,7 +302,7 @@ jobs:
       - name: publish klasp-agents-claude
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
-        run: cargo publish -p klasp-agents-claude --no-verify
+        run: cargo publish -p klasp-agents-claude --no-verify --allow-dirty
 
       - name: wait for klasp-agents-claude to land
         run: sleep 30
@@ -310,7 +310,7 @@ jobs:
       - name: publish klasp
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
-        run: cargo publish -p klasp --no-verify
+        run: cargo publish -p klasp --no-verify --allow-dirty
 
   # ---------------------------------------------------------------------------
   # 6. GitHub Release.
