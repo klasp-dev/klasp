@@ -33,6 +33,8 @@ pub struct InstallReport {
     pub already_installed: bool,
     pub paths_written: Vec<PathBuf>,
     /// In dry-run mode, the rendered hook-script content for preview.
+    /// Populated by `install()` when `ctx.dry_run` is true and identical to
+    /// `render_hook_script(ctx)`. `None` outside dry-run.
     pub preview: Option<String>,
 }
 
