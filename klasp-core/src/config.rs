@@ -251,6 +251,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unknown_field_on_pre_commit_variant() {
+        // A typo like `hook_stages` (plural) on the `pre_commit` variant
+        // would silently parse as the default `None` without
+        // `#[serde(deny_unknown_fields)]` on the tagged enum — defaulting
+        // to `--hook-stage pre-commit` regardless of the user's intent.
+        // Locks in the variant-level footgun closure so a future serde
+        // refactor (e.g. `untagged`) doesn't silently regress it.
+        let toml = r#"
+            version = 1
+            [gate]
+
+            [[checks]]
+            name = "typo-test"
+            [checks.source]
+            type = "pre_commit"
+            hook_stages = "pre-push"
+        "#;
+        let err = ConfigV1::parse(toml).expect_err("should reject");
+        assert!(matches!(err, KlaspError::ConfigParse(_)));
+    }
+
+    #[test]
     fn parses_pre_commit_recipe_minimal() {
         // Bare `type = "pre_commit"` with no extra fields: both optional
         // fields default to `None` and the recipe applies its own

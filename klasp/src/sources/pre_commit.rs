@@ -1,24 +1,13 @@
 //! `PreCommit` — first named recipe source (v0.2 W4).
 //!
-//! Translates a `[checks.source] type = "pre_commit"` config entry into a
-//! `pre-commit run …` shell invocation, then maps pre-commit's stage-aware
-//! exit code to a [`klasp_core::Verdict`]. Sibling to
-//! [`super::shell::ShellSource`]: both impls route off the
-//! `CheckSourceConfig` tag, the v0.2 named-recipe extension shape
-//! committed to in [docs/design.md §3.2].
-//!
-//! Exit-code mapping: `0` → [`Verdict::Pass`], `1` → [`Verdict::Fail`]
-//! with per-hook findings parsed from stdout (`"<hook>....Failed"` lines,
-//! format stable across pre-commit 3.x and 4.x — see fixtures at
-//! `tests/fixtures/pre_commit/`), other codes → [`Verdict::Fail`] with
-//! a generic "unexpected exit" finding naming the code. Version sniffing
-//! is lazy and silent on probe failure (some wrappers don't honour
-//! `--version`); a version outside [`MIN_SUPPORTED_VERSION`] /
-//! [`MAX_TESTED_VERSION`] surfaces a `Verdict::Warn` rather than blocking.
-//!
-//! `verdict_path` is deferred per [docs/design.md §14] — the recipe knows
-//! pre-commit's output format internally, no generic JSON-path projection
-//! needed.
+//! Translates `[checks.source] type = "pre_commit"` into a `pre-commit run`
+//! invocation; maps the stage-aware exit code to a [`klasp_core::Verdict`].
+//! Exit `0` → [`Verdict::Pass`], `1` → [`Verdict::Fail`] with per-hook
+//! findings parsed from stdout (`"<hook>....Failed"` lines, stable since
+//! pre-commit 3.0), other codes → [`Verdict::Fail`] with a generic
+//! "unexpected exit" finding. Versions older than
+//! [`MIN_SUPPORTED_VERSION`] surface a `Verdict::Warn`. `verdict_path` is
+//! deferred per [docs/design.md §14].
 
 use std::process::Command;
 use std::sync::OnceLock;
@@ -50,15 +39,13 @@ const DEFAULT_CONFIG_PATH: &str = ".pre-commit-config.yaml";
 
 /// Lowest pre-commit release whose stdout format matches the parser
 /// in [`parse_failed_hooks`]. 3.0 dropped Python 2 support and rewrote
-/// the per-hook summary line format; 2.x is out of scope.
+/// the per-hook summary line format; 2.x is out of scope. There is
+/// deliberately no upper bound — pre-commit's per-hook summary format
+/// has been stable since 3.0, and emitting a "newer than tested"
+/// notice on every release would just add toil. If hook output ever
+/// stops parsing on a future version, the recipe falls back to the
+/// generic stderr message and the user files an issue.
 const MIN_SUPPORTED_VERSION: (u32, u32) = (3, 0);
-
-/// Highest pre-commit major.minor we've actively tested. New majors that
-/// land while klasp is unmaintained still work — the recipe emits a
-/// stderr notice and keeps running, on the bet that pre-commit's stable
-/// stdout format is stable. The notice gives operators a breadcrumb
-/// when something does break.
-const MAX_TESTED_VERSION: (u32, u32) = (4, 2);
 
 /// `CheckSource` for `type = "pre_commit"` config entries. Stateless;
 /// safe to clone or share. Constructed once via
@@ -307,20 +294,11 @@ fn sniff_version_warning_uncached(cwd: &std::path::Path) -> Option<String> {
     }
     let raw = String::from_utf8_lossy(&output.stdout).to_string();
     let (major, minor) = parse_version(&raw)?;
-    let actual = (major, minor);
-    if actual < MIN_SUPPORTED_VERSION {
+    if (major, minor) < MIN_SUPPORTED_VERSION {
         let (rmaj, rmin) = MIN_SUPPORTED_VERSION;
         return Some(format!(
             "pre-commit {major}.{minor} is older than the minimum tested version \
              {rmaj}.{rmin}; output parsing may be incomplete"
-        ));
-    }
-    if actual > MAX_TESTED_VERSION {
-        let (rmaj, rmin) = MAX_TESTED_VERSION;
-        return Some(format!(
-            "pre-commit {major}.{minor} is newer than the latest tested version \
-             {rmaj}.{rmin}; if hook output looks wrong, file an issue at \
-             https://github.com/klasp-dev/klasp/issues"
         ));
     }
     None
