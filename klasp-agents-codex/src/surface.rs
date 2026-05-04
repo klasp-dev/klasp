@@ -1,27 +1,37 @@
 //! `CodexSurface` — `klasp_core::AgentSurface` impl for Codex.
 //!
 //! Mirrors the install flow of [`klasp_agents_claude::ClaudeCodeSurface`]:
-//! compute paths → render the managed-block body → idempotent
-//! merge / replace into the on-disk file → atomic write → report what
-//! changed. The two surfaces differ in their target file (Codex writes to
-//! `AGENTS.md` markdown, Claude writes to `.claude/settings.json`) and in
-//! their hook-script: Codex's executable hook script is owned by W2
-//! (issue #28) and is *not* written by this surface yet — `install` here
-//! is purely the AGENTS.md managed-block writer.
+//! compute paths → render the managed-block bodies → idempotent
+//! merge / replace into the on-disk files → atomic write → report what
+//! changed. The two surfaces differ in their target files (Claude writes
+//! one bash shim and one JSON settings file; Codex writes AGENTS.md *and*
+//! a pair of git hooks) and in their conflict-handling story: Codex has
+//! to coexist with husky / lefthook / pre-commit framework, so the hook
+//! writer skips-with-warning rather than failing the install.
 //!
-//! ## v0.2 W1 scope
+//! ## v0.2 W2 scope
 //!
-//! - `install` writes (or updates) the managed block in `AGENTS.md`.
-//! - `install` does **not** write a git-hooks script — that's W2 (#28).
-//!   Until W2 lands, `render_hook_script` returns a placeholder and
-//!   `install` does not touch [`hook_path`].
-//! - `uninstall` strips the managed block from `AGENTS.md` and removes the
-//!   file when that empties it.
+//! - `install` writes the AGENTS.md managed block (W1 behaviour) **and**
+//!   the `.git/hooks/pre-commit` + `.git/hooks/pre-push` hook files.
+//! - When a foreign hook manager is detected via
+//!   [`git_hooks::detect_conflict`], the hook write is skipped and a
+//!   [`HookWarning`] rides alongside the `InstallReport` (returned via
+//!   the typed [`CodexSurface::install_detailed`] entry-point — the
+//!   plain [`AgentSurface::install`] trait method, which W3 will wire
+//!   into the CLI, discards warnings to keep the cross-crate contract
+//!   `klasp-core` defines unchanged).
+//! - `uninstall` strips the managed block from each managed file and
+//!   removes any file klasp owned end-to-end (round-trip from the
+//!   missing-file install). Sibling content — both other tools' hooks
+//!   and any prose in AGENTS.md — is preserved byte-for-byte.
 //!
 //! ## Windows notes
 //!
-//! `AGENTS.md` is plain text — no executable bit needed. All `Path::join`
-//! calls produce platform-correct separators.
+//! `AGENTS.md` is plain text. `.git/hooks/pre-commit` and `pre-push` are
+//! shell scripts that git itself executes through `sh.exe` (Git for
+//! Windows) or whatever the user's git is configured to use; they need
+//! a shebang for portability but no executable bit on NTFS. Behaviour
+//! parity with `klasp_agents_claude` — `apply_mode` is a no-op there too.
 
 use std::fs;
 use std::io::Write;
@@ -30,6 +40,7 @@ use std::path::{Path, PathBuf};
 use klasp_core::{AgentSurface, InstallContext, InstallError, InstallReport};
 
 use crate::agents_md::{self, AgentsMdError, DEFAULT_BLOCK_BODY};
+use crate::git_hooks::{self, HookError, HookKind, HookWarning};
 
 /// Codex agent surface. Stateless; the registry stores it as
 /// `Box<dyn AgentSurface>`.
@@ -41,10 +52,136 @@ impl CodexSurface {
     /// Filename of the markdown file Codex reads from the repo root.
     pub const AGENTS_MD: &'static str = "AGENTS.md";
 
-    /// Repo-relative path of the git pre-commit hook W2 (#28) will own.
-    /// Exposed here so `hook_path` can return a stable value before W2
-    /// lands; this surface does **not** write the hook in v0.2 W1.
-    pub const HOOK_RELPATH: &'static [&'static str] = &[".git", "hooks", "pre-commit"];
+    /// Repo-relative path of the git pre-commit hook.
+    pub const PRE_COMMIT_RELPATH: &'static [&'static str] = &[".git", "hooks", "pre-commit"];
+
+    /// Repo-relative path of the git pre-push hook.
+    pub const PRE_PUSH_RELPATH: &'static [&'static str] = &[".git", "hooks", "pre-push"];
+
+    /// Repo-relative path of the *primary* hook reported via the trait's
+    /// `hook_path` method. Kept as `pre-commit` for parity with the W1
+    /// API; consumers needing both paths should use
+    /// [`Self::all_hook_paths`].
+    pub const HOOK_RELPATH: &'static [&'static str] = Self::PRE_COMMIT_RELPATH;
+
+    /// Both managed hook paths, in install order. W3 callers that want
+    /// to render the full install report (e.g. for `klasp install --dry-run`)
+    /// should iterate this rather than relying on the trait's single
+    /// `hook_path`.
+    pub fn all_hook_paths(repo_root: &Path) -> [(HookKind, PathBuf); 2] {
+        [
+            (HookKind::Commit, hook_path_for(repo_root, HookKind::Commit)),
+            (HookKind::Push, hook_path_for(repo_root, HookKind::Push)),
+        ]
+    }
+
+    /// Detailed install entry-point. Returns the standard
+    /// [`InstallReport`] *and* the list of [`HookWarning`]s collected
+    /// from the hook writer. The trait's [`AgentSurface::install`]
+    /// method calls this and discards the warnings to keep the
+    /// cross-crate trait surface unchanged; W3's CLI plumbing calls this
+    /// method directly so it can render warnings to the user.
+    pub fn install_detailed(
+        &self,
+        ctx: &InstallContext,
+    ) -> Result<CodexInstallReport, InstallError> {
+        // 1. AGENTS.md — same merge contract as W1.
+        let settings_path = self.settings_path(&ctx.repo_root);
+        let agents_existing = read_or_empty(&settings_path)?;
+        let agents_merged = agents_md::install_block(&agents_existing, DEFAULT_BLOCK_BODY)
+            .map_err(|e| agents_md_error(&settings_path, e))?;
+        let agents_unchanged = agents_merged == agents_existing;
+
+        // 2. Hooks — pre-commit and pre-push. Per-hook conflict check;
+        //    on conflict, record a warning and skip the write.
+        let mut hook_plans = Vec::with_capacity(2);
+        let mut warnings = Vec::new();
+        for (kind, path) in Self::all_hook_paths(&ctx.repo_root) {
+            let plan = plan_hook_install(&path, kind, ctx.schema_version)?;
+            if let HookPlanOutcome::Conflict(conflict) = plan.outcome {
+                warnings.push(HookWarning::Skipped {
+                    path: path.clone(),
+                    kind,
+                    conflict,
+                });
+            }
+            hook_plans.push(plan);
+        }
+
+        let all_already_installed = agents_unchanged
+            && hook_plans
+                .iter()
+                .all(|p| matches!(p.outcome, HookPlanOutcome::Unchanged));
+
+        // 3. Dry-run: report shape only, no writes. Preview is the
+        //    AGENTS.md merged body — that's the most user-readable thing
+        //    we can show, and matches W1 behaviour.
+        if ctx.dry_run {
+            return Ok(CodexInstallReport {
+                report: InstallReport {
+                    agent_id: Self::AGENT_ID.to_string(),
+                    hook_path: hook_path_for(&ctx.repo_root, HookKind::Commit),
+                    settings_path,
+                    already_installed: all_already_installed,
+                    paths_written: Vec::new(),
+                    preview: Some(agents_merged),
+                },
+                warnings,
+            });
+        }
+
+        // 4. Apply the plans. Order: AGENTS.md first (cheapest to roll
+        //    back if a hook write fails partway through), then each
+        //    hook with its individual atomic write.
+        let mut paths_written = Vec::new();
+
+        if !agents_unchanged {
+            ensure_parent(&settings_path)?;
+            let mode = current_mode(&settings_path).unwrap_or(0o644);
+            atomic_write(&settings_path, agents_merged.as_bytes(), mode)?;
+            paths_written.push(settings_path.clone());
+        }
+
+        for plan in hook_plans {
+            match plan.outcome {
+                HookPlanOutcome::Write(merged) => {
+                    ensure_parent(&plan.path)?;
+                    // Hook scripts must be executable. Honour the user's
+                    // pre-existing mode if they had one (so we don't
+                    // *demote* a 0o775 hook to 0o755), otherwise fall
+                    // back to the canonical 0o755.
+                    let mode = current_mode(&plan.path).unwrap_or(0o755);
+                    atomic_write(&plan.path, merged.as_bytes(), mode)?;
+                    paths_written.push(plan.path);
+                }
+                HookPlanOutcome::Unchanged | HookPlanOutcome::Conflict(_) => {
+                    // Either already up-to-date or owned by a foreign
+                    // tool — both no-op for the writer.
+                }
+            }
+        }
+
+        Ok(CodexInstallReport {
+            report: InstallReport {
+                agent_id: Self::AGENT_ID.to_string(),
+                hook_path: hook_path_for(&ctx.repo_root, HookKind::Commit),
+                settings_path,
+                already_installed: all_already_installed,
+                paths_written,
+                preview: None,
+            },
+            warnings,
+        })
+    }
+}
+
+/// Result of a [`CodexSurface::install_detailed`] call. Bundles the
+/// standard [`InstallReport`] with the per-hook warnings collected
+/// during install.
+#[derive(Debug)]
+pub struct CodexInstallReport {
+    pub report: InstallReport,
+    pub warnings: Vec<HookWarning>,
 }
 
 impl AgentSurface for CodexSurface {
@@ -61,105 +198,155 @@ impl AgentSurface for CodexSurface {
     }
 
     fn hook_path(&self, repo_root: &Path) -> PathBuf {
-        let mut p = repo_root.to_path_buf();
-        for seg in Self::HOOK_RELPATH {
-            p.push(seg);
-        }
-        p
+        hook_path_for(repo_root, HookKind::Commit)
     }
 
     fn settings_path(&self, repo_root: &Path) -> PathBuf {
         repo_root.join(Self::AGENTS_MD)
     }
 
-    fn render_hook_script(&self, _ctx: &InstallContext) -> String {
-        // W2 (#28) owns the actual pre-commit script body. Returning the
-        // empty string here keeps the trait satisfied while making it
-        // structurally obvious that v0.2 W1 has nothing to render.
-        String::new()
+    fn render_hook_script(&self, ctx: &InstallContext) -> String {
+        // Trait contract returns a single string; we pick the
+        // pre-commit body since that's what `hook_path` reports. W3's
+        // CLI dry-run renderer can call `git_hooks::install_block`
+        // directly when it needs the pre-push body too.
+        git_hooks::install_block("", HookKind::Commit, ctx.schema_version).unwrap_or_default()
     }
 
     fn install(&self, ctx: &InstallContext) -> Result<InstallReport, InstallError> {
-        let settings_path = self.settings_path(&ctx.repo_root);
-        let hook_path = self.hook_path(&ctx.repo_root);
-
-        let existing = read_or_empty(&settings_path)?;
-        let merged = agents_md::install_block(&existing, DEFAULT_BLOCK_BODY)
-            .map_err(|e| agents_md_error(&settings_path, e))?;
-
-        // `install_block` only returns the input unchanged when a managed
-        // block was already present with identical content, so equality
-        // implies "already installed" — no second `contains_block` scan.
-        let already_installed = merged == existing;
-
-        if ctx.dry_run {
-            return Ok(InstallReport {
-                agent_id: Self::AGENT_ID.to_string(),
-                hook_path,
-                settings_path,
-                already_installed,
-                paths_written: Vec::new(),
-                preview: Some(merged),
-            });
-        }
-
-        let mut paths_written = Vec::new();
-        if merged != existing {
-            ensure_parent(&settings_path)?;
-            let mode = current_mode(&settings_path).unwrap_or(0o644);
-            atomic_write(&settings_path, merged.as_bytes(), mode)?;
-            paths_written.push(settings_path.clone());
-        }
-
-        Ok(InstallReport {
-            agent_id: Self::AGENT_ID.to_string(),
-            hook_path,
-            settings_path,
-            already_installed,
-            paths_written,
-            preview: None,
-        })
+        // Discard warnings; the `InstallReport` shape is fixed by
+        // `klasp-core` and we may not extend it from here. W3 will
+        // call `install_detailed` from the CLI to surface them.
+        Ok(self.install_detailed(ctx)?.report)
     }
 
     fn uninstall(&self, repo_root: &Path, dry_run: bool) -> Result<Vec<PathBuf>, InstallError> {
-        let settings_path = self.settings_path(repo_root);
         let mut paths = Vec::new();
 
-        // `read_or_empty` collapses missing-file → empty-string. An empty
-        // input is also unchanged by `uninstall_block`, so the `stripped ==
-        // existing` early-return below covers the missing-file case
-        // without a separate `exists()` check.
-        let existing = read_or_empty(&settings_path)?;
-
-        let stripped = agents_md::uninstall_block(&existing)
+        // 1. AGENTS.md — strip block, remove the file if klasp was the
+        //    sole content (round-trip from missing-file install).
+        let settings_path = self.settings_path(repo_root);
+        let agents_existing = read_or_empty(&settings_path)?;
+        let agents_stripped = agents_md::uninstall_block(&agents_existing)
             .map_err(|e| agents_md_error(&settings_path, e))?;
-
-        if stripped == existing {
-            return Ok(paths);
-        }
-
-        if !dry_run {
-            if stripped.is_empty() {
-                // Strip-to-empty fires in two cases: (1) the file existed
-                // only because klasp created it (round-trip from the
-                // missing-file install path), or (2) a pre-existing empty
-                // / whitespace-only AGENTS.md was the input — install
-                // replaced the whitespace with the block, uninstall now
-                // strips back to empty. Either way, removing the file is
-                // the right move: an empty AGENTS.md is non-canonical
-                // markdown, and `detect()` already returns `false` when
-                // the file is missing, so the surface state is clean.
-                fs::remove_file(&settings_path).map_err(|e| InstallError::Io {
-                    path: settings_path.clone(),
-                    source: e,
-                })?;
-            } else {
-                let mode = current_mode(&settings_path).unwrap_or(0o644);
-                atomic_write(&settings_path, stripped.as_bytes(), mode)?;
+        if agents_stripped != agents_existing {
+            if !dry_run {
+                if agents_stripped.is_empty() {
+                    fs::remove_file(&settings_path).map_err(|e| InstallError::Io {
+                        path: settings_path.clone(),
+                        source: e,
+                    })?;
+                } else {
+                    let mode = current_mode(&settings_path).unwrap_or(0o644);
+                    atomic_write(&settings_path, agents_stripped.as_bytes(), mode)?;
+                }
             }
+            paths.push(settings_path);
         }
-        paths.push(settings_path);
+
+        // 2. Each hook — same shape, but if klasp was the only content
+        //    we delete the file (so `git` falls back to its no-hook
+        //    default rather than executing a shebang-only stub).
+        for (_, hook_path) in Self::all_hook_paths(repo_root) {
+            if !hook_path.exists() {
+                continue;
+            }
+            let existing = fs::read_to_string(&hook_path).map_err(|e| InstallError::Io {
+                path: hook_path.clone(),
+                source: e,
+            })?;
+            // If klasp doesn't own this file, leave it alone. This is
+            // the symmetric inverse of the install-time conflict skip:
+            // a husky / lefthook / pre-commit-framework hook never
+            // gained a klasp marker, so it has nothing for us to strip.
+            if !existing.contains(git_hooks::MANAGED_START) {
+                continue;
+            }
+            let stripped =
+                git_hooks::uninstall_block(&existing).map_err(|e| hook_error(&hook_path, e))?;
+            if stripped == existing {
+                continue;
+            }
+            if !dry_run {
+                if stripped.is_empty() {
+                    fs::remove_file(&hook_path).map_err(|e| InstallError::Io {
+                        path: hook_path.clone(),
+                        source: e,
+                    })?;
+                } else {
+                    let mode = current_mode(&hook_path).unwrap_or(0o755);
+                    atomic_write(&hook_path, stripped.as_bytes(), mode)?;
+                }
+            }
+            paths.push(hook_path);
+        }
+
         Ok(paths)
+    }
+}
+
+fn hook_path_for(repo_root: &Path, kind: HookKind) -> PathBuf {
+    let segments = match kind {
+        HookKind::Commit => CodexSurface::PRE_COMMIT_RELPATH,
+        HookKind::Push => CodexSurface::PRE_PUSH_RELPATH,
+    };
+    let mut p = repo_root.to_path_buf();
+    for seg in segments {
+        p.push(seg);
+    }
+    p
+}
+
+/// What `install` should do with one hook file.
+enum HookPlanOutcome {
+    /// Existing content already matches what we'd write — no-op.
+    Unchanged,
+    /// Foreign hook manager detected; skip with a warning.
+    Conflict(crate::git_hooks::HookConflict),
+    /// Write `merged` to disk.
+    Write(String),
+}
+
+struct HookPlan {
+    path: PathBuf,
+    outcome: HookPlanOutcome,
+}
+
+fn plan_hook_install(
+    path: &Path,
+    kind: HookKind,
+    schema_version: u32,
+) -> Result<HookPlan, InstallError> {
+    let existing = read_or_empty(path)?;
+
+    // klasp already manages this file → drive the standard managed-block
+    // merge. Conflict detection on a klasp-owned file is meaningless;
+    // checking *first* would force-skip even our own hooks if a tool
+    // marker happened to land in a sibling line, so we route through
+    // marker detection before fingerprint sniffing.
+    let already_klasp = git_hooks::contains_block(&existing).map_err(|e| hook_error(path, e))?;
+    if !already_klasp {
+        if let Some(conflict) = git_hooks::detect_conflict(&existing) {
+            return Ok(HookPlan {
+                path: path.to_path_buf(),
+                outcome: HookPlanOutcome::Conflict(conflict),
+            });
+        }
+    }
+
+    let merged = git_hooks::install_block(&existing, kind, schema_version)
+        .map_err(|e| hook_error(path, e))?;
+
+    if merged == existing {
+        Ok(HookPlan {
+            path: path.to_path_buf(),
+            outcome: HookPlanOutcome::Unchanged,
+        })
+    } else {
+        Ok(HookPlan {
+            path: path.to_path_buf(),
+            outcome: HookPlanOutcome::Write(merged),
+        })
     }
 }
 
@@ -240,6 +427,13 @@ fn apply_mode(path: &Path, mode: u32) -> Result<(), InstallError> {
 }
 
 fn agents_md_error(path: &Path, error: AgentsMdError) -> InstallError {
+    InstallError::Surface {
+        agent_id: CodexSurface::AGENT_ID.to_string(),
+        message: format!("{}: {error}", path.display()),
+    }
+}
+
+fn hook_error(path: &Path, error: HookError) -> InstallError {
     InstallError::Surface {
         agent_id: CodexSurface::AGENT_ID.to_string(),
         message: format!("{}: {error}", path.display()),
