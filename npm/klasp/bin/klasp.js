@@ -47,4 +47,5 @@ if (result.error) {
   process.exit(1);
 }
 
-process.exit(result.status === null ? 1 : result.status);
+if (result.signal) process.kill(process.pid, result.signal);
+else process.exit(result.status ?? 1);
