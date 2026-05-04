@@ -6,7 +6,7 @@
 
 > Block AI coding agents (Claude Code, Cursor, Codex, Aider) on the same quality gates your humans hit at `git commit`.
 
-**Status: name-reservation placeholder.** The `0.0.0` publish on each registry exists only to claim the name. The v0.1 implementation is in design. Star to follow.
+**Status: v0.1 ships when the `v0.1.0` tag is pushed.** Implementation is complete and dogfooded on this repo (see [`/klasp.toml`](./klasp.toml)). Until each registry has been re-published past the original `0.0.0` placeholder, `cargo install klasp` / `npm i -g @klasp-dev/klasp` / `pip install klasp` may still resolve to the name-reservation publish — verify with `klasp --version` after install.
 
 ## What klasp will be
 
@@ -38,20 +38,20 @@ command = "fallow audit --base ${KLASP_BASE_REF} --quiet"
 ## Documentation
 
 - [`docs/design.md`](./docs/design.md) — v0.1 architecture, abstractions, and rationale
+- [`docs/recipes.md`](./docs/recipes.md) — worked `klasp.toml` examples for pre-commit, fallow, pytest, cargo, ESLint/Biome, ruff
 - [`docs/roadmap.md`](./docs/roadmap.md) — milestones from v0.1 → v1.0
+- [`CHANGELOG.md`](./CHANGELOG.md) — release notes
 
 ## Repository layout
 
 | Path | Purpose |
 |---|---|
-| `klasp-core/` *(planned)* | Library crate — public traits, types, gate protocol |
-| `klasp-agents-claude/` *(planned)* | `AgentSurface` impl for Claude Code |
-| `klasp/` *(planned)* | Binary crate — the CLI |
+| `klasp-core/` | Library crate — public traits, types, gate protocol |
+| `klasp-agents-claude/` | `AgentSurface` impl for Claude Code |
+| `klasp/` | Binary crate — the CLI |
 | `npm/` | Biome-style npm distribution shim |
 | `pypi/` | maturin-based PyPI distribution wrapper |
-| `docs/` | Architecture docs and roadmap |
-
-The `klasp-core` / `klasp-agents-claude` / `klasp` workspace split lands during the v0.1 implementation work; the placeholder `Cargo.toml` at the repo root is the single-crate `0.0.0` publish that reserves the crates.io name.
+| `docs/` | Architecture docs, recipes, roadmap |
 
 ## License
 
