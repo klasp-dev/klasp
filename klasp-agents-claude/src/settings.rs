@@ -10,6 +10,16 @@
 use serde_json::{Map, Value};
 use thiserror::Error;
 
+// Claude Code's `.claude/settings.json` hook schema. These keys appear
+// across the merge / unmerge / lookup helpers; pinning them as constants
+// turns a typo into a compile error instead of a silent no-op.
+const HOOKS: &str = "hooks";
+const PRETOOL_USE: &str = "PreToolUse";
+const MATCHER: &str = "matcher";
+const TYPE: &str = "type";
+const COMMAND: &str = "command";
+const BASH: &str = "Bash";
+
 #[derive(Debug, Error)]
 pub enum SettingsError {
     #[error("settings.json: invalid JSON: {0}")]
@@ -43,8 +53,8 @@ pub fn merge_hook_entry(settings_json: &str, hook_command: &str) -> Result<Strin
 
     let root_obj = expect_object_mut(&mut root, "")?;
 
-    let hooks = get_or_insert_object(root_obj, "hooks")?;
-    let pretool = get_or_insert_array(hooks, "PreToolUse", "hooks.PreToolUse")?;
+    let hooks = get_or_insert_object(root_obj, HOOKS, HOOKS)?;
+    let pretool = get_or_insert_array(hooks, PRETOOL_USE, "hooks.PreToolUse")?;
 
     let bash_idx = find_bash_matcher(pretool)?;
     let bash_entry = match bash_idx {
@@ -52,8 +62,8 @@ pub fn merge_hook_entry(settings_json: &str, hook_command: &str) -> Result<Strin
         None => {
             pretool.push(Value::Object({
                 let mut m = Map::new();
-                m.insert("matcher".into(), Value::String("Bash".into()));
-                m.insert("hooks".into(), Value::Array(Vec::new()));
+                m.insert(MATCHER.into(), Value::String(BASH.into()));
+                m.insert(HOOKS.into(), Value::Array(Vec::new()));
                 m
             }));
             pretool.last_mut().expect("just pushed")
@@ -61,12 +71,12 @@ pub fn merge_hook_entry(settings_json: &str, hook_command: &str) -> Result<Strin
     };
 
     let bash_obj = expect_object_mut(bash_entry, "hooks.PreToolUse[Bash]")?;
-    let inner = get_or_insert_array(bash_obj, "hooks", "hooks.PreToolUse[Bash].hooks")?;
+    let inner = get_or_insert_array(bash_obj, HOOKS, "hooks.PreToolUse[Bash].hooks")?;
 
     if !inner.iter().any(|h| hook_command_matches(h, hook_command)) {
         let mut entry = Map::new();
-        entry.insert("type".into(), Value::String("command".into()));
-        entry.insert("command".into(), Value::String(hook_command.into()));
+        entry.insert(TYPE.into(), Value::String(COMMAND.into()));
+        entry.insert(COMMAND.into(), Value::String(hook_command.into()));
         inner.push(Value::Object(entry));
     }
 
@@ -74,11 +84,21 @@ pub fn merge_hook_entry(settings_json: &str, hook_command: &str) -> Result<Strin
 }
 
 /// Inverse of [`merge_hook_entry`]: remove every hook with `command` exactly
-/// equal to `hook_command`. Cleans up empty arrays/objects so a fresh-install
-/// settings.json round-trips through install→uninstall to its pre-install shape.
+/// equal to `hook_command`, then clean up the empty `Bash` matcher and
+/// surrounding `hooks.PreToolUse` / `hooks` containers when they're left
+/// empty. After install→uninstall, an `.claude/settings.json` that had no
+/// pre-existing hook content returns to `{}`.
 ///
-/// Idempotent: running on a settings.json that has no klasp entry returns the
-/// input unchanged.
+/// Round-trip is best-effort, not byte-identical: serialised output uses
+/// 2-space pretty-print + trailing newline regardless of pre-install
+/// formatting. A pre-existing `{matcher: "Bash", hooks: []}` placeholder
+/// is also dropped — we can't distinguish "klasp emptied this" from
+/// "user pre-installed an empty placeholder" — but that shape is rare in
+/// practice. Non-Bash matchers and Bash matchers with surviving sibling
+/// hooks are preserved.
+///
+/// Idempotent: running on a settings.json that has no klasp entry parses
+/// and re-serialises (whitespace may differ but JSON content is unchanged).
 pub fn unmerge_hook_entry(
     settings_json: &str,
     hook_command: &str,
@@ -91,12 +111,12 @@ pub fn unmerge_hook_entry(
     let mut root: Value = serde_json::from_str(trimmed)?;
     let root_obj = expect_object_mut(&mut root, "")?;
 
-    let Some(hooks_val) = root_obj.get_mut("hooks") else {
+    let Some(hooks_val) = root_obj.get_mut(HOOKS) else {
         return Ok(serialise(&root));
     };
-    let hooks = expect_object_mut(hooks_val, "hooks")?;
+    let hooks = expect_object_mut(hooks_val, HOOKS)?;
 
-    let Some(pretool_val) = hooks.get_mut("PreToolUse") else {
+    let Some(pretool_val) = hooks.get_mut(PRETOOL_USE) else {
         return Ok(serialise(&root));
     };
     let pretool = expect_array_mut(pretool_val, "hooks.PreToolUse")?;
@@ -105,7 +125,7 @@ pub fn unmerge_hook_entry(
         let Some(matcher_obj) = matcher.as_object_mut() else {
             continue;
         };
-        let Some(inner_val) = matcher_obj.get_mut("hooks") else {
+        let Some(inner_val) = matcher_obj.get_mut(HOOKS) else {
             continue;
         };
         let Some(inner) = inner_val.as_array_mut() else {
@@ -114,28 +134,26 @@ pub fn unmerge_hook_entry(
         inner.retain(|h| !hook_command_matches(h, hook_command));
     }
 
-    // Sweep up Bash matchers whose `hooks` array is now empty (klasp put
-    // them there in the first place). Untouched matchers — those that
-    // started with sibling hooks — keep their `hooks: []` if a teammate
-    // emptied them, since that's the user's data.
+    // See the function doc-comment for why pre-existing empty Bash
+    // placeholders are also swept (provenance is unrecoverable).
     pretool.retain(|m| {
         let Some(obj) = m.as_object() else {
             return true;
         };
-        if obj.get("matcher").and_then(Value::as_str) != Some("Bash") {
+        if obj.get(MATCHER).and_then(Value::as_str) != Some(BASH) {
             return true;
         }
         !matches!(
-            obj.get("hooks").and_then(Value::as_array),
+            obj.get(HOOKS).and_then(Value::as_array),
             Some(arr) if arr.is_empty()
         )
     });
 
     if pretool.is_empty() {
-        hooks.remove("PreToolUse");
+        hooks.remove(PRETOOL_USE);
     }
     if hooks.is_empty() {
-        root_obj.remove("hooks");
+        root_obj.remove(HOOKS);
     }
 
     Ok(serialise(&root))
@@ -174,11 +192,12 @@ fn expect_array_mut<'a>(
 fn get_or_insert_object<'a>(
     map: &'a mut Map<String, Value>,
     key: &str,
+    path: &str,
 ) -> Result<&'a mut Map<String, Value>, SettingsError> {
     let entry = map.entry(key).or_insert_with(|| Value::Object(Map::new()));
     let got = describe(entry);
     entry.as_object_mut().ok_or(SettingsError::Shape {
-        path: key.to_string(),
+        path: path.to_string(),
         expected: "object",
         got,
     })
@@ -187,20 +206,17 @@ fn get_or_insert_object<'a>(
 fn get_or_insert_array<'a>(
     map: &'a mut Map<String, Value>,
     key: &str,
-    full_path: &str,
+    path: &str,
 ) -> Result<&'a mut Vec<Value>, SettingsError> {
     let entry = map.entry(key).or_insert_with(|| Value::Array(Vec::new()));
     let got = describe(entry);
     entry.as_array_mut().ok_or(SettingsError::Shape {
-        path: full_path.to_string(),
+        path: path.to_string(),
         expected: "array",
         got,
     })
 }
 
-/// Find the index of a matcher object in `PreToolUse` whose `matcher` field
-/// is exactly the string `"Bash"`. Errors only if a matcher entry isn't an
-/// object (Claude's schema requires it).
 fn find_bash_matcher(pretool: &[Value]) -> Result<Option<usize>, SettingsError> {
     for (i, m) in pretool.iter().enumerate() {
         let Some(obj) = m.as_object() else {
@@ -210,7 +226,7 @@ fn find_bash_matcher(pretool: &[Value]) -> Result<Option<usize>, SettingsError> 
                 got: describe(m),
             });
         };
-        if obj.get("matcher").and_then(Value::as_str) == Some("Bash") {
+        if obj.get(MATCHER).and_then(Value::as_str) == Some(BASH) {
             return Ok(Some(i));
         }
     }
@@ -218,7 +234,7 @@ fn find_bash_matcher(pretool: &[Value]) -> Result<Option<usize>, SettingsError> 
 }
 
 fn hook_command_matches(hook: &Value, expected_command: &str) -> bool {
-    hook.get("command").and_then(Value::as_str) == Some(expected_command)
+    hook.get(COMMAND).and_then(Value::as_str) == Some(expected_command)
 }
 
 fn describe(v: &Value) -> &'static str {
@@ -436,8 +452,6 @@ mod tests {
         );
         let out = unmerge_hook_entry(&input, KLASP_CMD).unwrap();
         let v = parse(&out);
-        // hooks key should be gone (the only matcher was klasp's, which we
-        // then dropped because its hooks array became empty).
         assert!(v.get("hooks").is_none(), "got: {v:#?}");
     }
 

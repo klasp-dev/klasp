@@ -47,9 +47,6 @@ mod tests {
 
     #[test]
     fn render_ends_with_newline() {
-        // POSIX: text files end with newlines. The script gets `chmod +x`'d
-        // and an interactive editor that does "ensure final newline" should
-        // produce no diff.
         assert!(render(1).ends_with('\n'));
     }
 }

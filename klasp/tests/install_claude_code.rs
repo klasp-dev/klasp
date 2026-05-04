@@ -187,6 +187,65 @@ fn uninstall_removes_klasp_and_preserves_siblings() {
     assert_eq!(inner[0]["command"], "fallow gate");
 }
 
+#[cfg(unix)]
+#[test]
+fn install_preserves_existing_settings_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = fresh_repo();
+    let settings_path = repo.path().join(".claude/settings.json");
+    fs::write(&settings_path, "{}").unwrap();
+    fs::set_permissions(&settings_path, fs::Permissions::from_mode(0o644)).unwrap();
+
+    ClaudeCodeSurface
+        .install(&ctx_for(repo.path(), false))
+        .unwrap();
+
+    let mode = fs::metadata(&settings_path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        mode, 0o644,
+        "atomic_write must preserve existing settings.json mode, not downgrade to NamedTempFile's 0o600 default"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn install_creates_fresh_settings_with_0o644() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = fresh_repo();
+    let settings_path = repo.path().join(".claude/settings.json");
+    assert!(!settings_path.exists(), "fresh repo has no settings.json");
+
+    ClaudeCodeSurface
+        .install(&ctx_for(repo.path(), false))
+        .unwrap();
+
+    let mode = fs::metadata(&settings_path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        mode, 0o644,
+        "freshly-created settings.json should land at 0o644, not the 0o600 default of NamedTempFile"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn install_writes_hook_with_0o755() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = fresh_repo();
+    ClaudeCodeSurface
+        .install(&ctx_for(repo.path(), false))
+        .unwrap();
+
+    let mode = fs::metadata(repo.path().join(".claude/hooks/klasp-gate.sh"))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o755);
+}
+
 #[test]
 fn uninstall_dry_run_writes_nothing() {
     let repo = fresh_repo();

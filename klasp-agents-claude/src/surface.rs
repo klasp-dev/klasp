@@ -86,14 +86,16 @@ impl AgentSurface for ClaudeCodeSurface {
 
         if !matches!(hook_state, HookState::Identical) {
             ensure_parent(&hook_path)?;
-            atomic_write(&hook_path, rendered.as_bytes())?;
-            set_executable(&hook_path)?;
+            atomic_write(&hook_path, rendered.as_bytes(), 0o755)?;
             paths_written.push(hook_path.clone());
         }
 
         if !settings_unchanged {
             ensure_parent(&settings_path)?;
-            atomic_write(&settings_path, merged.as_bytes())?;
+            // Preserve the user's prior mode rather than overwriting it with
+            // NamedTempFile's 0o600 default; fall back to 0o644 for new files.
+            let mode = current_mode(&settings_path).unwrap_or(0o644);
+            atomic_write(&settings_path, merged.as_bytes(), mode)?;
             paths_written.push(settings_path.clone());
         }
 
@@ -137,7 +139,8 @@ impl AgentSurface for ClaudeCodeSurface {
                 .map_err(|e| settings_error(&settings_path, e))?;
             if new != existing {
                 if !dry_run {
-                    atomic_write(&settings_path, new.as_bytes())?;
+                    let mode = current_mode(&settings_path).unwrap_or(0o644);
+                    atomic_write(&settings_path, new.as_bytes(), mode)?;
                 }
                 paths.push(settings_path);
             }
@@ -148,10 +151,7 @@ impl AgentSurface for ClaudeCodeSurface {
 }
 
 enum HookState {
-    /// File already exists and matches the rendered output byte-for-byte.
     Identical,
-    /// File doesn't exist, or exists with the marker but different content
-    /// (e.g. older schema version) — safe to overwrite.
     Writable,
 }
 
@@ -202,7 +202,10 @@ fn ensure_parent(path: &Path) -> Result<(), InstallError> {
     })
 }
 
-fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), InstallError> {
+/// Atomic write via tempfile + rename. `mode` is applied after the rename
+/// (Unix only) — without it the destination silently inherits
+/// `NamedTempFile`'s `0o600` default.
+fn atomic_write(path: &Path, contents: &[u8], mode: u32) -> Result<(), InstallError> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let mut tf = tempfile::NamedTempFile::new_in(dir).map_err(|e| InstallError::Io {
         path: dir.to_path_buf(),
@@ -220,20 +223,29 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), InstallError> {
         path: path.to_path_buf(),
         source: e.error,
     })?;
+    apply_mode(path, mode)?;
     Ok(())
 }
 
-fn set_executable(path: &Path) -> Result<(), InstallError> {
+/// The file's current Unix mode (low 12 bits), or `None` if the file
+/// doesn't exist or we're not on Unix. Called *before* `atomic_write`
+/// so we can restore the user's prior mode after the rename.
+#[cfg(unix)]
+fn current_mode(path: &Path) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path).ok().map(|m| m.permissions().mode())
+}
+
+#[cfg(not(unix))]
+fn current_mode(_path: &Path) -> Option<u32> {
+    None
+}
+
+fn apply_mode(path: &Path, mode: u32) -> Result<(), InstallError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(path)
-            .map_err(|e| InstallError::Io {
-                path: path.to_path_buf(),
-                source: e,
-            })?
-            .permissions();
-        perms.set_mode(0o755);
+        let perms = std::fs::Permissions::from_mode(mode);
         fs::set_permissions(path, perms).map_err(|e| InstallError::Io {
             path: path.to_path_buf(),
             source: e,
@@ -243,7 +255,7 @@ fn set_executable(path: &Path) -> Result<(), InstallError> {
     {
         // Windows: bash interprets the shebang regardless of the NTFS bit.
         // Per design.md §14, the Windows path/permission audit lands at W4.
-        let _ = path;
+        let _ = (path, mode);
     }
     Ok(())
 }

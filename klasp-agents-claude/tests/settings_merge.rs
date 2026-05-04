@@ -1,7 +1,6 @@
-//! Integration test: merge into a realistic fallow-shaped `.claude/settings.json`.
-//!
-//! Per the W2 issue (#2): "Unit tests for settings.json merge with a real
-//! fallow settings.json fixture (proves sibling hooks survive)".
+//! Integration test: merge into a realistic fallow-shaped
+//! `.claude/settings.json`, proving every sibling hook entry and
+//! top-level key survives byte-for-byte.
 
 use klasp_agents_claude::ClaudeCodeSurface;
 use klasp_agents_claude::{merge_hook_entry, unmerge_hook_entry};
