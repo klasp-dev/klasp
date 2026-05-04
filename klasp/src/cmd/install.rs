@@ -64,10 +64,19 @@ fn try_run(args: &InstallArgs) -> Result<ExitCode> {
         Selection::Surfaces(s) => s,
     };
 
-    let surfaces = filter_by_detect(&registry, surfaces, &repo_root, args.force);
+    // Auto-detection is only meaningful when the user did NOT name a
+    // specific selection. When `--agent <name>` (or `--agent all`) is
+    // explicit, the user has told us exactly which surfaces to drive;
+    // a missing-AGENTS.md or missing-settings.json is a bootstrap case,
+    // not a "skip this surface" signal. Filter only the no-arg path.
+    let surfaces = if args.agent.is_some() {
+        surfaces
+    } else {
+        filter_by_detect(surfaces, &repo_root, args.force)
+    };
     if surfaces.is_empty() {
         return Err(anyhow!(
-            "no matching agent surfaces detected at {}; pass --force to install anyway",
+            "no agent surfaces auto-detected at {}; pass --force or --agent <name>",
             repo_root.display(),
         ));
     }
@@ -176,9 +185,8 @@ fn unknown_agent(name: &str, registry: &SurfaceRegistry) -> anyhow::Error {
 
 /// Apply auto-detection unless the user passed `--force`. `--force` keeps
 /// every surface in the selection so the user can bootstrap a missing
-/// surface from scratch (W1 contract).
+/// surface from scratch.
 fn filter_by_detect<'a>(
-    _registry: &'a SurfaceRegistry,
     surfaces: Vec<&'a dyn AgentSurface>,
     repo_root: &Path,
     force: bool,

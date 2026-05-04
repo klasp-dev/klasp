@@ -339,17 +339,31 @@ fn uninstall_agent_all_removes_every_listed_surface() {
 }
 
 #[test]
-fn uninstall_agent_all_with_empty_list_warns_and_exits_0() {
+fn uninstall_agent_all_walks_registry_regardless_of_config() {
+    // `uninstall --agent all` is the safety-net path: it walks every
+    // registered surface, ignoring `[gate].agents`. A user who installed
+    // both surfaces, dropped one from config, then ran uninstall must
+    // still get every previously-installed surface cleaned up — orphan
+    // hook scripts and managed blocks would otherwise persist forever.
+    //
+    // Asserts:
+    //  - exit 0 even when `[gate].agents = []`
+    //  - "nothing to remove" lines for both registered surfaces (fresh
+    //    repo, nothing was installed)
     let repo = fresh_dual_repo();
     write_toml(repo.path(), VALID_TOML_EMPTY_AGENTS);
 
     let out = run_uninstall(repo.path(), &["--agent", "all"]);
     assert!(
         out.status.success(),
-        "expected exit 0 on empty agents list\nstderr:\n{}",
+        "expected exit 0\nstderr:\n{}",
         stderr(&out)
     );
-    assert!(stderr(&out).contains("warning:"));
+    let so = stdout(&out);
+    assert!(
+        so.contains("claude_code: nothing to remove") && so.contains("codex: nothing to remove"),
+        "expected uninstall to walk every registered surface; got stdout:\n{so}"
+    );
 }
 
 #[test]

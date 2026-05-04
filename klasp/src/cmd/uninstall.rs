@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use klasp_core::AgentSurface;
 
 use crate::cli::UninstallArgs;
-use crate::cmd::install::{resolve_repo_root, resolve_selection, Selection};
+use crate::cmd::install::{resolve_repo_root, resolve_selection, Selection, AGENT_ALL};
 use crate::registry::SurfaceRegistry;
 
 pub fn run(args: &UninstallArgs) -> ExitCode {
@@ -33,7 +33,19 @@ fn try_run(args: &UninstallArgs) -> Result<ExitCode> {
     let repo_root = resolve_repo_root(args.repo_root.as_deref())?;
     let registry = SurfaceRegistry::default();
 
-    let selection = resolve_selection(args.agent.as_deref(), &registry, &repo_root)?;
+    // Uninstall is the safety-net: when the user says `--agent all`,
+    // walk every REGISTERED surface regardless of `klasp.toml`'s
+    // `[gate].agents`. If a user installed `["claude_code", "codex"]`,
+    // edited their config to drop one, then ran `uninstall --agent all`,
+    // the dropped surface's hook scripts and managed blocks would
+    // otherwise be orphaned. Single-agent (`--agent codex`) and the
+    // omitted case still flow through `resolve_selection` — only the
+    // wildcard branch diverges from install.
+    let selection = if args.agent.as_deref() == Some(AGENT_ALL) {
+        Selection::Surfaces(registry.iter().collect())
+    } else {
+        resolve_selection(args.agent.as_deref(), &registry, &repo_root)?
+    };
     let surfaces: Vec<&dyn AgentSurface> = match selection {
         Selection::Empty { reason } => {
             eprintln!("warning: {reason}; nothing to remove");
