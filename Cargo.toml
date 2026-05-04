@@ -4,6 +4,7 @@ members = [
     "klasp",
     "klasp-core",
     "klasp-agents-claude",
+    "klasp-agents-codex",
 ]
 
 [workspace.package]

@@ -287,6 +287,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "klasp-agents-codex"
+version = "0.0.0"
+dependencies = [
+ "klasp-core",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "klasp-core"
 version = "0.0.0"
 dependencies = [
