@@ -1,0 +1,13 @@
+[package]
+name = "klasp-agents-claude"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Claude Code agent surface for klasp."
+publish = false
+
+[dependencies]
+klasp-core = { path = "../klasp-core" }

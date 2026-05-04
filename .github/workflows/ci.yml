@@ -30,6 +30,13 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: cargo test (ignored)
+        run: cargo test --workspace -- --ignored
+        continue-on-error: true
+
   cross-platform-build:
     name: build / ${{ matrix.target.os }}
     strategy:
@@ -37,9 +44,10 @@ jobs:
       matrix:
         target:
           - { os: macos-14,       triple: aarch64-apple-darwin }
-          - { os: macos-13,       triple: x86_64-apple-darwin }
           - { os: ubuntu-latest,  triple: x86_64-unknown-linux-gnu }
           - { os: windows-latest, triple: x86_64-pc-windows-msvc }
+          # x86_64-apple-darwin (macos-13) is built at release time only.
+          # See https://github.com/klasp-dev/klasp/issues/9 — W5 release workflow reintroduces it on tag push.
     runs-on: ${{ matrix.target.os }}
     steps:
       - uses: actions/checkout@v4

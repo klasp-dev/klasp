@@ -1,0 +1,82 @@
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use clap::{Args, Parser, Subcommand};
+
+use crate::cmd;
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "klasp",
+    version,
+    about = "Block AI coding agents on the same quality gates your humans hit.",
+    long_about = None,
+)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Cmd,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Cmd {
+    /// Scaffold a klasp.toml in the current repo.
+    Init(InitArgs),
+    /// Install klasp's gate hook into the detected agent surfaces.
+    Install(InstallArgs),
+    /// Remove klasp's gate hook from the detected agent surfaces.
+    Uninstall(UninstallArgs),
+    /// Gate runtime — invoked by the generated hook script with tool-call JSON on stdin.
+    Gate(GateArgs),
+    /// Diagnose the local install (config, hook script, schema version).
+    Doctor(DoctorArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct InitArgs {}
+
+#[derive(Debug, Args)]
+pub struct InstallArgs {
+    /// Restrict installation to a specific agent (e.g. `claude_code`).
+    #[arg(long)]
+    pub agent: Option<String>,
+    /// Print what would be written without touching the filesystem.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Install even when the agent surface is not auto-detected, or overwrite
+    /// a non-managed hook file.
+    #[arg(long)]
+    pub force: bool,
+    /// Override the repo root (defaults to `git rev-parse --show-toplevel`).
+    #[arg(long)]
+    pub repo_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct UninstallArgs {
+    /// Restrict removal to a specific agent.
+    #[arg(long)]
+    pub agent: Option<String>,
+    /// Print what would be removed without touching the filesystem.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Override the repo root.
+    #[arg(long)]
+    pub repo_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct GateArgs {}
+
+#[derive(Debug, Args)]
+pub struct DoctorArgs {}
+
+pub fn run() -> ExitCode {
+    let cli = Cli::parse();
+    match &cli.command {
+        Cmd::Init(args) => cmd::init::run(args),
+        Cmd::Install(args) => cmd::install::run(args),
+        Cmd::Uninstall(args) => cmd::uninstall::run(args),
+        Cmd::Gate(args) => cmd::gate::run(args),
+        Cmd::Doctor(args) => cmd::doctor::run(args),
+    }
+}
