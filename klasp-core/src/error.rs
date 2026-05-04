@@ -42,7 +42,4 @@ pub enum KlaspError {
 
     #[error("check source error: {0}")]
     CheckSource(#[from] CheckSourceError),
-
-    #[error("trigger classification failed: {0}")]
-    Trigger(String),
 }
