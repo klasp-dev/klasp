@@ -431,3 +431,55 @@ fn detect_conflict_returns_pre_commit_for_real_pre_commit_framework_fixture() {
 fn detect_conflict_returns_none_for_user_hook() {
     assert_eq!(git_hooks::detect_conflict(FIXTURE_USER_BASH), None);
 }
+
+#[test]
+fn detect_conflict_does_not_match_bare_h_in_user_path() {
+    // Tighter than the previous `_/h"` substring: the `/` prefix anchors
+    // on husky's actual dotted-source line. A user hook that happens to
+    // include `_/h"` in a non-husky context (here-doc literal, comment
+    // mentioning the path) must not false-positive.
+    let user_hook = "#!/usr/bin/env sh\ncat <<EOF\nrelative path: _/h\"\nEOF\nnpm test\n";
+    assert_eq!(git_hooks::detect_conflict(user_hook), None);
+}
+
+#[test]
+fn uninstall_tolerates_mangled_klasp_markers_without_aborting_other_paths() {
+    // Mid-loop failure on a single mangled hook used to fail the whole
+    // uninstall and leave the repo half-cleaned (AGENTS.md modified
+    // before the hook step errored out). The fixed surface logs nothing
+    // and skips the bad hook; the user fixes their hook and re-runs.
+    let dir = tempfile::tempdir().unwrap();
+    let surface = CodexSurface;
+
+    // Stage a clean install first so AGENTS.md + the pre-push hook
+    // both contain klasp content.
+    surface.install(&ctx(dir.path().to_path_buf())).unwrap();
+
+    // Truncate the pre-commit hook to a start marker without a closing
+    // end marker — the malformed-marker case `find_block` rejects.
+    fs::write(
+        pre_commit(dir.path()),
+        format!("#!/usr/bin/env sh\n{MANAGED_START}\n# end marker missing\n"),
+    )
+    .unwrap();
+
+    // Uninstall must not error: it should clean the well-formed paths
+    // (AGENTS.md, pre-push) and silently leave the mangled pre-commit alone.
+    let paths = surface.uninstall(dir.path(), false).unwrap();
+
+    // pre-commit hook still exists, untouched.
+    assert!(pre_commit(dir.path()).exists());
+    let pc = read(&pre_commit(dir.path()));
+    assert!(pc.contains(MANAGED_START), "mangled hook left intact");
+    assert!(!pc.contains(MANAGED_END));
+
+    // pre-push hook was klasp-only → removed.
+    assert!(!pre_push(dir.path()).exists());
+
+    // AGENTS.md was klasp-only → removed.
+    assert!(!dir.path().join("AGENTS.md").exists());
+
+    // The returned `paths` should reflect the well-formed targets we
+    // actually touched. Mangled pre-commit is not in there.
+    assert!(!paths.iter().any(|p| p == &pre_commit(dir.path())));
+}

@@ -247,6 +247,15 @@ impl AgentSurface for CodexSurface {
         // 2. Each hook — same shape, but if klasp was the only content
         //    we delete the file (so `git` falls back to its no-hook
         //    default rather than executing a shebang-only stub).
+        //
+        //    Mangled-marker tolerance: a hook that has the start marker
+        //    without a matching end (or the pair in the wrong order) is
+        //    treated as "user has hand-edited this and we don't know how
+        //    to safely strip" — we leave the file alone rather than
+        //    erroring partway through and leaving the repo half-uninstalled
+        //    (AGENTS.md gone but hooks intact). The user can fix the
+        //    markers and re-run; meanwhile install reports a non-fatal
+        //    skip for that path.
         for (_, hook_path) in Self::all_hook_paths(repo_root) {
             if !hook_path.exists() {
                 continue;
@@ -262,8 +271,10 @@ impl AgentSurface for CodexSurface {
             if !existing.contains(git_hooks::MANAGED_START) {
                 continue;
             }
-            let stripped =
-                git_hooks::uninstall_block(&existing).map_err(|e| hook_error(&hook_path, e))?;
+            let stripped = match git_hooks::uninstall_block(&existing) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
             if stripped == existing {
                 continue;
             }
