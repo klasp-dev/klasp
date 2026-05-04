@@ -37,7 +37,11 @@ use klasp_core::{
 /// Intentionally generous — fail-open semantics demand we never kill a slow
 /// check before the user expects to. Users with stricter budgets set
 /// `timeout_secs` per-check.
-const DEFAULT_TIMEOUT_SECS: u64 = 120;
+///
+/// `pub(super)` so the named-recipe sources share the same default — every
+/// recipe ultimately calls `run_with_timeout`, so they should agree on the
+/// budget when the user hasn't set one.
+pub(super) const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
 /// Granularity of the std-only `try_wait` poll loop. 50 ms keeps idle
 /// wakeups cheap and bounds gate-runtime latency on a fast-exiting check.
@@ -74,7 +78,18 @@ impl CheckSource for ShellSource {
         config: &CheckConfig,
         state: &RepoState,
     ) -> Result<CheckResult, CheckSourceError> {
-        let CheckSourceConfig::Shell { command } = &config.source;
+        let command = match &config.source {
+            CheckSourceConfig::Shell { command } => command.as_str(),
+            // `supports_config` should already have routed non-Shell
+            // configs to a different source, but if a future caller
+            // bypasses the registry the safest fall-through is a
+            // typed runtime error rather than a silent panic.
+            other => {
+                return Err(CheckSourceError::Other(
+                    format!("ShellSource cannot run {other:?}").into(),
+                ));
+            }
+        };
 
         let timeout = Duration::from_secs(config.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
         let outcome = run_with_timeout(command, &state.root, &state.base_ref, timeout)?;
@@ -91,13 +106,18 @@ impl CheckSource for ShellSource {
 }
 
 /// Buffered stdio + exit code from a finished child.
-struct ShellOutcome {
+///
+/// `pub(super)` so sibling sources (the v0.2 named recipes) can reuse the
+/// same `sh -c` plumbing without re-implementing the timeout / drain dance.
+/// The fields are intentionally narrow — anything richer (signal, duration)
+/// would invite the recipes to depend on shell-source internals.
+pub(super) struct ShellOutcome {
     /// `None` when the child was killed (signal on Unix, terminated by
     /// timeout). The runtime does not need to distinguish a missing exit
     /// code from a non-zero one — both map to `Verdict::Fail`.
-    status_code: Option<i32>,
-    stdout: String,
-    stderr: String,
+    pub(super) status_code: Option<i32>,
+    pub(super) stdout: String,
+    pub(super) stderr: String,
 }
 
 /// Spawn `sh -c {command}`, capture stdio, kill if it overruns `timeout`.
@@ -117,7 +137,7 @@ struct ShellOutcome {
 ///   on the main thread risks the child blocking on a full pipe before we
 ///   call `wait`; `wait_with_output` would solve that but doesn't compose
 ///   with the std-only timeout pattern (it blocks indefinitely).
-fn run_with_timeout(
+pub(super) fn run_with_timeout(
     command: &str,
     cwd: &std::path::Path,
     base_ref: &str,

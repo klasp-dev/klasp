@@ -24,7 +24,8 @@ use std::io::{self, Read, Write};
 use std::process::ExitCode;
 
 use klasp_core::{
-    CheckConfig, ConfigV1, GateProtocol, GitEvent, RepoState, Trigger, Verdict, VerdictPolicy,
+    CheckConfig, ConfigV1, GateProtocol, GitEvent, RepoState, Severity, Trigger, Verdict,
+    VerdictPolicy,
 };
 
 use crate::cli::GateArgs;
@@ -224,9 +225,17 @@ fn render_terminal_summary<W: Write>(stderr: &mut W, verdict: &Verdict, policy: 
             }
         }
         Verdict::Fail { findings, message } => {
+            // Render Error and Warn findings with distinct severity tags so a
+            // recipe that prepends a non-blocking Warn to a Fail verdict (e.g.
+            // pre_commit's "version outside tested range" notice alongside
+            // real hook failures) doesn't read as a phantom hook failure.
+            let error_count = findings
+                .iter()
+                .filter(|f| matches!(f.severity, Severity::Error))
+                .count();
             let _ = writeln!(
                 stderr,
-                "{NOTICE_PREFIX} blocked ({} findings, policy={:?}):",
+                "{NOTICE_PREFIX} blocked ({error_count} errors, {} findings total, policy={:?}):",
                 findings.len(),
                 policy,
             );
@@ -237,7 +246,12 @@ fn render_terminal_summary<W: Write>(stderr: &mut W, verdict: &Verdict, policy: 
                     (Some(file), None) => format!(" ({file})"),
                     _ => String::new(),
                 };
-                let _ = writeln!(stderr, "  - [{}] {}{location}", f.rule, f.message,);
+                let tag = match f.severity {
+                    Severity::Error => "error",
+                    Severity::Warn => "warn",
+                    Severity::Info => "info",
+                };
+                let _ = writeln!(stderr, "  - [{tag}][{}] {}{location}", f.rule, f.message);
             }
         }
     }
