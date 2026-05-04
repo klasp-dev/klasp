@@ -60,6 +60,14 @@ The MVP. Claude Code only. Shell-command checks. One-command install. See
   via this same gate; `.claude/settings.json` and
   `.claude/hooks/klasp-gate.sh` are tracked in git so worktrees inherit the
   install. [#6, W6-7]
+- **`KLASP_BASE_REF` env var**: every shell check's child process sees
+  `KLASP_BASE_REF` set to the merge-base of `HEAD` against the upstream
+  tracking branch (falling back to `origin/main`, `origin/master`, then
+  `HEAD~1`), so diff-aware tools (`pre-commit run --from-ref`,
+  `fallow audit --base`) can scope themselves to the diff without an
+  agent-side wrapper. Matches the contract documented in
+  [design.md §3.5](./docs/design.md#35-configv1-versioned-config) and
+  [recipes.md](./docs/recipes.md#klasp_base_ref). [#6, W6-7]
 
 ### Fixed (W3 follow-ups)
 

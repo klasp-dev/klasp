@@ -133,9 +133,11 @@ fn gate<W: Write>(stderr: &mut W) -> Outcome {
     // aborting the whole gate — one broken check must not wedge the
     // others.
     let registry = SourceRegistry::default_v1();
+    let base_ref = git::compute_base_ref(&repo_root);
     let repo_state = RepoState {
         root: repo_root,
         git_event: event,
+        base_ref,
     };
 
     let mut verdicts: Vec<Verdict> = Vec::new();
