@@ -30,6 +30,13 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: cargo test (ignored)
+        run: cargo test --workspace -- --ignored
+        continue-on-error: true
+
   cross-platform-build:
     name: build / ${{ matrix.target.os }}
     strategy:
