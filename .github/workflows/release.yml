@@ -297,7 +297,25 @@ jobs:
         run: cargo publish -p klasp-core --no-verify --allow-dirty
 
       - name: wait for klasp-core to land
-        run: sleep 30
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          crate="klasp-core"
+          url="https://crates.io/api/v1/crates/${crate}/${VERSION}"
+          echo "Polling ${url} ..."
+          for i in $(seq 1 36); do
+            status=$(curl -sf -o /dev/null -w "%{http_code}" \
+              -H "User-Agent: klasp-release-workflow" "$url" || echo "000")
+            if [ "$status" = "200" ]; then
+              echo "${crate} ${VERSION} is live on crates.io (attempt ${i})."
+              exit 0
+            fi
+            echo "  attempt ${i}/36: got HTTP ${status}; retrying in 5s ..."
+            sleep 5
+          done
+          echo "ERROR: ${crate} ${VERSION} did not appear on crates.io within 180s." >&2
+          exit 1
 
       - name: publish klasp-agents-claude
         env:
@@ -305,7 +323,25 @@ jobs:
         run: cargo publish -p klasp-agents-claude --no-verify --allow-dirty
 
       - name: wait for klasp-agents-claude to land
-        run: sleep 30
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          crate="klasp-agents-claude"
+          url="https://crates.io/api/v1/crates/${crate}/${VERSION}"
+          echo "Polling ${url} ..."
+          for i in $(seq 1 36); do
+            status=$(curl -sf -o /dev/null -w "%{http_code}" \
+              -H "User-Agent: klasp-release-workflow" "$url" || echo "000")
+            if [ "$status" = "200" ]; then
+              echo "${crate} ${VERSION} is live on crates.io (attempt ${i})."
+              exit 0
+            fi
+            echo "  attempt ${i}/36: got HTTP ${status}; retrying in 5s ..."
+            sleep 5
+          done
+          echo "ERROR: ${crate} ${VERSION} did not appear on crates.io within 180s." >&2
+          exit 1
 
       - name: publish klasp
         env:
