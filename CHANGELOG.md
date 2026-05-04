@@ -77,9 +77,11 @@ The MVP. Claude Code only. Shell-command checks. One-command install. See
 
 ### Fixed (W3 follow-ups)
 
-- `Verdict::Pass` instead of `Verdict::Warn` when a `CheckSource` raises a
-  runtime error mid-gate, so a flaky check tool doesn't degrade the verdict
-  for the whole gate. Added regression test. [#14]
+- Added a regression test (`source_runtime_error_fails_open`) confirming the
+  fail-open path in `gate.rs::run` exits 0 with a stderr notice when a
+  `CheckSource` raises a runtime error mid-gate. The behaviour was already
+  correct in W3 (PR [#11](https://github.com/klasp-dev/klasp/pull/11)); this
+  closes a test-coverage gap surfaced during W3 follow-up review. [#14]
 - `Shell` `CheckSource` reaps its child process on timeout / interrupt
   rather than leaking it; killed-by-signal paths surface the signal in the
   finding. [#14]
