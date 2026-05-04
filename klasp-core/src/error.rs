@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 
 use crate::protocol::GateError;
+use crate::source::CheckSourceError;
 use crate::surface::InstallError;
 
 pub type Result<T, E = KlaspError> = std::result::Result<T, E>;
@@ -38,6 +39,9 @@ pub enum KlaspError {
 
     #[error("install error: {0}")]
     Install(#[from] InstallError),
+
+    #[error("check source error: {0}")]
+    CheckSource(#[from] CheckSourceError),
 
     #[error("trigger classification failed: {0}")]
     Trigger(String),

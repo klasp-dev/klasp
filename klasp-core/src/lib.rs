@@ -21,7 +21,7 @@ pub use config::{
 };
 pub use error::{KlaspError, Result};
 pub use protocol::{GateError, GateInput, GateProtocol, ToolInput, GATE_SCHEMA_VERSION};
-pub use source::{CheckResult, CheckSource, RepoState};
+pub use source::{CheckResult, CheckSource, CheckSourceError, RepoState};
 pub use surface::{AgentSurface, InstallContext, InstallError, InstallReport};
 pub use trigger::{GitEvent, Trigger};
 pub use verdict::{Finding, Severity, Verdict, VerdictPolicy};

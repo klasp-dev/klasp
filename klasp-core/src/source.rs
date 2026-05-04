@@ -17,6 +17,28 @@ use crate::config::CheckConfig;
 use crate::trigger::GitEvent;
 use crate::verdict::Verdict;
 
+/// Typed error for `CheckSource::run`. Covers runtime-level failures only;
+/// semantic failures (lint hits, test failures) ride inside `Verdict::Fail`.
+/// Use `CheckSourceError::Other` for impl-specific errors that don't fit the
+/// predefined variants.
+#[derive(Debug, thiserror::Error)]
+pub enum CheckSourceError {
+    #[error("failed to spawn check process: {source}")]
+    Spawn {
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("check produced unparseable output: {0}")]
+    Output(String),
+
+    #[error("check exceeded {secs}s timeout")]
+    Timeout { secs: u64 },
+
+    #[error(transparent)]
+    Other(#[from] Box<dyn std::error::Error + Send + Sync>),
+}
+
 /// Snapshot of repo metadata passed to every check execution.
 #[derive(Debug, Clone)]
 pub struct RepoState {
@@ -47,8 +69,11 @@ pub trait CheckSource: Send + Sync {
     /// right source.
     fn supports_config(&self, config: &CheckConfig) -> bool;
 
-    /// Execute the check and return a structured result. Errors here are
-    /// runtime failures (process spawn errors, malformed output) — semantic
-    /// failures (lint hits, test failures) ride inside `Verdict::Fail`.
-    fn run(&self, config: &CheckConfig, state: &RepoState) -> Result<CheckResult, anyhow::Error>;
+    /// Execute the check and return a structured result.
+    ///
+    /// Errors here are runtime failures (process spawn errors, malformed
+    /// output) — semantic failures (lint hits, test failures) ride inside
+    /// `Verdict::Fail`. Use `CheckSourceError::Other` for impl-specific
+    /// errors that don't fit the predefined variants.
+    fn run(&self, config: &CheckConfig, state: &RepoState) -> Result<CheckResult, CheckSourceError>;
 }
