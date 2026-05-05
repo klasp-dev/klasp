@@ -1,0 +1,41 @@
+# klasp-core/klasp.toml — illustrative sub-config for monorepo discovery
+#
+# This file demonstrates two v0.2.5 features working together:
+#
+#   1. Monorepo config discovery (#38): when a staged file lives under
+#      klasp-core/, klasp gate uses THIS config instead of the root
+#      klasp.toml. The root config governs everything else.
+#
+#   2. Custom verdict policy: "all_fail" requires every non-Warn check to
+#      return Fail before the gate blocks. A single Pass is enough to let
+#      the commit through. For a library crate where informational checks
+#      outnumber load-bearing ones, this demonstrates the policy without
+#      making the gate stricter than the root config.
+#
+# NOTE: This config is illustrative, not load-bearing. The root klasp.toml
+# runs cargo-check + cargo-clippy + cargo-test, which already cover the
+# klasp-core crate. The "core-info" check here just proves the sub-config
+# fires correctly in dogfood; it always passes.
+
+version = 1
+
+[gate]
+agents = ["claude_code"]
+# "all_fail" requires unanimous failure to block — a single Pass is enough
+# to let the commit proceed. Used here to demonstrate the policy in dogfood;
+# load-bearing gates should prefer "any_fail".
+policy = "all_fail"
+# Sequential (false) is appropriate for a single informational check —
+# parallel mode adds overhead only worth paying for multiple long-running checks.
+parallel = false
+
+[[checks]]
+name = "core-info"
+triggers = [{ on = ["commit"] }]
+timeout_secs = 5
+[checks.source]
+type = "shell"
+# Informational only: echoes a notice so the agent sees the sub-config fired.
+# Replace with a scoped check (e.g. `cargo check -p klasp-core`) if you want
+# this sub-config to do real work.
+command = "echo 'klasp-core scoped check (illustrative)'"

@@ -15,12 +15,29 @@
 
 version = 1
 
+# ---------------------------------------------------------------------------
+# Gate configuration (v0.2.5+)
+#
+# parallel = true enables rayon work-stealing parallel execution across all
+# triggered checks in this config. Checks MUST be stateless — reading source
+# files and config is fine; writing to shared output (same temp file, same DB
+# row, process-global state) will race. See docs/design.md §6.1 for the full
+# contract. Default is false for back-compat with v0.2 configs.
+#
+# Monorepo discovery: when a staged file has a closer klasp.toml ancestor
+# (e.g. klasp-core/klasp.toml), that config is used for files in that subtree
+# and overrides this root config. Cross-group verdicts are aggregated under
+# AnyFail regardless of each group's own policy.
+# ---------------------------------------------------------------------------
 [gate]
-# Agent surfaces that klasp intercepts. v0.1 supports "claude_code"; Codex
-# arrives in v0.2. See docs/roadmap.md.
 agents = ["claude_code"]
-# "any_fail" blocks the agent if any check returns Fail. Only policy in v0.1.
+# "any_fail" blocks the agent if any check returns Fail. Other options:
+# "all_fail" (block only when every check fails) and "majority_fail" (>50%).
 policy = "any_fail"
+# Opt-in parallel execution. All checks below are stateless subprocess
+# invocations (each spawns its own cargo process with an isolated target/ lock)
+# so parallel mode is safe here.
+parallel = true
 
 # ---------------------------------------------------------------------------
 # Fast type/borrow check on every commit attempt. cargo check is the cheapest
