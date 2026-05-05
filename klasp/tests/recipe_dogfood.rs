@@ -59,16 +59,15 @@ fn load_root_config() -> ConfigV1 {
 
 /// Assert that the config contains a check entry whose source matches `recipe_type`.
 fn assert_has_recipe(config: &ConfigV1, recipe_type: &str) {
-    let found = config
-        .checks
-        .iter()
-        .any(|c| match (&c.source, recipe_type) {
-            (CheckSourceConfig::PreCommit { .. }, "pre_commit") => true,
-            (CheckSourceConfig::Fallow { .. }, "fallow") => true,
-            (CheckSourceConfig::Pytest { .. }, "pytest") => true,
-            (CheckSourceConfig::Cargo { .. }, "cargo") => true,
-            _ => false,
-        });
+    let found = config.checks.iter().any(|c| {
+        matches!(
+            (&c.source, recipe_type),
+            (CheckSourceConfig::PreCommit { .. }, "pre_commit")
+                | (CheckSourceConfig::Fallow { .. }, "fallow")
+                | (CheckSourceConfig::Pytest { .. }, "pytest")
+                | (CheckSourceConfig::Cargo { .. }, "cargo")
+        )
+    });
     assert!(
         found,
         "klasp.toml must contain a [[checks]] entry with type = \"{recipe_type}\"",
