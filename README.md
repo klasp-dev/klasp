@@ -216,6 +216,20 @@ command = "cargo test --workspace"
 
 Every shell check sees `KLASP_BASE_REF` in its environment, set to the merge-base of `HEAD` against the upstream tracking branch (falling back to `origin/main`, `origin/master`, then `HEAD~1`). Diff-aware tools (`pre-commit run --from-ref`, `fallow audit --base`) can scope themselves to the diff without an agent-side wrapper. See [`docs/recipes.md`](./docs/recipes.md) for worked examples in pre-commit, fallow, pytest, ESLint/Biome, ruff.
 
+## Parallel check execution (v0.2.5+)
+
+By default, klasp runs checks sequentially. When individual checks are long-running and independent (test runners, type-checkers), you can enable rayon-based parallel execution by adding `parallel = true` to the `[gate]` section:
+
+```toml
+[gate]
+agents = ["claude_code"]
+parallel = true
+```
+
+With `parallel = true`, all triggered checks for a gate run concurrently via rayon's work-stealing thread pool. A 5-check workload that takes 25 seconds sequentially completes in ~5 seconds in parallel mode.
+
+**Important contract:** checks must be stateless when parallel mode is enabled. Reading shared input (source files, config) is fine. Writing to shared output — the same temp file, the same database row, process-global state — will race and produce non-deterministic results. klasp does not detect or prevent this. The default remains `false` so existing v0.2 configs continue working unchanged.
+
 ## Verdict policies
 
 The `[gate].policy` field controls how multiple check results are combined into

@@ -43,6 +43,13 @@ pub struct GateConfig {
 
     #[serde(default)]
     pub policy: VerdictPolicy,
+
+    /// Run checks in parallel via rayon's work-stealing scheduler. v0.2.5+
+    /// behaviour. Default `false` for back-compat. Per [docs/design.md §6.1],
+    /// checks MUST be stateless when this is enabled — anything writing to a
+    /// shared temp file or process-global state will race.
+    #[serde(default)]
+    pub parallel: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -825,6 +832,43 @@ mod tests {
         "#;
         let err = ConfigV1::parse(toml).expect_err("should reject");
         assert!(matches!(err, KlaspError::ConfigParse(_)));
+    }
+
+    // ── GateConfig.parallel field tests ─────────────────────────────────────
+
+    #[test]
+    fn parallel_field_defaults_to_false_when_omitted() {
+        let toml = r#"
+            version = 1
+            [gate]
+            agents = ["claude_code"]
+        "#;
+        let config = ConfigV1::parse(toml).expect("should parse");
+        assert!(!config.gate.parallel, "parallel should default to false");
+    }
+
+    #[test]
+    fn parallel_field_parses_true() {
+        let toml = r#"
+            version = 1
+            [gate]
+            agents = ["claude_code"]
+            parallel = true
+        "#;
+        let config = ConfigV1::parse(toml).expect("should parse");
+        assert!(config.gate.parallel, "parallel = true should parse");
+    }
+
+    #[test]
+    fn parallel_field_parses_explicit_false() {
+        let toml = r#"
+            version = 1
+            [gate]
+            agents = ["claude_code"]
+            parallel = false
+        "#;
+        let config = ConfigV1::parse(toml).expect("should parse");
+        assert!(!config.gate.parallel, "parallel = false should parse");
     }
 
     #[test]
