@@ -12,6 +12,16 @@ follow the migration notes attached to each minor release.
 
 Nothing pending.
 
+## [0.2.3]
+
+Two critical bugfixes surfaced during the smart-dispatch dogfood test of v0.2.2.
+
+### Fixed
+
+- **`pre_commit` and `fallow` recipes now scope to the staged index on `commit` trigger.** Both recipes previously emitted ref-range argv (`--from-ref/--to-ref` for pre-commit, `--base` for fallow) regardless of trigger. At PreToolUse for `git commit`, `HEAD` is the parent — staged changes are invisible to ref-range scoping. Result: violations in the staged index passed klasp's gate; pre-commit's own `.git/hooks/pre-commit` framework caught them instead, so klasp added zero signal over a vanilla pre-commit setup. Now: `commit` trigger → no ref args (pre-commit defaults to staged files; fallow audits working tree). `push` trigger → existing ref-range form preserved. [#72]
+
+- **`klasp doctor` now respects `[gate].agents` instead of auto-detecting Codex from `AGENTS.md` presence.** Previously, doctor called `surface.detect()` to decide which surfaces to check; `CodexSurface.detect()` returns true whenever `AGENTS.md` exists. False-positive `FAIL hook[codex]:` on every project that uses `AGENTS.md` as a docs file unrelated to Codex. Now: doctor iterates `config.gate.agents` as authoritative; `AGENTS.md` filesystem signal is preserved as a non-fatal `INFO` advisory ("AGENTS.md present but codex not in [gate].agents — `klasp install --agent codex` to enable"). Falls back to `detect()` only when config fails to load. [#73]
+
 ## [0.2.2]
 
 First actually-published release of the v0.2 line. Functionally identical to
