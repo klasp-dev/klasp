@@ -95,12 +95,12 @@ timeout_secs = 60
 [checks.source]
 type = "fallow"
 
-[[checks]]
-name = "pytest"
-triggers = [{ on = ["push"] }]
-timeout_secs = 120
-[checks.source]
-type = "pytest"
+# pytest recipe omitted from dogfood — klasp is Rust-only, no Python tests
+# to collect. The recipe was wired in v0.2 W7's recipe-dogfood-test (#63) for
+# integration coverage; the actual dogfood gate keeps cargo + fallow + the
+# shell pre-commit shim. v0.2.x will fix the recipe to treat pytest exit 5
+# (no tests collected) as a no-op pass so the recipe can stay wired even on
+# repos that may grow Python tests later.
 
 [[checks]]
 name = "cargo"
