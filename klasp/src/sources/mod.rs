@@ -1,17 +1,20 @@
 //! `CheckSource` implementations for the klasp binary.
 //!
 //! v0.1 shipped exactly one source — `Shell`. v0.2 W4 added the first named
-//! recipe — `PreCommit`. W5 adds `Fallow`. W6 will add `pytest` and `cargo`
-//! along the same shape. v0.3 will add the subprocess plugin model. Per
-//! [docs/design.md §3.2], every new source is an additive change.
+//! recipe — `PreCommit`. W5 adds `Fallow`. W6 adds `Pytest` and `Cargo`,
+//! finishing the v0.2 named-recipe slate. v0.3 will add the subprocess
+//! plugin model. Per [docs/design.md §3.2], every new source is an
+//! additive change.
 //!
 //! A `SourceRegistry` is the dispatch table the gate runtime uses to find
 //! the right source for a `CheckConfig`. The registry is a fixed `Vec`
 //! pre-populated with the built-in sources; the v0.3 plugin model
 //! will append discovered subprocess plugins to the same vec.
 
+pub mod cargo;
 pub mod fallow;
 pub mod pre_commit;
+pub mod pytest;
 pub mod shell;
 
 use klasp_core::{CheckConfig, CheckSource};
@@ -34,6 +37,8 @@ impl SourceRegistry {
         let sources: Vec<Box<dyn CheckSource>> = vec![
             Box::new(pre_commit::PreCommitSource::new()),
             Box::new(fallow::FallowSource::new()),
+            Box::new(pytest::PytestSource::new()),
+            Box::new(cargo::CargoSource::new()),
             Box::new(shell::ShellSource::new()),
         ];
         Self { sources }
@@ -98,6 +103,32 @@ mod tests {
         }
     }
 
+    fn pytest_check() -> CheckConfig {
+        CheckConfig {
+            name: "tests".into(),
+            triggers: vec![],
+            source: CheckSourceConfig::Pytest {
+                extra_args: None,
+                config_path: None,
+                junit_xml: None,
+            },
+            timeout_secs: None,
+        }
+    }
+
+    fn cargo_check_config() -> CheckConfig {
+        CheckConfig {
+            name: "build".into(),
+            triggers: vec![],
+            source: CheckSourceConfig::Cargo {
+                subcommand: "check".into(),
+                extra_args: None,
+                package: None,
+            },
+            timeout_secs: None,
+        }
+    }
+
     #[test]
     fn registry_dispatches_shell_check_to_shell_source() {
         let registry = SourceRegistry::default_v1();
@@ -123,5 +154,23 @@ mod tests {
             .find_for(&fallow_check())
             .expect("fallow source must claim fallow config");
         assert_eq!(source.source_id(), "fallow");
+    }
+
+    #[test]
+    fn registry_dispatches_pytest_check_to_pytest_source() {
+        let registry = SourceRegistry::default_v1();
+        let source = registry
+            .find_for(&pytest_check())
+            .expect("pytest source must claim pytest config");
+        assert_eq!(source.source_id(), "pytest");
+    }
+
+    #[test]
+    fn registry_dispatches_cargo_check_to_cargo_source() {
+        let registry = SourceRegistry::default_v1();
+        let source = registry
+            .find_for(&cargo_check_config())
+            .expect("cargo source must claim cargo config");
+        assert_eq!(source.source_id(), "cargo");
     }
 }

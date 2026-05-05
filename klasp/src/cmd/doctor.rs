@@ -288,6 +288,8 @@ fn check_paths(config: &ConfigV1, c: &mut Counters) {
             },
             CheckSourceConfig::PreCommit { .. } => check_recipe_argv0(c, &check.name, "pre-commit"),
             CheckSourceConfig::Fallow { .. } => check_recipe_argv0(c, &check.name, "fallow"),
+            CheckSourceConfig::Pytest { .. } => check_recipe_argv0(c, &check.name, "pytest"),
+            CheckSourceConfig::Cargo { .. } => check_recipe_argv0(c, &check.name, "cargo"),
         }
     }
 }
