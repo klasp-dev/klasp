@@ -24,21 +24,21 @@ use std::io::{self, Read, Write};
 use std::process::ExitCode;
 
 use klasp_core::{
-    CheckConfig, ConfigV1, GateProtocol, GitEvent, RepoState, Severity, Trigger, Verdict,
-    VerdictPolicy,
+    CheckConfig, ConfigV1, GateProtocol, GitEvent, RepoState, Trigger, Verdict, VerdictPolicy,
 };
 
-use crate::cli::GateArgs;
+use crate::cli::{GateArgs, OutputFormat};
 use crate::git;
+use crate::output;
 use crate::sources::SourceRegistry;
 
 /// Stderr prefix for every fail-open notice. Single source of truth makes
 /// log-grep'ing `klasp-gate:` reliable across the binary.
 const NOTICE_PREFIX: &str = "klasp-gate:";
 
-pub fn run(_args: &GateArgs) -> ExitCode {
+pub fn run(args: &GateArgs) -> ExitCode {
     let mut stderr = io::stderr().lock();
-    match gate(&mut stderr) {
+    match gate(&mut stderr, args) {
         Outcome::Pass => ExitCode::SUCCESS,
         Outcome::Block => ExitCode::from(2),
     }
@@ -51,7 +51,7 @@ enum Outcome {
     Block,
 }
 
-fn gate<W: Write>(stderr: &mut W) -> Outcome {
+fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
     // 1. Schema handshake — env var, not stdin (see design §3.3).
     match GateProtocol::read_schema_from_env() {
         Ok(env_value) => {
@@ -172,7 +172,7 @@ fn gate<W: Write>(stderr: &mut W) -> Outcome {
     // 7. Aggregate per-check verdicts. `VerdictPolicy::AnyFail` is the only
     // policy in v0.1; other variants land in v0.2.5 (see roadmap).
     let final_verdict = Verdict::merge(verdicts, config.gate.policy);
-    render_terminal_summary(stderr, &final_verdict, config.gate.policy);
+    dispatch_output(stderr, args, &final_verdict, config.gate.policy);
 
     if final_verdict.is_blocking() {
         Outcome::Block
@@ -202,57 +202,48 @@ fn triggers_match(check: &CheckConfig, event: GitEvent) -> bool {
         .any(|t| t.on.iter().any(|name| name == needle))
 }
 
-/// Render a one-shot summary on stderr. A real `render` module lands in W4
-/// alongside `klasp doctor`; this is the minimal text rendering needed so a
-/// failing gate explains itself without a `serde_json` dump in the user's
-/// terminal.
-fn render_terminal_summary<W: Write>(stderr: &mut W, verdict: &Verdict, policy: VerdictPolicy) {
-    match verdict {
-        Verdict::Pass => {
-            // No noise on the happy path — quiet gates stay out of the way.
+/// Dispatch verdict rendering to the right formatter and write the result to
+/// the configured destination.
+///
+/// - `Terminal` → write the human-readable text to `stderr` (existing v0.1
+///   behaviour preserved for all users who don't pass `--format`).
+/// - `Junit` / `Sarif` → write the machine-readable output to `--output` path
+///   when provided, otherwise to stdout.
+fn dispatch_output<W: Write>(
+    stderr: &mut W,
+    args: &GateArgs,
+    verdict: &Verdict,
+    policy: VerdictPolicy,
+) {
+    match args.format {
+        OutputFormat::Terminal => {
+            let text = output::terminal::render(verdict, policy);
+            let _ = write!(stderr, "{text}");
         }
-        Verdict::Warn { findings, message } => {
-            let _ = writeln!(
-                stderr,
-                "{NOTICE_PREFIX} warnings ({} findings):",
-                findings.len()
-            );
-            if let Some(m) = message {
-                let _ = writeln!(stderr, "  {m}");
-            }
-            for f in findings {
-                let _ = writeln!(stderr, "  - [{}] {}", f.rule, f.message);
+        OutputFormat::Junit => {
+            let xml = output::junit::render(verdict, policy);
+            write_machine_output(&xml, args);
+        }
+        OutputFormat::Sarif => {
+            let json = output::sarif::render(verdict, policy);
+            write_machine_output(&json, args);
+        }
+    }
+}
+
+/// Write machine-readable formatter output to `--output <path>` or stdout.
+fn write_machine_output(content: &str, args: &GateArgs) {
+    match &args.output {
+        Some(path) => {
+            if let Err(e) = std::fs::write(path, content) {
+                let _ = writeln!(
+                    io::stderr(),
+                    "{NOTICE_PREFIX} could not write output file ({e})."
+                );
             }
         }
-        Verdict::Fail { findings, message } => {
-            // Render Error and Warn findings with distinct severity tags so a
-            // recipe that prepends a non-blocking Warn to a Fail verdict (e.g.
-            // pre_commit's "version outside tested range" notice alongside
-            // real hook failures) doesn't read as a phantom hook failure.
-            let error_count = findings
-                .iter()
-                .filter(|f| matches!(f.severity, Severity::Error))
-                .count();
-            let _ = writeln!(
-                stderr,
-                "{NOTICE_PREFIX} blocked ({error_count} errors, {} findings total, policy={:?}):",
-                findings.len(),
-                policy,
-            );
-            let _ = writeln!(stderr, "{message}");
-            for f in findings {
-                let location = match (f.file.as_deref(), f.line) {
-                    (Some(file), Some(line)) => format!(" ({file}:{line})"),
-                    (Some(file), None) => format!(" ({file})"),
-                    _ => String::new(),
-                };
-                let tag = match f.severity {
-                    Severity::Error => "error",
-                    Severity::Warn => "warn",
-                    Severity::Info => "info",
-                };
-                let _ = writeln!(stderr, "  - [{tag}][{}] {}{location}", f.rule, f.message);
-            }
+        None => {
+            let _ = write!(io::stdout(), "{content}");
         }
     }
 }

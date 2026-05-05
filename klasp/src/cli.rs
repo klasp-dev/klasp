@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::cmd;
 
@@ -72,8 +72,29 @@ pub struct UninstallArgs {
     pub repo_root: Option<PathBuf>,
 }
 
+/// Output format for `klasp gate`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+pub enum OutputFormat {
+    /// Human-readable terminal text written to stderr (default).
+    #[default]
+    Terminal,
+    /// JUnit XML (Surefire schema) written to stdout or `--output`.
+    Junit,
+    /// SARIF 2.1.0 JSON written to stdout or `--output`.
+    Sarif,
+}
+
 #[derive(Debug, Args)]
-pub struct GateArgs {}
+pub struct GateArgs {
+    /// Output format. Default is human-readable terminal text.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Terminal)]
+    pub format: OutputFormat,
+
+    /// Write formatter output to this path. Defaults to stdout for `junit`/`sarif`,
+    /// stderr for `terminal`.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+}
 
 #[derive(Debug, Args)]
 pub struct DoctorArgs {}
