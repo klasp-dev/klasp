@@ -39,8 +39,7 @@ use tempfile::TempDir;
 /// event in the agent session — tool calls, tool results, messages. We replay
 /// the commit invocation found in this fixture rather than requiring a live
 /// Codex CLI.
-const FIXTURE_CODEX_SESSION: &str =
-    include_str!("fixtures/codex/failing-commit-session.jsonl");
+const FIXTURE_CODEX_SESSION: &str = include_str!("fixtures/codex/failing-commit-session.jsonl");
 
 /// Claude Code–shaped JSON payload used to drive `klasp gate` when testing
 /// from the Codex surface. The gate's stdin protocol is the same regardless
@@ -127,17 +126,14 @@ fn fresh_codex_repo_with_klasp() -> TempDir {
     // directory structure; the gate's `find_repo_root_from_cwd` will find
     // the `.git/` directory we create by hand.
     std::fs::create_dir(dir.path().join(".git")).expect("create .git");
-    std::fs::create_dir(dir.path().join(".git").join("hooks"))
-        .expect("create .git/hooks");
+    std::fs::create_dir(dir.path().join(".git").join("hooks")).expect("create .git/hooks");
 
     // AGENTS.md presence is the codex surface auto-detect signal (mirrors
     // `install_codex_cli.rs` / `CodexSurface::detect`).
-    std::fs::write(dir.path().join("AGENTS.md"), "# Project\n")
-        .expect("write AGENTS.md");
+    std::fs::write(dir.path().join("AGENTS.md"), "# Project\n").expect("write AGENTS.md");
 
     // Write the failing klasp.toml.
-    std::fs::write(dir.path().join("klasp.toml"), FAILING_KLASP_TOML)
-        .expect("write klasp.toml");
+    std::fs::write(dir.path().join("klasp.toml"), FAILING_KLASP_TOML).expect("write klasp.toml");
 
     // Install klasp for the codex surface so the pre-commit hook is in place.
     let out = Command::new(klasp_bin())
@@ -213,8 +209,7 @@ fn codex_failing_commit_is_blocked_by_gate() {
     let repo = fresh_codex_repo_with_klasp();
 
     // Confirm the pre-commit hook was written with the codex agent marker.
-    let hook_body =
-        std::fs::read_to_string(repo.path().join(".git/hooks/pre-commit")).unwrap();
+    let hook_body = std::fs::read_to_string(repo.path().join(".git/hooks/pre-commit")).unwrap();
     assert!(
         hook_body.contains("--agent codex"),
         "pre-commit hook must dispatch to codex agent:\n{hook_body}",
@@ -283,10 +278,8 @@ fn codex_failing_commit_emits_structured_verdict() {
 fn codex_passing_check_allows_commit() {
     let dir = TempDir::new().expect("create tempdir");
     std::fs::create_dir(dir.path().join(".git")).expect("create .git");
-    std::fs::create_dir(dir.path().join(".git").join("hooks"))
-        .expect("create .git/hooks");
-    std::fs::write(dir.path().join("AGENTS.md"), "# Project\n")
-        .expect("write AGENTS.md");
+    std::fs::create_dir(dir.path().join(".git").join("hooks")).expect("create .git/hooks");
+    std::fs::write(dir.path().join("AGENTS.md"), "# Project\n").expect("write AGENTS.md");
 
     // Write a klasp.toml with a passing check.
     std::fs::write(
