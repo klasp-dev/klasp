@@ -61,6 +61,40 @@ Until then, v0.1 monorepo strategies in order of preference:
    based on the diff. Cleanest for large repos already using those tools.
 3. Wait for v0.2.5 if neither fits.
 
+### Verdict policies
+
+The `[gate].policy` field controls how individual check outcomes are folded
+into the gate's final decision.
+
+**`any_fail` (default)** — blocks if at least one check returned `Fail`. Use
+this for standard quality gates where a single red check is reason enough to
+stop the agent. This is the v0.1 behaviour and the right choice for most
+repos.
+
+**`all_fail`** — blocks only when every non-`Warn` check returned `Fail` and
+no check returned `Pass`. If a subset of checks fails but at least one passes,
+the gate downgrades the result to `Warn` (the agent is informed but not
+blocked). Good for experimental "canary" check sets where you want coverage
+without hard-blocking the agent until the checks are proven reliable.
+
+**`majority_fail`** — blocks when strictly more than half the non-`Warn`
+checks returned `Fail`. Ties (e.g. 2 pass + 2 fail) are not a majority and
+downgrade to `Warn`. Useful for weighted-consensus setups where several
+independent linters vote and you want partial disagreement surfaced as a
+warning rather than a block.
+
+`Warn` verdicts are never counted in the decisive majority or unanimity test
+regardless of policy — they pass through as informational findings.
+
+```toml
+[gate]
+agents = ["claude_code"]
+policy = "majority_fail"   # "any_fail" | "all_fail" | "majority_fail"
+```
+
+Unknown policy values fail at config-load time with a parse error; there is no
+silent fallback.
+
 ### Fail-open semantics
 
 If a check tool isn't installed, `klasp doctor` warns (`WARN  path[name]: not

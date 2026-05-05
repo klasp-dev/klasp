@@ -216,10 +216,26 @@ command = "cargo test --workspace"
 
 Every shell check sees `KLASP_BASE_REF` in its environment, set to the merge-base of `HEAD` against the upstream tracking branch (falling back to `origin/main`, `origin/master`, then `HEAD~1`). Diff-aware tools (`pre-commit run --from-ref`, `fallow audit --base`) can scope themselves to the diff without an agent-side wrapper. See [`docs/recipes.md`](./docs/recipes.md) for worked examples in pre-commit, fallow, pytest, ESLint/Biome, ruff.
 
+## Verdict policies
+
+The `[gate].policy` field controls how multiple check results are combined into
+a single gate outcome. Three values are available:
+
+| Policy | Blocks when | Use when |
+|---|---|---|
+| `"any_fail"` | Any single check returned `Fail` (default) | Standard strict quality gates — one red check is enough to block. |
+| `"all_fail"` | Every non-`Warn` check returned `Fail` and no check returned `Pass` | Experimental: block only when every participating check agrees the change is bad. Mixed `Pass`+`Fail` downgrades to `Warn` so the agent is informed but not blocked. |
+| `"majority_fail"` | Strictly more than half the non-`Warn` checks returned `Fail` | Weighted consensus: useful when you have several independent checks and want partial failures to surface as warnings rather than hard blocks. Ties (e.g. 2 pass + 2 fail) are not a majority — they downgrade to `Warn`. |
+
+`Warn` verdicts are never counted in the decisive majority or unanimity tests —
+they pass through as informational noise regardless of the policy.
+
+See [`docs/recipes.md`](./docs/recipes.md#verdict-policies) for selection guidance.
+
 ## Documentation
 
 - [`docs/design.md`](./docs/design.md) — v0.1 architecture, abstractions, and rationale
-- [`docs/recipes.md`](./docs/recipes.md) — worked `klasp.toml` examples for pre-commit, fallow, pytest, cargo, ESLint/Biome, ruff
+- [`docs/recipes.md`](./docs/recipes.md) — worked `klasp.toml` examples for pre-commit, fallow, pytest, cargo, ESLint/Biome, ruff; verdict policy guidance
 - [`docs/roadmap.md`](./docs/roadmap.md) — milestones from v0.1 → v1.0
 - [`CHANGELOG.md`](./CHANGELOG.md) — release notes
 
