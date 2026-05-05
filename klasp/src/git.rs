@@ -10,6 +10,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use klasp_core::CLAUDE_PROJECT_DIR_ENV;
+
 /// Resolve a working repo root from the current working directory.
 ///
 /// Lookup order, mirroring [docs/design.md §6, §14]:
@@ -23,8 +25,8 @@ use std::process::Command;
 /// Returns `None` only when every attempt fails (no env var, no git, no
 /// readable cwd). The gate runtime treats `None` as a fail-open signal.
 pub fn find_repo_root_from_cwd() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("CLAUDE_PROJECT_DIR") {
-        let candidate = PathBuf::from(&dir);
+    if let Ok(dir) = std::env::var(CLAUDE_PROJECT_DIR_ENV) {
+        let candidate = PathBuf::from(dir);
         if candidate.is_dir() {
             return Some(candidate);
         }
