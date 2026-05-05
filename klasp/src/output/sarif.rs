@@ -1,7 +1,7 @@
 //! SARIF 2.1.0 JSON formatter for `klasp gate`.
 
 use klasp_core::{Finding, Severity, Verdict, VerdictPolicy};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -55,15 +55,29 @@ fn build_results(findings: &[Finding]) -> Value {
 }
 
 fn finding_to_result(f: &Finding) -> Value {
-    let level = severity_to_level(f.severity);
-    let location = match (f.file.as_deref(), f.line) {
-        (Some(file), Some(line)) => {
-            json!([{"physicalLocation": {"artifactLocation": {"uri": file}, "region": {"startLine": line}}}])
-        }
-        (Some(file), None) => json!([{"physicalLocation": {"artifactLocation": {"uri": file}}}]),
-        _ => json!([]),
-    };
-    json!({"ruleId": f.rule, "level": level, "message": {"text": f.message}, "locations": location})
+    let mut result = Map::new();
+    result.insert("ruleId".into(), json!(f.rule));
+    result.insert("level".into(), json!(severity_to_level(f.severity)));
+    result.insert("message".into(), json!({"text": f.message}));
+    // SARIF 2.1.0 §3.27.12: if `result.locations` is present it MUST be
+    // non-empty. Omit the field when the finding has no physical location.
+    if let Some(physical) = physical_location(f) {
+        result.insert("locations".into(), json!([{"physicalLocation": physical}]));
+    }
+    Value::Object(result)
+}
+
+fn physical_location(f: &Finding) -> Option<Value> {
+    match (f.file.as_deref(), f.line) {
+        (Some(file), Some(line)) => Some(json!({
+            "artifactLocation": {"uri": file},
+            "region": {"startLine": line},
+        })),
+        (Some(file), None) => Some(json!({
+            "artifactLocation": {"uri": file},
+        })),
+        _ => None,
+    }
 }
 
 fn severity_to_level(s: Severity) -> &'static str {

@@ -279,9 +279,49 @@ mod sarif {
         );
         let golden = std::fs::read_to_string(golden_path)
             .unwrap_or_else(|_| panic!("golden fixture missing: {golden_path}\n{json}"));
-        let actual: serde_json::Value = serde_json::from_str(&json).expect("invalid JSON");
-        let expected: serde_json::Value =
+        let mut actual: serde_json::Value = serde_json::from_str(&json).expect("invalid JSON");
+        let mut expected: serde_json::Value =
             serde_json::from_str(&golden).expect("invalid golden JSON");
+        // tool.driver.version is sourced from CARGO_PKG_VERSION at build time;
+        // strip it from both sides so the fixture survives version bumps.
+        strip_driver_version(&mut actual);
+        strip_driver_version(&mut expected);
         assert_eq!(actual, expected, "SARIF JSON does not match golden fixture");
+    }
+
+    fn strip_driver_version(v: &mut serde_json::Value) {
+        if let Some(driver) = v
+            .pointer_mut("/runs/0/tool/driver")
+            .and_then(|d| d.as_object_mut())
+        {
+            driver.remove("version");
+        }
+    }
+
+    /// SARIF 2.1.0 §3.27.12: `result.locations`, if present, must be a
+    /// non-empty array. Omit the field entirely when the finding carries
+    /// no physical location.
+    #[test]
+    fn finding_without_location_omits_locations_key() {
+        let verdict = Verdict::Fail {
+            findings: vec![Finding {
+                rule: "no-loc".into(),
+                message: "no source coordinates".into(),
+                file: None,
+                line: None,
+                severity: Severity::Error,
+            }],
+            message: "missing-loc test".into(),
+        };
+        let json = sarif::render(&verdict, VerdictPolicy::AnyFail);
+        let v: serde_json::Value = serde_json::from_str(&json).expect("invalid JSON");
+        let result = v
+            .pointer("/runs/0/results/0")
+            .and_then(|r| r.as_object())
+            .expect("result[0] missing");
+        assert!(
+            !result.contains_key("locations"),
+            "locations must be omitted when empty per SARIF 2.1.0 minItems=1\n{json}"
+        );
     }
 }
