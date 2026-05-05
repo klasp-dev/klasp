@@ -41,23 +41,25 @@ use tempfile::TempDir;
 /// Codex CLI.
 const FIXTURE_CODEX_SESSION: &str = include_str!("fixtures/codex/failing-commit-session.jsonl");
 
-/// Claude Code–shaped JSON payload used to drive `klasp gate` when testing
-/// from the Codex surface. The gate's stdin protocol is the same regardless
-/// of which agent surface is active; the pre-commit hook sets
-/// `KLASP_GATE_SCHEMA` and calls `klasp gate --agent codex --trigger commit`.
+/// Build the gate-protocol JSON payload from the captured JSONL fixture.
 ///
-/// This payload is synthesised from the commit command extracted from the
-/// captured session fixture above.
-const CODEX_COMMIT_PAYLOAD: &str = r#"{
-    "hook_event_name": "PreToolUse",
-    "tool_name": "Bash",
-    "tool_input": {
-        "command": "git commit -m 'wip: add feature'",
-        "description": "Commit the staged changes."
-    },
-    "session_id": "codex-fixture-session",
-    "transcript_path": "/tmp/klasp-codex-fixture/transcript.jsonl"
-}"#;
+/// Extracts the actual commit command from `FIXTURE_CODEX_SESSION` so that
+/// the gate-driving tests stay in lock-step with the fixture. If the fixture's
+/// commit string changes, these tests will notice.
+fn codex_commit_payload() -> String {
+    let cmd = extract_commit_command_from_session(FIXTURE_CODEX_SESSION);
+    serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": cmd,
+            "description": "Commit the staged changes."
+        },
+        "session_id": "codex-fixture-session",
+        "transcript_path": "/tmp/klasp-codex-fixture/transcript.jsonl"
+    })
+    .to_string()
+}
 
 /// `klasp.toml` that configures a shell check intentionally designed to fail.
 /// Using `exit 7` makes the failure deterministic and unambiguous — any
@@ -189,9 +191,16 @@ fn invoke_gate(payload: &str, repo: &Path) -> (Option<i32>, String) {
 /// Smoke-check: the captured session fixture contains a `git commit` tool
 /// call. If this fails, the fixture is malformed and all downstream tests
 /// are invalid.
+///
+/// `extract_commit_command_from_session` already panics when no `git commit`
+/// line is found, so the assertion below is doing the real checking — the
+/// helper is pure extraction.
 #[test]
 fn fixture_contains_git_commit_tool_call() {
     let cmd = extract_commit_command_from_session(FIXTURE_CODEX_SESSION);
+    // Verify the extracted command is non-empty and contains "git commit".
+    // The helper panics if absent, so a successful return means it was found;
+    // this assertion documents and double-checks the invariant explicitly.
     assert!(
         cmd.contains("git commit"),
         "expected a git commit command in the fixture, got: {cmd:?}",
@@ -215,7 +224,8 @@ fn codex_failing_commit_is_blocked_by_gate() {
         "pre-commit hook must dispatch to codex agent:\n{hook_body}",
     );
 
-    let (code, _stderr) = invoke_gate(CODEX_COMMIT_PAYLOAD, repo.path());
+    let payload = codex_commit_payload();
+    let (code, _stderr) = invoke_gate(&payload, repo.path());
     assert_eq!(
         code,
         Some(2),
@@ -235,7 +245,8 @@ fn codex_failing_commit_is_blocked_by_gate() {
 fn codex_failing_commit_emits_structured_verdict() {
     let repo = fresh_codex_repo_with_klasp();
 
-    let (code, stderr) = invoke_gate(CODEX_COMMIT_PAYLOAD, repo.path());
+    let payload = codex_commit_payload();
+    let (code, stderr) = invoke_gate(&payload, repo.path());
     assert_eq!(
         code,
         Some(2),
@@ -302,7 +313,8 @@ fn codex_passing_check_allows_commit() {
     )
     .expect("write klasp.toml");
 
-    let (code, _stderr) = invoke_gate(CODEX_COMMIT_PAYLOAD, dir.path());
+    let payload = codex_commit_payload();
+    let (code, _stderr) = invoke_gate(&payload, dir.path());
     assert_eq!(
         code,
         Some(0),
