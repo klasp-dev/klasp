@@ -89,7 +89,9 @@ fn install_is_idempotent() {
         fs::read(repo.path().join(".claude/settings.json")).expect("settings after first");
 
     // Second install — must not error.
-    let second = surface.install(&ctx).expect("second install must not error");
+    let second = surface
+        .install(&ctx)
+        .expect("second install must not error");
     assert!(
         second.already_installed,
         "second install must report already_installed=true: {second:?}"
@@ -269,11 +271,7 @@ fn doctor_diagnoses_schema_mismatch() {
 
     // Overwrite the hook file with a stale schema render (version 0).
     let stale_hook = render_hook_script(0);
-    fs::write(
-        repo.path().join(".claude/hooks/klasp-gate.sh"),
-        stale_hook,
-    )
-    .unwrap();
+    fs::write(repo.path().join(".claude/hooks/klasp-gate.sh"), stale_hook).unwrap();
 
     let out = run_doctor(repo.path());
     assert!(
