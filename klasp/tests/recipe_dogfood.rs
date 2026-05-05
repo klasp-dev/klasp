@@ -173,16 +173,19 @@ fn write_isolated_toml(project_dir: &Path, checks_body: &str) {
 /// The root `klasp.toml` must parse successfully (proving no `verdict_path` or
 /// any other unknown field is present) and must contain all four named recipes.
 #[test]
-fn root_klasp_toml_parses_and_contains_all_four_named_recipes() {
+fn root_klasp_toml_parses_and_contains_dogfood_recipes() {
     let config = load_root_config();
 
     // Sanity: the file is version 1.
     assert_eq!(config.version, 1, "klasp.toml version must be 1");
 
-    // All four named recipe types must be wired.
+    // Dogfood-wired recipes — pytest intentionally omitted because klasp is a
+    // Rust-only repo (pytest exits 5 "no tests collected" → false-block on
+    // every push). The pytest recipe stays covered by the per-recipe gate
+    // tests below using isolated TOMLs. v0.2.x will fix the recipe to treat
+    // exit 5 as a no-op pass so it can stay wired even on Rust-only repos.
     assert_has_recipe(&config, "pre_commit");
     assert_has_recipe(&config, "fallow");
-    assert_has_recipe(&config, "pytest");
     assert_has_recipe(&config, "cargo");
 }
 
