@@ -1,8 +1,11 @@
 //! Integration tests for `[gate].parallel = true` (issue #34, v0.2.5).
 //!
 //! These tests verify that:
-//! 1. Five independent 5-second checks complete in under 10 seconds when
-//!    `parallel = true` — demonstrating rayon's work-stealing speedup.
+//! 1. Five independent 5-second checks complete in under 15 seconds when
+//!    `parallel = true` — demonstrating rayon's work-stealing speedup. The
+//!    threshold is generous enough to absorb subprocess-spawn overhead and
+//!    CI runner contention while still being well under the 25 s sequential
+//!    baseline (a >40% speedup signal even on a slow runner).
 //! 2. The sequential baseline takes at least 20 seconds (marked `#[ignore]`
 //!    because it is slow — run manually as a proof, not a CI gate).
 //! 3. Two checks writing to the same temp file do NOT panic klasp — the
@@ -95,12 +98,13 @@ command = "sleep {sleep_secs}"
 
 /// 5 checks × 5-second sleep, `parallel = true`.
 ///
-/// All checks execute concurrently so the wall clock should be ~5 s,
-/// well under the 10 s threshold used here to keep the test CI-stable
-/// while still proving we avoided the 25 s sequential baseline.
+/// All checks execute concurrently so the wall clock should be ~5 s. The
+/// 15 s threshold absorbs subprocess-spawn overhead and CI runner
+/// contention (one CI flake observed at 10.04 s on a 10 s threshold) while
+/// still being well under the 25 s sequential baseline.
 #[cfg(unix)]
 #[test]
-fn parallel_completes_5x5s_workload_in_under_10s() {
+fn parallel_completes_5x5s_workload_in_under_15s() {
     let project = TempDir::new().expect("tempdir");
     write_klasp_toml(project.path(), &sleep_checks_toml(5, 5, true));
 
@@ -112,8 +116,8 @@ fn parallel_completes_5x5s_workload_in_under_10s() {
 
     assert_eq!(code, Some(0), "all checks pass, gate must exit 0");
     assert!(
-        wall.as_secs() < 10,
-        "expected parallel 5×5s to complete in <10s, took {wall:.2?}",
+        wall.as_secs() < 15,
+        "expected parallel 5×5s to complete in <15s, took {wall:.2?}",
     );
 }
 
