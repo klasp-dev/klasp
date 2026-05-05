@@ -362,11 +362,124 @@ exit 0
         argv.contains("-c\ntools/pre-commit.yaml"),
         "expected -c tools/pre-commit.yaml in argv, got:\n{argv}",
     );
-    // KLASP_BASE_REF is the documented contract; pre-commit must see it
-    // expanded by `sh -c` before argv parsing. Without an upstream the
-    // gate falls back to `HEAD~1`, which is what should appear here.
+    // Commit trigger: --from-ref/--to-ref must NOT be present. The staged index
+    // (not committed history) is the correct scope at PreToolUse time. Issue #64.
     assert!(
-        argv.contains("--from-ref\nHEAD~1") || argv.contains("--from-ref"),
-        "expected --from-ref in argv, got:\n{argv}",
+        !argv.contains("--from-ref"),
+        "commit trigger must not pass --from-ref to pre-commit, got:\n{argv}",
+    );
+    assert!(
+        !argv.contains("--to-ref"),
+        "commit trigger must not pass --to-ref to pre-commit, got:\n{argv}",
+    );
+}
+
+#[test]
+fn pre_commit_push_trigger_includes_ref_range_in_argv() {
+    // Push trigger must pass --from-ref/--to-ref so pre-commit scopes to the
+    // commits being pushed rather than the staging area.
+    use std::io::Write as _;
+
+    let project = TempDir::new().expect("tempdir");
+    let scratch = TempDir::new().expect("scratch");
+    let bin_dir = scratch.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("create shim bin");
+    let shim = bin_dir.join("pre-commit");
+    let argv_log = scratch.path().join("argv.log");
+    let body = format!(
+        r#"#!/usr/bin/env bash
+case "${{1:-}}" in
+  --version) echo "pre-commit 3.8.0"; exit 0 ;;
+esac
+printf '%s\n' "$@" > "{argv_log}"
+exit 0
+"#,
+        argv_log = argv_log.display(),
+    );
+    std::fs::write(&shim, body).expect("write shim");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&shim).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&shim, perms).expect("chmod shim");
+    }
+
+    write_klasp_toml(
+        project.path(),
+        r#"
+            version = 1
+
+            [gate]
+            agents = ["claude_code"]
+            policy = "any_fail"
+
+            [[checks]]
+            name = "lint"
+            triggers = [{ on = ["push"] }]
+            timeout_secs = 30
+            [checks.source]
+            type = "pre_commit"
+        "#,
+    );
+
+    // Push trigger payload — the gate must recognise `git push` and scope to ref-range.
+    let push_payload = r#"{
+      "hook_event_name": "PreToolUse",
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "git push origin main",
+        "description": "Push the branch."
+      },
+      "session_id": "klasp-fixture-push",
+      "transcript_path": "/tmp/klasp-fixture/transcript.jsonl",
+      "cwd": "/tmp/klasp-fixture/repo"
+    }"#;
+
+    let path_var = match std::env::var_os("PATH") {
+        Some(existing) => {
+            let mut prefix = std::ffi::OsString::from(bin_dir.as_os_str());
+            prefix.push(":");
+            prefix.push(existing);
+            prefix
+        }
+        None => std::ffi::OsString::from(bin_dir.as_os_str()),
+    };
+
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_klasp"));
+    cmd.arg("gate")
+        .env(
+            "KLASP_GATE_SCHEMA",
+            klasp_core::GATE_SCHEMA_VERSION.to_string(),
+        )
+        .env("CLAUDE_PROJECT_DIR", project.path())
+        .env("PATH", &path_var)
+        .current_dir(project.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn().expect("spawn klasp binary");
+    child
+        .stdin
+        .as_mut()
+        .expect("piped stdin")
+        .write_all(push_payload.as_bytes())
+        .expect("write stdin");
+    let output = child.wait_with_output().expect("wait for klasp");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "shim returns 0 → gate must exit 0"
+    );
+
+    let argv = std::fs::read_to_string(&argv_log).expect("read argv log");
+    assert!(
+        argv.contains("--from-ref"),
+        "push trigger must pass --from-ref to pre-commit, got:\n{argv}",
+    );
+    assert!(
+        argv.contains("--to-ref\nHEAD"),
+        "push trigger must pass --to-ref HEAD, got:\n{argv}",
     );
 }
