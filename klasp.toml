@@ -34,9 +34,15 @@ agents = ["claude_code"]
 # "any_fail" blocks the agent if any check returns Fail. Other options:
 # "all_fail" (block only when every check fails) and "majority_fail" (>50%).
 policy = "any_fail"
-# Opt-in parallel execution. All checks below are stateless subprocess
-# invocations (each spawns its own cargo process with an isolated target/ lock)
-# so parallel mode is safe here.
+# Opt-in parallel execution. Note: the cargo-flavoured checks below
+# (cargo-check, cargo-clippy, cargo-test, the named cargo recipe) all share
+# the workspace `target/` and contend on Cargo's per-build-directory advisory
+# lock — concurrent cargo invocations serialise via `Blocking waiting for
+# file lock on build directory` notices. Parallel mode still helps here
+# because the non-cargo checks (pre_commit, fallow) overlap with cargo work
+# and with each other. Truly parallel cargo runs require per-check
+# `CARGO_TARGET_DIR` overrides; not worth the duplicated build cost in
+# klasp's own dogfood. See docs/design.md §6.1 for the stateless contract.
 parallel = true
 
 # ---------------------------------------------------------------------------
