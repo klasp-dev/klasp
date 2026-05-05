@@ -407,7 +407,15 @@ The trigger regex (in `trigger.rs`) is a Rust port of fallow's POSIX ERE pattern
 
 Edge cases the regex deliberately misses (and the design accepts): `bash -c "git push"`, `eval "git commit"`, env-prefixed `GIT_DIR=... git push`, aliases like `gp`. The threat model is **honest agents we want to help**, not adversarial ones — the gate is best-effort, not a security boundary. Adversarial inputs can bypass it trivially (the agent could `bash -c "$(echo Z2l0... | base64 -d)"`); anyone treating klasp as a security boundary is misusing it.
 
-The gate is **synchronous, no async runtime**. v0.1 runs checks sequentially via `Command::output()`. v0.2 will add parallel execution via `rayon` (chosen over `tokio` to keep the gate runtime free of an async runtime dependency).
+The gate is **synchronous, no async runtime**. v0.1 ran checks sequentially via `Command::output()`. v0.2.5 added parallel execution via `rayon` (chosen over `tokio` to keep the gate runtime free of an async runtime dependency).
+
+### 6.1 Parallel check execution (v0.2.5+)
+
+Checks run sequentially by default. Setting `[gate].parallel = true` in `klasp.toml` runs them under a rayon work-stealing pool — useful when individual checks are long-running (test runners, type-checkers) and independent.
+
+**Contract: checks must be stateless when parallel mode is enabled.** Reading shared input is fine; writing to shared output (process-global state, the same temp file, the same database row) will race. klasp does not detect or prevent this — checks that violate the contract have undefined output ordering and may corrupt one another's results.
+
+Default remains `false` so existing v0.2 configs are not silently affected.
 
 ---
 

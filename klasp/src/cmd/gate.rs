@@ -25,6 +25,8 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use rayon::prelude::*;
+
 use klasp_core::{
     discover_config_for_path, CheckConfig, ConfigV1, GateProtocol, GitEvent, RepoState, Trigger,
     Verdict, VerdictPolicy,
@@ -200,6 +202,14 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
 }
 
 /// Run all trigger-matching checks in `config` and return their verdicts.
+///
+/// When `config.gate.parallel == true`, checks execute concurrently via
+/// rayon's work-stealing thread pool. Per-check stderr notices use
+/// `io::stderr()` directly in parallel mode — the `&mut W` plumbing exists
+/// for testing and is only used in sequential mode. This is an intentional
+/// trade-off: in parallel mode stderr writes are serialised at the OS level
+/// so lines are readable but may interleave across checks. For sequential
+/// mode the injected writer is used so tests can capture stderr output.
 fn run_config_checks<W: Write>(
     stderr: &mut W,
     config: &ConfigV1,
@@ -207,11 +217,28 @@ fn run_config_checks<W: Write>(
     registry: &SourceRegistry,
     event: GitEvent,
 ) -> Vec<Verdict> {
+    let triggered: Vec<&CheckConfig> = config
+        .checks
+        .iter()
+        .filter(|c| triggers_match(c, event))
+        .collect();
+
+    if config.gate.parallel {
+        run_parallel(&triggered, repo_state, registry)
+    } else {
+        run_sequential(stderr, &triggered, repo_state, registry)
+    }
+}
+
+/// Execute checks sequentially, writing notices to the injected `stderr`.
+fn run_sequential<W: Write>(
+    stderr: &mut W,
+    triggered: &[&CheckConfig],
+    repo_state: &RepoState,
+    registry: &SourceRegistry,
+) -> Vec<Verdict> {
     let mut verdicts = Vec::new();
-    for check in &config.checks {
-        if !triggers_match(check, event) {
-            continue;
-        }
+    for check in triggered {
         let source = match registry.find_for(check) {
             Some(s) => s,
             None => {
@@ -235,6 +262,47 @@ fn run_config_checks<W: Write>(
         }
     }
     verdicts
+}
+
+/// Execute checks in parallel via rayon's work-stealing pool.
+///
+/// Per-check error notices write directly to `io::stderr()` since the
+/// `&mut W` test-injection point is not `Sync` — multiple rayon threads
+/// cannot safely share a mutable reference. OS-level line buffering means
+/// concurrent writes are readable, though lines from different checks may
+/// interleave.
+fn run_parallel(
+    triggered: &[&CheckConfig],
+    repo_state: &RepoState,
+    registry: &SourceRegistry,
+) -> Vec<Verdict> {
+    triggered
+        .par_iter()
+        .filter_map(|check| {
+            let source = match registry.find_for(check) {
+                Some(s) => s,
+                None => {
+                    let _ = writeln!(
+                        io::stderr(),
+                        "{NOTICE_PREFIX} no source registered for check `{}`, skipping.",
+                        check.name,
+                    );
+                    return None;
+                }
+            };
+            match source.run(check, repo_state) {
+                Ok(result) => Some(result.verdict),
+                Err(e) => {
+                    let _ = writeln!(
+                        io::stderr(),
+                        "{NOTICE_PREFIX} check `{}` runtime error ({e}), skipping.",
+                        check.name,
+                    );
+                    None
+                }
+            }
+        })
+        .collect()
 }
 
 /// Group staged files by nearest `klasp.toml` under `repo_root`.
