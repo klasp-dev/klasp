@@ -238,6 +238,11 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # `secrets` context cannot be used directly in step-level `if:` expressions
+    # (rejected by GitHub's workflow validator). Hoist the existence check into
+    # a job-level env var so the per-step `if:` can read `env.HAS_PYPI_TOKEN`.
+    env:
+      HAS_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN != '' }}
     steps:
       - name: collect wheels
         uses: actions/download-artifact@v4
@@ -251,24 +256,22 @@ jobs:
 
       - name: report auth method
         shell: bash
-        env:
-          HAS_TOKEN: ${{ secrets.PYPI_TOKEN != '' }}
         run: |
-          if [ "$HAS_TOKEN" = "true" ]; then
+          if [ "$HAS_PYPI_TOKEN" = "true" ]; then
             echo "PyPI auth: using PYPI_TOKEN secret (API token)"
           else
             echo "PyPI auth: using OIDC trusted publisher (no PYPI_TOKEN set)"
           fi
 
       - name: publish to PyPI via OIDC (trusted publisher)
-        if: ${{ secrets.PYPI_TOKEN == '' }}
+        if: env.HAS_PYPI_TOKEN == 'false'
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           packages-dir: dist/
           skip-existing: true
 
       - name: publish to PyPI via API token
-        if: ${{ secrets.PYPI_TOKEN != '' }}
+        if: env.HAS_PYPI_TOKEN == 'true'
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           packages-dir: dist/
