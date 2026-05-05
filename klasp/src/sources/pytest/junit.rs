@@ -225,11 +225,43 @@ fn extract_failure_message(body: &str) -> Option<String> {
 }
 
 fn decode_entities(s: &str) -> String {
-    s.replace("&lt;", "<")
+    let unescaped = s
+        .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
-        .replace("&amp;", "&")
+        .replace("&amp;", "&");
+    strip_ansi(&unescaped)
+}
+
+/// Remove ANSI CSI escape sequences (e.g. color codes) from a string.
+/// Pytest emits ANSI when `TERM` is set in the gate's env; carrying the
+/// raw `\x1b[31m…\x1b[0m` markers through to the agent's stderr renders
+/// as visual noise rather than red text. We strip on read because the
+/// JUnit XML carries `message=` attribute values verbatim.
+fn strip_ansi(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            // CSI sequence: ESC `[` <params> <intermediate> <final>
+            // <final> is in the range 0x40..=0x7e, terminating the seq.
+            let mut j = i + 2;
+            while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
+                j += 1;
+            }
+            i = j.saturating_add(1);
+        } else {
+            // Walk by char boundaries so multi-byte UTF-8 stays intact.
+            let ch_end = (i + 1..=bytes.len())
+                .find(|&k| s.is_char_boundary(k))
+                .unwrap_or(bytes.len());
+            out.push_str(&s[i..ch_end]);
+            i = ch_end;
+        }
+    }
+    out
 }
 
 #[cfg(test)]

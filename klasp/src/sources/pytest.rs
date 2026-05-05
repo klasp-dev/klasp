@@ -31,12 +31,6 @@ const SOURCE_ID: &str = "pytest";
 /// doesn't drown the agent's stderr.
 pub(super) const MAX_FINDINGS: usize = 50;
 
-/// Filename pytest is asked to write its JUnit XML to. Lives at the
-/// repo root so a follow-up CI job can pick it up without coordinating
-/// paths; pytest re-writes the file on every run so stale data doesn't
-/// accumulate.
-pub(super) const JUNIT_REPORT_PATH: &str = ".klasp-pytest-junit.xml";
-
 mod junit;
 mod verdict;
 use verdict::{outcome_to_verdict, sniff_version_warning};
@@ -81,12 +75,27 @@ impl CheckSource for PytestSource {
             }
         };
 
+        // JUnit XML is dropped into a system tempdir, NOT the user's
+        // repo root. The previous design (`.klasp-pytest-junit.xml` at
+        // `state.root`) showed up as an untracked dirty file in
+        // `git status`, raced on concurrent klasp invocations sharing
+        // the same fixed filename, and persisted indefinitely if the
+        // user later flipped `junit_xml = false`. The `NamedTempFile`
+        // here is RAII-cleaned on scope exit, so the read-then-drop
+        // pattern below leaves no trace.
         let want_junit = junit_xml.unwrap_or(false);
-        let junit_path = if want_junit {
-            Some(state.root.join(JUNIT_REPORT_PATH))
+        let junit_tempfile = if want_junit {
+            Some(
+                tempfile::Builder::new()
+                    .prefix("klasp-pytest-junit-")
+                    .suffix(".xml")
+                    .tempfile()
+                    .map_err(|e| CheckSourceError::Spawn { source: e })?,
+            )
         } else {
             None
         };
+        let junit_path = junit_tempfile.as_ref().map(|tf| tf.path().to_path_buf());
 
         let command = build_command(
             extra_args.as_deref(),
@@ -100,6 +109,7 @@ impl CheckSource for PytestSource {
         let junit_payload = junit_path
             .as_deref()
             .and_then(|p| std::fs::read_to_string(p).ok());
+        // `junit_tempfile` drops at the end of `run`, deleting the XML.
         let v = outcome_to_verdict(
             &config.name,
             &outcome,

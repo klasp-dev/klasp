@@ -125,8 +125,20 @@ pub(super) fn summarise_diagnostics(subcommand: &str, findings: &[Finding]) -> S
         .iter()
         .filter(|f| matches!(f.severity, Severity::Warn))
         .count();
+    let info = findings
+        .iter()
+        .filter(|f| matches!(f.severity, Severity::Info))
+        .count();
     match (errors, warnings) {
-        (0, 0) => format!("cargo {subcommand} reported diagnostics"),
+        // The `(0, 0)` arm is reached when `findings` carries only
+        // `Severity::Info` rows (cargo's `help` / `note` diagnostics).
+        // Be honest about it — naming "info notes" rather than the
+        // catch-all "diagnostics" stops the agent guessing whether
+        // something error-level was missed by the parser.
+        (0, 0) => format!(
+            "cargo {subcommand} reported {info} info note{}",
+            if info == 1 { "" } else { "s" }
+        ),
         (e, 0) => format!(
             "cargo {subcommand} reported {e} error{}",
             if e == 1 { "" } else { "s" }

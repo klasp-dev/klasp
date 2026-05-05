@@ -122,12 +122,15 @@ impl CheckSource for CargoSource {
 /// Order of args:
 /// 1. `cargo <sub>`
 /// 2. `-p <package>` *or* `--workspace` (mutually exclusive — package
-///    overrides workspace because it's the user's narrower intent).
-/// 3. `--message-format=json` for non-test subcommands so the recipe
-///    can walk diagnostics; `cargo test`'s JSON reporter is still
-///    nightly-only so we parse the human summary line for it.
-/// 4. `extra_args` last so the user can override / extend the recipe's
-///    defaults (e.g. clipping `-- -D warnings` onto `cargo clippy`).
+///    overrides because it's the user's narrower intent).
+/// 3. `--message-format=json` for non-test subcommands, **unless** the
+///    user already supplied a `--message-format=` flag in `extra_args`.
+///    Without that carve-out, the user's flag would win at the cargo
+///    side (cargo honours the last `--message-format`) but the recipe
+///    would still attempt to JSON-walk the resulting non-JSON output
+///    and silently emit an empty diagnostics list.
+/// 4. `extra_args` last so the user can extend the recipe's defaults
+///    (e.g. clipping `-- -D warnings` onto `cargo clippy`).
 fn build_command(subcommand: &str, package: Option<&str>, extra_args: Option<&str>) -> String {
     let mut parts: Vec<String> = vec!["cargo".into(), subcommand.to_string()];
 
@@ -141,7 +144,10 @@ fn build_command(subcommand: &str, package: Option<&str>, extra_args: Option<&st
         }
     }
 
-    if subcommand != "test" {
+    let user_overrides_format = extra_args
+        .map(|s| s.contains("--message-format"))
+        .unwrap_or(false);
+    if subcommand != "test" && !user_overrides_format {
         parts.push("--message-format=json".into());
     }
 
