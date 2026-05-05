@@ -163,17 +163,17 @@ klasp uninstall --agent claude_code        # removes the hook + settings entry, 
 | Named recipes: `type = "pytest"` / `"cargo"` | Shipped in v0.2 W6 |
 | Per-surface contract (`install_with_warnings` + `doctor_check`) | [v0.2.5][m1] (#55) |
 | Gate noop when cwd is outside the project root | [v0.2.5][m1] (#65) |
-| Monorepo config discovery — nearest `klasp.toml` wins | [v0.2.5][m1] (#38) |
-| [Agent surface conformance matrix](https://github.com/klasp-dev/klasp/issues/68) — one config, many agents, tracked like a contract | [v0.2.5][m1] |
-| [Killer demo: 3 agents · 1 failing commit · 3 identical fix paths](https://github.com/klasp-dev/klasp/issues/69) | [v0.2.5][m1] |
-| One `klasp.toml`, three surfaces — Claude + Codex + Aider on the same gates | v0.3 (#46) |
-| Plugin protocol — third-party `klasp-plugin-*` binaries (experimental) | v0.3 → v1.0 stable |
-| Cursor surface — documented go/no-go, not a promise | v0.3 (#44) |
-| Parallel check execution | v0.3+ (deprioritised — trust > parallelism) |
+| Monorepo config discovery (nearest `klasp.toml` wins) | [v0.2.5][m1] (#38) |
+| [Public agent-surface conformance matrix](https://github.com/klasp-dev/klasp/issues/68) | [v0.2.5][m1] |
+| [Demo repo: same failing commit, three agents, three identical fix paths](https://github.com/klasp-dev/klasp/issues/69) | [v0.2.5][m1] |
+| Aider as the third agent surface alongside Claude + Codex | v0.3 (#46) |
+| Plugin protocol for third-party `klasp-plugin-*` binaries (experimental) | v0.3 → v1.0 stable |
+| Cursor surface (go/no-go decision in v0.3) | v0.3 (#44) |
+| Parallel check execution | v0.3+ (see roadmap) |
 
 [m1]: https://github.com/klasp-dev/klasp/milestone/1 "v0.2.5 — surface reliability + repo correctness"
 
-The v0.2.5 theme is **surface reliability + repo correctness**: make klasp visibly the agent-surface compatibility layer, not another hook runner. See [`docs/roadmap.md`](./docs/roadmap.md) for the full milestone plan.
+v0.2.5 lands the per-surface contract, fixes the cross-repo gate bug, and publishes a conformance matrix so "klasp supports agent X" means the same thing for every X. See [`docs/roadmap.md`](./docs/roadmap.md) for the full milestone plan.
 
 ## Example `klasp.toml`
 

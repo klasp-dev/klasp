@@ -123,12 +123,12 @@ For implementation-level annotations on individual abstractions, see [`design.md
 ### Out of scope for v0.2
 
 - Monorepo config discovery → v0.2.5
-- Per-surface contract / conformance matrix / killer demo → v0.2.5 (theme reframe — the wedge is "many agents, one config")
+- Per-surface contract, conformance matrix, demo repo → v0.2.5 (added during the surface-reliability reframe)
 - Aider, plugin model → v0.3
-- Cursor → v0.3 (documented go/no-go, not a promise)
+- Cursor → v0.3 (go/no-go decision)
 - Configurable verdict policies → v0.3 (`[[trigger]]` blocks at #45)
 - JUnit/SARIF output → v0.3 (subsumed by `klasp gate --format json` + `KLASP_OUTPUT_SCHEMA = 1` at #45)
-- Parallel check execution → v0.3+ (deprioritised — trust > parallelism)
+- Parallel check execution → v0.3+
 - Hosted runtime → v1.0+
 
 ### Risks
@@ -140,28 +140,28 @@ For implementation-level annotations on individual abstractions, see [`design.md
 
 ## v0.2.5 — Surface reliability + repo correctness (target: ~5 months from v0.1)
 
-**Headline:** Make klasp visibly the agent-surface compatibility layer, not another hook runner. The wedge is "one config, many agents" — that has to be a tracked, public contract, not a marketing line. Trust > parallelism.
+**Headline:** Make "klasp supports agent X" mean the same thing for every X. The wedge is one config across many agents; that only holds if support is a tracked contract you can point at.
 
 > Live milestone: [v0.2.5 — surface reliability + repo correctness](https://github.com/klasp-dev/klasp/milestone/1).
 
 ### Deliverables
 
 - [ ] **Per-surface contract** ([#55](https://github.com/klasp-dev/klasp/issues/55)): extend `AgentSurface` with `install_with_warnings` and `doctor_check`. Kills stringly-typed Codex special-casing and closes the doctor coverage gap so each surface has the same install / uninstall / doctor / warning shape.
-- [ ] **Gate noop when cwd is outside the project root** ([#65](https://github.com/klasp-dev/klasp/issues/65)): `ConfigV1::load` honours `$CLAUDE_PROJECT_DIR` ahead of cwd today, so a Claude Code session opened in repo A blocks every commit attempted in unrelated sibling repo B. Either noop with a soft notice, or re-resolve from the cwd-derived repo root. Table-stakes for adapter-layer trust.
-- [ ] **Monorepo config discovery** ([#38](https://github.com/klasp-dev/klasp/issues/38)): walk up from staged files to find the nearest `klasp.toml`, run that config's checks scoped to that subtree. Reinforces klasp as a repo-native contract, not a global wrapper.
+- [ ] **Gate noop when cwd is outside the project root** ([#65](https://github.com/klasp-dev/klasp/issues/65)): `ConfigV1::load` honours `$CLAUDE_PROJECT_DIR` ahead of cwd today, so a Claude Code session opened in repo A blocks every commit attempted in unrelated sibling repo B. Fix is either a noop with a soft notice or a re-resolve from the cwd-derived repo root. Surfaced in real use; needs to land before more surfaces stack on the same lookup.
+- [ ] **Monorepo config discovery** ([#38](https://github.com/klasp-dev/klasp/issues/38)): walk up from staged files to find the nearest `klasp.toml`, run that config's checks scoped to that subtree. Real teams have monorepos; per-subtree gates are what makes klasp usable in them.
 - [ ] **Public agent-surface conformance matrix** ([#68](https://github.com/klasp-dev/klasp/issues/68)): `docs/agent-surfaces.md` table of (Claude Code, Codex, Aider, Cursor, Windsurf, Cline) × (install, uninstall, doctor, commit-gate, push-gate, structured-verdict, conflict, captured-session, limitations). Each ✓ links to the test that proves it; CI guards against new surfaces landing without a row.
-- [ ] **Killer demo** ([#69](https://github.com/klasp-dev/klasp/issues/69)): `klasp-dev/klasp-demo-agent-parity` repo with two captured agent sessions (Claude + Codex; Aider lands in v0.3) hitting the same gate, getting the same structured block, self-correcting along the same fix path. Replayable via the captured-session test harness.
+- [ ] **Demo repo** ([#69](https://github.com/klasp-dev/klasp/issues/69)): `klasp-dev/klasp-demo-agent-parity` ships with two captured agent sessions (Claude + Codex; Aider lands in v0.3) hitting the same gate, receiving the same structured block, fixing the same way. Replayable via the captured-session test harness.
 - [ ] **Helper extraction** ([#51](https://github.com/klasp-dev/klasp/issues/51)): move duplicated `atomic_write` / `read_or_empty` / `ensure_parent` / `current_mode` / `apply_mode` from `klasp-agents-codex` and `klasp-agents-claude` into `klasp_core::fs`. Lands paired with #55 so the new trait methods don't have to be implemented twice.
 
-Parallel check execution, configurable verdict policies, and JUnit/SARIF output (the original v0.2.5 deliverables) move to v0.3+ as deprioritised. Performance is nice; trust is the wedge.
+Parallel check execution, configurable verdict policies, and JUnit/SARIF output (the original v0.2.5 deliverables) move to v0.3+. They're still wanted; surface work just took the queue position this cycle.
 
 ### Success criteria
 
-- [ ] Every supported agent surface (Claude Code, Codex CLI) implements the full `AgentSurface` trait shape from #55 — no stringly-typed dispatch left in the codebase.
+- [ ] Every supported agent surface (Claude Code, Codex CLI) implements the full `AgentSurface` trait shape from #55. No stringly-typed dispatch left in the codebase.
 - [ ] In a Claude Code session opened in repo A, attempting any operation from sibling repo B does not run A's gates. Either silent skip with a structured notice, or fall through to B's local `klasp.toml` if present.
 - [ ] A monorepo with three packages and three different `klasp.toml` files runs the right config per staged-file location.
-- [ ] `docs/agent-surfaces.md` published; each ✓ cell has a corresponding test reference; CI fails (or warns loudly) if a new surface lands without a matrix row.
-- [ ] Public demo repo serves the same-fix-path replay; recording embedded in README and on `klasp.dev`.
+- [ ] `docs/agent-surfaces.md` published. Each ✓ cell has a corresponding test reference. CI fails (or warns loudly) if a new surface lands without a matrix row.
+- [ ] Demo repo serves the same-fix-path replay. Recording embedded in README and on `klasp.dev`.
 
 ### Migration from v0.2
 
@@ -170,48 +170,48 @@ Parallel check execution, configurable verdict policies, and JUnit/SARIF output 
 
 ### Risks
 
-- **`install_with_warnings` shape lock-in** — this becomes part of the third-party plugin protocol surface area in v0.3. Mitigated by drafting #55's trait shape with the v0.3 plugin protocol in mind, not in isolation.
-- **Conformance matrix becoming theatre** — the table is only as honest as the tests behind it. Mitigated by gating CI on "every ✓ links to a real test file" and treating the absence of a captured-session test as `?` not ✓.
-- **Cross-repo gate behaviour change is observable** — users currently relying (accidentally) on A's gates firing in B will see the new behaviour as a regression. Mitigated by a clear `klasp:notice` log line ("cwd outside klasp project root $X — gate skipped") rather than silent noop.
+- **`install_with_warnings` shape lock-in.** The trait shape from #55 also becomes part of the v0.3 plugin protocol's public surface, so #55 has to be designed against that downstream constraint rather than landing in isolation and discovering the constraint later.
+- **Conformance matrix becoming theatre.** A table is only as honest as the tests behind it. CI fails if a ✓ row has no linked test file; missing captured-session tests render as `?`, not ✓.
+- **Cross-repo gate behaviour change is observable.** Anyone accidentally relying on A's gates firing in B will read the fix as a regression. The skip emits a `klasp:notice` log line ("cwd outside klasp project root $X — gate skipped") so the new behaviour isn't invisible.
 
 ---
 
-## v0.3 — One klasp.toml, three surfaces (target: ~6 months from v0.1)
+## v0.3 — Aider as the third surface, plus the plugin protocol (target: ~6 months from v0.1)
 
-**Headline:** **One `klasp.toml` — Claude, Codex, and Aider all hit the same gates.** The third surface is the wedge. Plugin protocol is infrastructure that lets klasp scale beyond surfaces it ships in-tree. Cursor is a documented go/no-go, not a promise.
+**Headline:** v0.3 adds Aider alongside Claude and Codex. All three install via one `klasp.toml` and gate against the same structured-verdict contract. The plugin protocol ships alongside as the path for surfaces klasp doesn't carry in-tree. Cursor remains a go/no-go decision (#44); whether it ships in v0.3 depends on the answer.
 
 > Live tracker: [v0.3 implementation tracker (#49)](https://github.com/klasp-dev/klasp/issues/49). Launch issue: [#46](https://github.com/klasp-dev/klasp/issues/46).
 
 ### Deliverables
 
-- [ ] **`AiderSurface`** in `klasp-agents-aider` crate ([#40](https://github.com/klasp-dev/klasp/issues/40)). Edits `.aider.conf.yml` `commit-cmd-pre` field. The third surface — what completes the launch headline.
-- [ ] **Experimental plugin protocol** ([#41](https://github.com/klasp-dev/klasp/issues/41)) with `PLUGIN_PROTOCOL_VERSION = 0`. Subprocess-based, JSON over stdin/stdout. The `0` is intentional: protocol is **not stable**, may break in any v0.3.x release, and graduates to `= 1` only at v1.0 after real plugin authors have stress-tested it. Infrastructure, not the launch headline.
+- [ ] **`AiderSurface`** in `klasp-agents-aider` crate ([#40](https://github.com/klasp-dev/klasp/issues/40)). Edits `.aider.conf.yml` `commit-cmd-pre` field.
+- [ ] **Experimental plugin protocol** ([#41](https://github.com/klasp-dev/klasp/issues/41)) with `PLUGIN_PROTOCOL_VERSION = 0`. Subprocess-based, JSON over stdin/stdout. The `0` is intentional: the protocol is **not stable**, may break in any v0.3.x release, and graduates to `= 1` only at v1.0 after real plugin authors have stressed it.
 - [ ] **`klasp plugins`** subcommand ([#42](https://github.com/klasp-dev/klasp/issues/42)): `list` (scan `$PATH` for `klasp-plugin-*` binaries), `info <name>` (run plugin with `--describe`), `disable <name>`.
 - [ ] **First reference plugin**: `klasp-plugin-pre-commit` ([#43](https://github.com/klasp-dev/klasp/issues/43)) ships as a separate crate and validates the plugin protocol against a real recipe outside the klasp tree. The built-in `pre_commit` recipe from v0.2 stays as the default; the plugin is the "you can do this in your own crate" reference.
-- [ ] **`CursorSurface`** in `klasp-agents-cursor` crate ([#44](https://github.com/klasp-dev/klasp/issues/44)) — **conditional** on Cursor's hook surface stabilising (see Risks). Documented go/no-go decision at month 4 of v0.3 work. If red, Cursor becomes a row in the conformance matrix (#68) with a documented limitation, and ships in v0.3.x or v1.0.
+- [ ] **`CursorSurface`** in `klasp-agents-cursor` crate ([#44](https://github.com/klasp-dev/klasp/issues/44)). **Conditional** on Cursor's hook surface stabilising (see Risks). Go/no-go decision at month 4 of v0.3 work. If red, Cursor becomes a row in the conformance matrix (#68) with a documented limitation, and ships in v0.3.x or v1.0.
 - [ ] **Stronger trigger patterns** ([#45](https://github.com/klasp-dev/klasp/issues/45)): configurable `[[trigger]]` blocks beyond the built-in commit/push regex. Users can add `jj git push`, `gh pr create`, custom aliases.
 - [ ] **`klasp gate --format json`** ([#45](https://github.com/klasp-dev/klasp/issues/45)) with a documented `KLASP_OUTPUT_SCHEMA = 1` for tooling consumers. The output schema *is* stable starting at v0.3, separate from the experimental plugin protocol.
 
 ### Success criteria
 
-- [ ] **Aider-required, Cursor-conditional**: Aider, Claude, and Codex all install via `klasp install --agent all` and gate correctly with the **same structured-verdict contract** (identical JSON shape, identical `findings` array semantics, identical exit codes). Cursor not required for v0.3 to ship.
+- [ ] Aider, Claude, and Codex all install via `klasp install --agent all` and gate correctly using the same structured-verdict contract: identical JSON shape, identical `findings` array semantics, identical exit codes. Cursor not required for v0.3 to ship.
 - [ ] The conformance matrix from v0.2.5 ([#68](https://github.com/klasp-dev/klasp/issues/68)) gains an Aider row with all-green ✓ across install / uninstall / doctor / commit-gate / push-gate / structured-verdict / conflict / captured-session.
-- [ ] A third-party developer publishes a working `klasp-plugin-X` to crates.io / GitHub releases without depending on klasp's main crate or modifying klasp's source.
-- [ ] The killer demo from v0.2.5 ([#69](https://github.com/klasp-dev/klasp/issues/69)) gains a third agent recording (Aider) — three agents, one failing commit, three identical fix paths.
+- [ ] A third-party developer publishes a working `klasp-plugin-X` to crates.io or GitHub releases without depending on klasp's main crate or modifying klasp's source.
+- [ ] The demo repo from v0.2.5 ([#69](https://github.com/klasp-dev/klasp/issues/69)) adds a third agent recording (Aider).
 - [ ] No regressions on v0.2.5 success criteria.
 
 ### Risks
 
-- **CursorSurface depends on Cursor having a documented, stable hook API by month 4 of v0.3 development.** Cursor's extension surface has been moving. Go/no-go decision at month 4 ([#44](https://github.com/klasp-dev/klasp/issues/44)). If red, ship v0.3 with Aider + plugin model only; Cursor row in #68 carries the documented limitation.
+- **CursorSurface depends on Cursor having a documented, stable hook API by month 4 of v0.3.** Cursor's extension surface has been moving. Go/no-go at month 4 ([#44](https://github.com/klasp-dev/klasp/issues/44)). If red, ship v0.3 with Aider plus the plugin model only; Cursor row in #68 carries the documented limitation.
 - **Plugin protocol mistakes are expensive to fix.** Hence `PLUGIN_PROTOCOL_VERSION = 0` as the explicit experimental tier. Plugin authors are warned in the docs that any v0.3.x release may break their plugin; only at v1.0 does the protocol commit to backward compat.
-- **`AGENTS.md` managed-block markers must coexist with other tools** using the same convention (some teams already use `<!-- generated by X -->` blocks). Mitigated by namespacing klasp's markers (`<!-- klasp:managed:start -->`).
-- **"Three surfaces" launch headline depends on Aider's git-hook story being durable.** If Aider deprecates `commit-cmd-pre` mid-cycle, the launch headline collapses. Mitigated by an Aider captured-session test ([#46](https://github.com/klasp-dev/klasp/issues/46)) gating the launch.
+- **`AGENTS.md` managed-block markers must coexist with other tools using the same convention.** Some teams already use `<!-- generated by X -->` blocks. klasp's markers are namespaced (`<!-- klasp:managed:start -->`) so they don't collide.
+- **The v0.3 story depends on Aider's git-hook field being durable.** If Aider deprecates `commit-cmd-pre` during v0.3, klasp loses the third-surface claim until a replacement lands. The Aider captured-session test ([#46](https://github.com/klasp-dev/klasp/issues/46)) is the gate that catches this before tag.
 
 ### Out of scope for v0.3
 
 - Hosted runtime, team rollups → v1.0+
 - Auto-fix mode → never; klasp gates, it doesn't write code
-- Parallel check execution → v0.3.x at earliest (deprioritised in v0.2.5 reframe — trust > parallelism)
+- Parallel check execution → v0.3.x at earliest (deprioritised during the v0.2.5 reframe; surface work took the queue position)
 
 ---
 
