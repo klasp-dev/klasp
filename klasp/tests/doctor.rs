@@ -11,6 +11,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use klasp_agents_claude::ClaudeCodeSurface;
+use klasp_agents_codex::CodexSurface;
 use klasp_core::{AgentSurface, InstallContext, GATE_SCHEMA_VERSION};
 
 const VALID_TOML: &str = r#"version = 1
@@ -152,25 +153,25 @@ fn doctor_settings_entry_missing_exits_1() {
 }
 
 #[test]
-fn doctor_no_surfaces_detected_exits_0_with_warn() {
+fn doctor_declared_surface_not_installed_exits_1() {
+    // When [gate].agents declares "claude_code" but the surface was never
+    // installed (no .claude/ dir, no hook), doctor must FAIL — the declared
+    // agent is expected to be present. This is the correct behaviour: the
+    // user declared the surface, so doctor must verify it.
     let repo = fresh_repo_no_claude();
     write_toml(repo.path(), VALID_TOML);
 
     let out = run_doctor(repo.path());
     assert!(
-        out.status.success(),
-        "expected exit 0\nstdout:\n{}\nstderr:\n{}",
+        !out.status.success(),
+        "expected exit 1 when declared surface is not installed\nstdout:\n{}\nstderr:\n{}",
         stdout(&out),
         stderr(&out)
     );
     let so = stdout(&out);
     assert!(
-        so.contains("INFO  claude_code: surface not detected"),
-        "stdout:\n{so}"
-    );
-    assert!(
-        so.contains("WARN  no agent surfaces detected"),
-        "stdout:\n{so}"
+        so.contains("FAIL  hook[claude_code]:"),
+        "expected hook FAIL for uninstalled declared surface\nstdout:\n{so}"
     );
 }
 
@@ -278,4 +279,117 @@ fn doctor_output_prefix_invariant() {
             );
         }
     }
+}
+
+// ─── Issue #64 critical 2: doctor respects [gate].agents ────────────────────
+
+fn install_codex_seeded(repo_root: &Path) {
+    let ctx = InstallContext {
+        repo_root: repo_root.to_path_buf(),
+        dry_run: false,
+        force: false,
+        schema_version: GATE_SCHEMA_VERSION,
+    };
+    CodexSurface
+        .install(&ctx)
+        .expect("codex seed install must succeed");
+}
+
+/// Regression guard for #64 critical 2: `AGENTS.md` present but `codex` not
+/// in `[gate].agents` must exit 0 with at most an INFO/WARN line, not a FAIL.
+#[test]
+fn doctor_passes_when_codex_not_in_gate_agents_even_if_agents_md_present() {
+    // Repo declares only claude_code but has an AGENTS.md (docs file, or from
+    // another tool). Doctor must not fail the codex hook check.
+    let repo = fresh_repo_with_claude();
+    write_toml(repo.path(), VALID_TOML); // agents = ["claude_code"] only
+    install_seeded(repo.path());
+    // Drop an AGENTS.md that klasp did not install.
+    fs::write(
+        repo.path().join("AGENTS.md"),
+        "# Agents\nThis is a doc file.\n",
+    )
+    .unwrap();
+
+    let out = run_doctor(repo.path());
+    assert!(
+        out.status.success(),
+        "AGENTS.md present but codex not declared must not fail doctor\nstdout:\n{}\nstderr:\n{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let so = stdout(&out);
+    // No FAIL line for codex.
+    assert!(
+        !so.contains("FAIL  hook[codex]:"),
+        "must not FAIL on codex hook when codex not in [gate].agents\nstdout:\n{so}"
+    );
+    // May contain an INFO advisory about AGENTS.md.
+    // If present it must NOT be a FAIL line (already asserted above).
+    // Verify the overall result line on stderr.
+    let se = stderr(&out);
+    assert!(
+        se.contains("all checks passed"),
+        "stderr must report all checks passed\nstderr:\n{se}"
+    );
+}
+
+/// When `[gate].agents` includes `"codex"` and the codex hook is NOT
+/// installed, `klasp doctor` must FAIL with the `hook[codex]:` line.
+#[test]
+fn doctor_runs_codex_check_when_codex_in_gate_agents_hook_missing() {
+    let repo = fresh_repo_with_claude();
+    let toml_with_codex = r#"version = 1
+
+[gate]
+agents = ["claude_code", "codex"]
+policy = "any_fail"
+"#;
+    write_toml(repo.path(), toml_with_codex);
+    install_seeded(repo.path());
+    // Codex not installed — no AGENTS.md, no git hooks.
+
+    let out = run_doctor(repo.path());
+    assert!(
+        !out.status.success(),
+        "codex declared but hook missing must fail doctor\nstdout:\n{}\nstderr:\n{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let so = stdout(&out);
+    assert!(
+        so.contains("FAIL  hook[codex]:"),
+        "must report FAIL for missing codex hook\nstdout:\n{so}"
+    );
+}
+
+/// When `[gate].agents` includes `"codex"` and the codex hook IS installed,
+/// `klasp doctor` must exit 0.
+#[test]
+fn doctor_runs_codex_check_when_codex_in_gate_agents_hook_present() {
+    let repo = fresh_repo_with_claude();
+    let toml_with_codex = r#"version = 1
+
+[gate]
+agents = ["claude_code", "codex"]
+policy = "any_fail"
+"#;
+    write_toml(repo.path(), toml_with_codex);
+    install_seeded(repo.path());
+    install_codex_seeded(repo.path());
+
+    let out = run_doctor(repo.path());
+    assert!(
+        out.status.success(),
+        "both surfaces installed + declared must pass doctor\nstdout:\n{}\nstderr:\n{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let so = stdout(&out);
+    assert!(so.contains("OK    hook[claude_code]:"), "stdout:\n{so}");
+    assert!(so.contains("OK    hook[codex]:"), "stdout:\n{so}");
+    assert!(
+        !so.contains("FAIL"),
+        "no FAIL lines expected\nstdout:\n{so}"
+    );
 }
