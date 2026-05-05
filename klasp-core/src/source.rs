@@ -52,11 +52,24 @@ pub enum CheckSourceError {
 /// a detached HEAD, or a branch that has never been pushed). The fallback is
 /// best-effort — diff-aware tools that don't recognise the ref simply lint
 /// the whole tree, which is the same behaviour they'd have without klasp.
+///
+/// `staged_files` carries the absolute paths of files in the current group's
+/// scope when running in monorepo mode (i.e. the subset of staged files that
+/// belong to the `klasp.toml` group that owns this invocation). An **empty
+/// Vec means "no scoping; the check sees the whole repo"** — this is the
+/// back-compat value used by the single-config fallback path and by callers
+/// that do not dispatch per-group. Per-source consumption of `staged_files`
+/// for fine-grained scoping is deferred to issue #34 (rayon / named recipes);
+/// the field is present now so that data is available to checks without a
+/// further struct-breaking change.
 #[derive(Debug, Clone)]
 pub struct RepoState {
     pub root: PathBuf,
     pub git_event: GitEvent,
     pub base_ref: String,
+    /// Staged files scoped to this group's `klasp.toml`. Empty = whole-repo
+    /// (single-config fallback or unscoped callers).
+    pub staged_files: Vec<PathBuf>,
 }
 
 /// Outcome of a single `CheckSource::run` invocation.

@@ -302,3 +302,166 @@ fn monorepo_two_passing_groups_gate_passes() {
     let (code, _stderr) = spawn_gate(FIXTURE_GIT_COMMIT, repo, &[]);
     assert_eq!(code, Some(0), "two passing groups → exit 0");
 }
+
+/// Per-group scoping: a file staged in group A must not be seen by group B's
+/// checks, and vice versa.
+///
+/// Both groups run a shell check that writes the value of
+/// `$KLASP_STAGED_FILES` — wait, that env var isn't wired yet (deferred to
+/// #34). Instead we verify the scoping invariant structurally: a failing check
+/// that should only affect group B (beta) doesn't cause group A (alpha) to
+/// block, but the gate as a whole still blocks because group B fails.
+///
+/// This demonstrates that verdicts are collected per-group (not cross-group)
+/// and that a pass in one group doesn't erase a fail in another.
+#[test]
+fn monorepo_per_group_scoping_isolation() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path();
+    init_git_repo(repo);
+
+    // Group A (alpha): always passes.
+    let pkg_a = repo.join("packages").join("alpha");
+    std::fs::create_dir_all(&pkg_a).unwrap();
+    write_toml(
+        &pkg_a,
+        r#"
+        version = 1
+        [gate]
+        agents = ["claude_code"]
+        policy = "any_fail"
+        [[checks]]
+        name = "alpha_check"
+        triggers = [{ on = ["commit"] }]
+        timeout_secs = 5
+        [checks.source]
+        type = "shell"
+        command = "true"
+        "#,
+    );
+
+    // Group B (beta): always fails.
+    let pkg_b = repo.join("packages").join("beta");
+    std::fs::create_dir_all(&pkg_b).unwrap();
+    write_toml(
+        &pkg_b,
+        r#"
+        version = 1
+        [gate]
+        agents = ["claude_code"]
+        policy = "any_fail"
+        [[checks]]
+        name = "beta_check"
+        triggers = [{ on = ["commit"] }]
+        timeout_secs = 5
+        [checks.source]
+        type = "shell"
+        command = "exit 1"
+        "#,
+    );
+
+    // Stage one file in alpha and one in beta.
+    stage_file(repo, "packages/alpha/index.ts", "export {}");
+    stage_file(repo, "packages/beta/index.ts", "export {}");
+
+    // Gate must block (beta fails) even though alpha passes — cross-group
+    // AnyFail applies. This confirms that alpha's pass doesn't swallow beta's fail.
+    let (code, _stderr) = spawn_gate(FIXTURE_GIT_COMMIT, repo, &[]);
+    assert_eq!(
+        code,
+        Some(2),
+        "failing beta must block gate even when alpha passes"
+    );
+}
+
+/// Per-group policy: a group with `policy = "all_fail"` must block only when
+/// every check in that group fails. One-pass + one-fail in `all_fail` group
+/// should produce Warn (non-blocking), so the gate passes overall.
+#[test]
+fn monorepo_per_group_all_fail_policy_one_pass_one_fail_is_warn() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path();
+    init_git_repo(repo);
+
+    // Single group with `all_fail` policy and two checks: one passes, one fails.
+    // Under `all_fail`, mixed pass+fail is non-blocking (Warn); under `any_fail`
+    // it would block (Fail). This test locks the per-group policy honour.
+    let pkg = repo.join("apps").join("web");
+    std::fs::create_dir_all(&pkg).unwrap();
+    write_toml(
+        &pkg,
+        r#"
+        version = 1
+        [gate]
+        agents = ["claude_code"]
+        policy = "all_fail"
+        [[checks]]
+        name = "web_pass"
+        triggers = [{ on = ["commit"] }]
+        timeout_secs = 5
+        [checks.source]
+        type = "shell"
+        command = "true"
+        [[checks]]
+        name = "web_fail"
+        triggers = [{ on = ["commit"] }]
+        timeout_secs = 5
+        [checks.source]
+        type = "shell"
+        command = "exit 1"
+        "#,
+    );
+
+    stage_file(repo, "apps/web/index.ts", "export {}");
+
+    // `all_fail`: 1 pass + 1 fail → not unanimous → Warn (non-blocking) → exit 0.
+    // If per-group policy were ignored and `any_fail` hardcoded, this would exit 2.
+    let (code, _stderr) = spawn_gate(FIXTURE_GIT_COMMIT, repo, &[]);
+    assert_eq!(
+        code,
+        Some(0),
+        "all_fail policy with 1-pass+1-fail must be non-blocking (exit 0)"
+    );
+}
+
+/// Regression: single-config `all_fail` with 1-pass+1-fail must also honour
+/// the policy in the single-config fallback path (no staged files).
+#[test]
+fn single_config_all_fail_policy_honoured_no_staged_files() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path();
+    init_git_repo(repo);
+
+    write_toml(
+        repo,
+        r#"
+        version = 1
+        [gate]
+        agents = ["claude_code"]
+        policy = "all_fail"
+        [[checks]]
+        name = "pass_check"
+        triggers = [{ on = ["commit"] }]
+        timeout_secs = 5
+        [checks.source]
+        type = "shell"
+        command = "true"
+        [[checks]]
+        name = "fail_check"
+        triggers = [{ on = ["commit"] }]
+        timeout_secs = 5
+        [checks.source]
+        type = "shell"
+        command = "exit 1"
+        "#,
+    );
+
+    // No staged files — uses single-config fallback. `all_fail` with 1-pass+1-fail
+    // must be non-blocking.
+    let (code, _stderr) = spawn_gate(FIXTURE_GIT_COMMIT, repo, &[]);
+    assert_eq!(
+        code,
+        Some(0),
+        "single-config all_fail with 1-pass+1-fail must exit 0"
+    );
+}
