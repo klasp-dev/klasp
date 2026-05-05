@@ -12,6 +12,27 @@ follow the migration notes attached to each minor release.
 
 Nothing pending.
 
+## [0.2.5]
+
+The performance + CI-output release. Schema bumped to 2 — re-run `klasp install` after upgrade.
+
+### Added
+
+- **`[gate].parallel = true` ([#34])** — opt-in rayon work-stealing pool over the per-config check loop. Default `false` (back-compat). A 5-check workload that takes ~25 seconds sequentially completes in ~5 seconds in parallel mode. Checks must be stateless; see `docs/design.md §6.1`.
+- **Verdict policies `all_fail` / `majority_fail` ([#35])** — `[gate].policy = "all_fail"` requires unanimous failure to block; `"majority_fail"` requires >50% of decisive (non-Warn) verdicts to fail before blocking. `any_fail` remains the default.
+- **`klasp gate --format junit|sarif` ([#36], [#37])** — Surefire 3.0 JUnit XML and SARIF 2.1.0 JSON output. `--output <PATH>` writes to disk; default stdout for machine formats, stderr for terminal. Validated against schemas.
+- **Monorepo config discovery ([#38])** — `klasp gate` walks up from each staged file to find the nearest enclosing `klasp.toml` and runs that config's checks scoped to that group's files. Files outside any config emit a notice and are skipped, not erroring. Cross-group verdict aggregation under `AnyFail`.
+- **`KLASP_GATE_SCHEMA = 2`** — bumped to signal the new env-var contract. Old shims with `KLASP_GATE_SCHEMA=1` see "klasp-gate: schema mismatch (...), skipping. Re-run `klasp install` to update the hook." and fail open at runtime — no silent breakage.
+
+### Migration from v0.2
+
+After `cargo install klasp` (or your package manager equivalent) upgrades the binary, **re-run `klasp install`** in each enrolled repo. Old shims fail open with the schema-mismatch notice until the hook is regenerated. v0.2 configs without `parallel`/`policy` continue working unchanged.
+
+### Internal
+
+- `RepoState.staged_files: Vec<PathBuf>` — new field exposing the per-group file scope to `CheckSource` impls. Empty Vec means whole-repo behaviour for callers that don't dispatch per-group.
+- `klasp-core::GATE_SCHEMA_VERSION` bumped to `2` — single source of truth for the schema version across crates.
+
 ## [0.2.3]
 
 Two critical bugfixes surfaced during the smart-dispatch dogfood test of v0.2.2.
@@ -168,6 +189,13 @@ The MVP. Claude Code only. Shell-command checks. One-command install. See
 
 See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan.
 
-[Unreleased]: https://github.com/klasp-dev/klasp/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/klasp-dev/klasp/compare/v0.1.0...v0.2.0
+[Unreleased]: https://github.com/klasp-dev/klasp/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/klasp-dev/klasp/compare/v0.2.3...v0.2.5
+[0.2.3]: https://github.com/klasp-dev/klasp/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/klasp-dev/klasp/compare/v0.1.0...v0.2.2
 [0.1.0]: https://github.com/klasp-dev/klasp/releases/tag/v0.1.0
+[#34]: https://github.com/klasp-dev/klasp/pull/34
+[#35]: https://github.com/klasp-dev/klasp/pull/35
+[#36]: https://github.com/klasp-dev/klasp/pull/36
+[#37]: https://github.com/klasp-dev/klasp/pull/37
+[#38]: https://github.com/klasp-dev/klasp/pull/38

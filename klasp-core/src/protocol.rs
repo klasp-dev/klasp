@@ -14,7 +14,11 @@ use serde::Deserialize;
 
 /// Wire-protocol schema version. Bump only when the JSON shape, exit-code
 /// semantics, or env-var contract changes — *never* for cosmetic releases.
-pub const GATE_SCHEMA_VERSION: u32 = 1;
+///
+/// v2 (v0.2.5): adds `parallel`, `all_fail`/`majority_fail` policies, JUnit/SARIF
+/// output, and monorepo config discovery. Old shims with `KLASP_GATE_SCHEMA=1`
+/// fail-open with a notice; `klasp install` regenerates the shim.
+pub const GATE_SCHEMA_VERSION: u32 = 2;
 
 /// The Claude Code `PreToolUse` payload klasp consumes from stdin.
 #[derive(Debug, Deserialize, PartialEq, Eq)]

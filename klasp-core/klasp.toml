@@ -1,0 +1,55 @@
+# klasp-core/klasp.toml — sub-config for monorepo discovery (#38).
+#
+# When a staged file lives under klasp-core/, klasp gate routes it to THIS
+# config (nearest-`klasp.toml` wins) instead of the root klasp.toml. So the
+# checks here MUST cover the crate's gating needs — the root config's
+# cargo-check/cargo-clippy do NOT also fire on klasp-core/** edits.
+#
+# Two v0.2.5 features illustrated:
+#
+#   1. **Monorepo discovery (#38).** Staged file at klasp-core/src/foo.rs
+#      → this file's checks run, scoped to that file via the per-group
+#      `staged_files` list (#78).
+#
+#   2. **Custom verdict policy (#35).** `policy = "all_fail"` requires every
+#      non-Warn check to fail before blocking. Used here so a single
+#      cargo-check pass is enough to let the commit through even if a
+#      slower clippy pass hasn't completed — useful for the highest-churn
+#      crate where the agent benefits from fast-feedback gating.
+#
+# Net: klasp-core/** edits get cargo check + cargo clippy scoped to the crate
+# (cheaper than the workspace-wide root checks) under all_fail semantics.
+
+version = 1
+
+[gate]
+agents = ["claude_code"]
+policy = "all_fail"
+# Two cargo invocations share workspace `target/` and serialise on Cargo's
+# build lock — parallel mode would yield no speedup here. Keep sequential.
+parallel = false
+
+# ---------------------------------------------------------------------------
+# Type/borrow check scoped to klasp-core only. -p limits cargo to this crate's
+# build graph; klasp-core has no dev-deps in workspace target dir contention
+# beyond what cargo's own incremental build already manages.
+# ---------------------------------------------------------------------------
+[[checks]]
+name = "klasp-core-check"
+triggers = [{ on = ["commit", "push"] }]
+timeout_secs = 60
+[checks.source]
+type = "shell"
+command = "cargo check -p klasp-core --all-targets"
+
+# ---------------------------------------------------------------------------
+# Lint with -D warnings, scoped to klasp-core. Mirrors the root config's
+# clippy gating but only runs on klasp-core/** edits via monorepo routing.
+# ---------------------------------------------------------------------------
+[[checks]]
+name = "klasp-core-clippy"
+triggers = [{ on = ["commit", "push"] }]
+timeout_secs = 180
+[checks.source]
+type = "shell"
+command = "cargo clippy -p klasp-core --all-targets -- -D warnings"

@@ -148,6 +148,14 @@ klasp doctor                               # verify the install is healthy
 klasp uninstall --agent claude_code        # removes the hook + settings entry, preserves siblings
 ```
 
+### Migration from v0.2.x
+
+After upgrading the binary to v0.2.5 (`cargo install klasp`, `npm i -g @klasp-dev/klasp`, or `pip install -U klasp`), re-run `klasp install` in each enrolled repo so the hook shim picks up `KLASP_GATE_SCHEMA=2`. Old shims fail open — they print a schema-mismatch notice and let the commit proceed — so there is no silent breakage, but the gate is inactive until the hook is regenerated. Configs written for v0.2 with no `parallel` or `policy` field continue working unchanged.
+
+```bash
+klasp install --agent all                  # regenerates the shim(s) with KLASP_GATE_SCHEMA=2
+```
+
 ## What works today
 
 | Feature | Status |

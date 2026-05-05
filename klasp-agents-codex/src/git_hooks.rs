@@ -366,9 +366,17 @@ mod tests {
 
     #[test]
     fn render_block_wraps_body_in_markers() {
-        let s = render_managed_block(HookKind::Commit, 1);
+        let s = render_managed_block(HookKind::Commit, 2);
         assert!(s.starts_with(MANAGED_START));
-        assert!(s.contains("KLASP_GATE_SCHEMA=1"));
+        assert!(s.contains("KLASP_GATE_SCHEMA=2"));
+        assert!(
+            !s.contains("KLASP_GATE_SCHEMA=1"),
+            "block must not contain stale schema v1"
+        );
+        assert!(
+            !s.contains("KLASP_GATE_SCHEMA=0"),
+            "block must not contain stale schema v0"
+        );
         assert!(s.contains("--trigger commit"));
         assert!(s.contains("--agent codex"));
         assert!(s.trim_end().ends_with(MANAGED_END));
@@ -420,9 +428,16 @@ mod tests {
     fn install_replaces_existing_block_in_place() {
         let stale = render_managed_block(HookKind::Commit, 0);
         let pre = format!("#!/bin/bash\n\n{stale}\nset -e\n");
-        let out = install_block(&pre, HookKind::Commit, 1).unwrap();
-        assert!(out.contains("KLASP_GATE_SCHEMA=1"));
-        assert!(!out.contains("KLASP_GATE_SCHEMA=0"));
+        let out = install_block(&pre, HookKind::Commit, 2).unwrap();
+        assert!(out.contains("KLASP_GATE_SCHEMA=2"));
+        assert!(
+            !out.contains("KLASP_GATE_SCHEMA=1"),
+            "block must not contain stale schema v1"
+        );
+        assert!(
+            !out.contains("KLASP_GATE_SCHEMA=0"),
+            "block must not contain stale schema v0"
+        );
         assert!(out.starts_with("#!/bin/bash\n\n"));
         assert!(out.ends_with("set -e\n"));
     }

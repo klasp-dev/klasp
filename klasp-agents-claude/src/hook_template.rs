@@ -30,11 +30,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn render_v1_contains_marker_export_and_exec() {
-        let s = render(1);
+    fn render_v2_contains_marker_export_and_exec() {
+        let s = render(2);
         assert!(s.starts_with("#!/usr/bin/env bash\n"));
         assert!(s.contains(MANAGED_MARKER));
-        assert!(s.contains("export KLASP_GATE_SCHEMA=1\n"));
+        assert!(s.contains("export KLASP_GATE_SCHEMA=2\n"));
         assert!(s.contains("exec klasp gate \"$@\"\n"));
     }
 
