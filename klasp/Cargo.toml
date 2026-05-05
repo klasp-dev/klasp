@@ -14,8 +14,8 @@ keywords = ["ai", "agents", "git-hooks", "pre-commit", "quality"]
 categories = ["development-tools", "command-line-utilities"]
 
 [dependencies]
-klasp-core = { path = "../klasp-core", version = "0.0.0" }
-klasp-agents-claude = { path = "../klasp-agents-claude", version = "0.0.0" }
+klasp-core = { path = "../klasp-core", version = "0.2.0" }
+klasp-agents-claude = { path = "../klasp-agents-claude", version = "0.2.0" }
 klasp-agents-codex = { path = "../klasp-agents-codex", version = "0.0.0" }
 clap = { workspace = true }
 anyhow = { workspace = true }
