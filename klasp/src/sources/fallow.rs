@@ -13,8 +13,8 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use klasp_core::{
-    CheckConfig, CheckResult, CheckSource, CheckSourceConfig, CheckSourceError, Finding, RepoState,
-    Severity, Verdict,
+    CheckConfig, CheckResult, CheckSource, CheckSourceConfig, CheckSourceError, Finding, GitEvent,
+    RepoState, Severity, Verdict,
 };
 use serde_json::Value;
 
@@ -75,7 +75,7 @@ impl CheckSource for FallowSource {
             }
         };
 
-        let command = build_command(base.as_deref(), config_path.as_deref());
+        let command = build_command(state.git_event, base.as_deref(), config_path.as_deref());
         let timeout = Duration::from_secs(config.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
         let outcome = run_with_timeout(&command, &state.root, &state.base_ref, timeout)?;
 
@@ -94,22 +94,46 @@ impl CheckSource for FallowSource {
 
 /// Render the `fallow audit …` command klasp will hand to `sh -c`.
 ///
-/// `${KLASP_BASE_REF}` is the documented default for `--base` so users
-/// who configure `[[checks]]` without a `base` field automatically pick
-/// up the gate-resolved merge-base. Users who set `base` explicitly
-/// (e.g. for a long-lived release branch) override that default.
+/// The command shape depends on the firing trigger:
+///
+/// - `GitEvent::Commit` (PreToolUse intercepting `git commit`): the staged
+///   index has the diff that's about to land but `HEAD` doesn't yet include
+///   it. Passing `--base` would scope fallow to committed history and miss
+///   the staged changes entirely. Instead we emit `fallow audit` with no
+///   `--base` flag — fallow's default is to run against the working tree,
+///   which includes staged content.
+///
+/// - `GitEvent::Push` (PreToolUse intercepting `git push`): the new commits
+///   are already in `HEAD`, so scoping to `--base ${KLASP_BASE_REF}` is
+///   correct. This is the prior behaviour, preserved.
+///
+/// `${KLASP_BASE_REF}` is preferred over the resolved-at-build-time
+/// `state.base_ref` because the env var is the documented contract for
+/// every klasp shell-flavoured source. The shell source's `run_with_timeout`
+/// exports the var into the child env identically.
 /// `--quiet` suppresses fallow's progress output, and `--format json`
 /// gives us the structured verdict the parser below consumes.
-fn build_command(base: Option<&str>, config_path: Option<&Path>) -> String {
+fn build_command(event: GitEvent, base: Option<&str>, config_path: Option<&Path>) -> String {
     let mut parts: Vec<String> = vec!["fallow".into(), "audit".into()];
     parts.push("--format".into());
     parts.push("json".into());
     parts.push("--quiet".into());
-    parts.push("--base".into());
-    parts.push(match base {
-        Some(b) => shell_quote(b),
-        None => "${KLASP_BASE_REF}".into(),
-    });
+
+    match event {
+        GitEvent::Commit => {
+            // Staged-index form: no --base flag; fallow runs against the
+            // working tree (which includes staged content). Issue #64.
+        }
+        GitEvent::Push => {
+            // Push form: new commits are in HEAD; scope to the ref-base.
+            parts.push("--base".into());
+            parts.push(match base {
+                Some(b) => shell_quote(b),
+                None => "${KLASP_BASE_REF}".into(),
+            });
+        }
+    }
+
     if let Some(path) = config_path {
         parts.push("-c".into());
         parts.push(shell_quote(&path.to_string_lossy()));
@@ -358,8 +382,20 @@ mod tests {
     }
 
     #[test]
-    fn build_command_uses_klasp_base_ref_by_default() {
-        let cmd = build_command(None, None);
+    fn build_command_commit_trigger_omits_base() {
+        // Commit trigger must NOT include --base; that scopes to committed
+        // history and misses the staged index entirely (issue #64).
+        let cmd = build_command(GitEvent::Commit, None, None);
+        assert_eq!(cmd, "fallow audit --format json --quiet");
+        assert!(
+            !cmd.contains("--base"),
+            "commit trigger must not contain --base: {cmd}"
+        );
+    }
+
+    #[test]
+    fn build_command_push_trigger_uses_klasp_base_ref_by_default() {
+        let cmd = build_command(GitEvent::Push, None, None);
         assert_eq!(
             cmd,
             "fallow audit --format json --quiet --base ${KLASP_BASE_REF}"
@@ -367,15 +403,32 @@ mod tests {
     }
 
     #[test]
-    fn build_command_uses_explicit_base_when_set() {
-        let cmd = build_command(Some("origin/main"), None);
+    fn build_command_push_trigger_uses_explicit_base_when_set() {
+        let cmd = build_command(GitEvent::Push, Some("origin/main"), None);
         assert!(cmd.contains("--base 'origin/main'"));
     }
 
     #[test]
-    fn build_command_passes_config_path() {
-        let cmd = build_command(None, Some(Path::new("tools/.fallowrc.json")));
+    fn build_command_push_trigger_passes_config_path() {
+        let cmd = build_command(
+            GitEvent::Push,
+            None,
+            Some(Path::new("tools/.fallowrc.json")),
+        );
         assert!(cmd.ends_with("-c 'tools/.fallowrc.json'"));
+    }
+
+    #[test]
+    fn build_command_commit_trigger_passes_config_path() {
+        let cmd = build_command(
+            GitEvent::Commit,
+            None,
+            Some(Path::new("tools/.fallowrc.json")),
+        );
+        assert_eq!(
+            cmd,
+            "fallow audit --format json --quiet -c 'tools/.fallowrc.json'"
+        );
     }
 
     #[test]

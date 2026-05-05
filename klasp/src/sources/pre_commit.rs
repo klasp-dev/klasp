@@ -14,8 +14,8 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use klasp_core::{
-    CheckConfig, CheckResult, CheckSource, CheckSourceConfig, CheckSourceError, Finding, RepoState,
-    Severity, Verdict,
+    CheckConfig, CheckResult, CheckSource, CheckSourceConfig, CheckSourceError, Finding, GitEvent,
+    RepoState, Severity, Verdict,
 };
 
 use super::shell::{run_with_timeout, ShellOutcome, DEFAULT_TIMEOUT_SECS};
@@ -93,7 +93,7 @@ impl CheckSource for PreCommitSource {
             }
         };
 
-        let command = build_command(&hook_stage, config_path.as_deref());
+        let command = build_command(state.git_event, &hook_stage, config_path.as_deref());
         let timeout = Duration::from_secs(config.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
         let outcome = run_with_timeout(&command, &state.root, &state.base_ref, timeout)?;
 
@@ -112,20 +112,50 @@ impl CheckSource for PreCommitSource {
 
 /// Render the `pre-commit run …` command klasp will hand to `sh -c`.
 ///
+/// The command shape depends on the firing trigger:
+///
+/// - `GitEvent::Commit` (PreToolUse intercepting `git commit`): the staged
+///   index has the diff that's about to land but `HEAD` doesn't yet include
+///   it. Passing `--from-ref`/`--to-ref` would scope pre-commit to already-
+///   committed history and miss the staged changes entirely. Instead we emit
+///   `pre-commit run --hook-stage commit` with no ref arguments — that is
+///   exactly pre-commit's own default when invoked from a `.git/hooks/pre-commit`
+///   shim, which runs on the staging area.
+///
+/// - `GitEvent::Push` (PreToolUse intercepting `git push`): the new commits
+///   are already in `HEAD`, so scoping to `--from-ref ${KLASP_BASE_REF}
+///   --to-ref HEAD` is correct. This is the prior behaviour, preserved.
+///
 /// `${KLASP_BASE_REF}` is preferred over the resolved-at-build-time
 /// `state.base_ref` because the env var is the documented contract for
 /// every klasp shell-flavoured source — keeping the recipes consistent
 /// with the v0.1 user-authored `command = "…"` form means a copy-paste
 /// from one to the other is mechanical. The shell source's
 /// `run_with_timeout` exports the var into the child env identically.
-fn build_command(hook_stage: &str, config_path: Option<&std::path::Path>) -> String {
+fn build_command(
+    event: GitEvent,
+    hook_stage: &str,
+    config_path: Option<&std::path::Path>,
+) -> String {
     let mut parts: Vec<String> = vec!["pre-commit".into(), "run".into()];
     parts.push("--hook-stage".into());
-    parts.push(shell_quote(hook_stage));
-    parts.push("--from-ref".into());
-    parts.push("${KLASP_BASE_REF}".into());
-    parts.push("--to-ref".into());
-    parts.push("HEAD".into());
+
+    match event {
+        GitEvent::Commit => {
+            // Staged-index form: let pre-commit's own staging-area detection
+            // handle scope. No --from-ref/--to-ref — those scope to committed
+            // history, not the index.
+            parts.push(shell_quote(hook_stage));
+        }
+        GitEvent::Push => {
+            // Push form: new commits are already in HEAD; scope to the ref range.
+            parts.push(shell_quote(hook_stage));
+            parts.push("--from-ref".into());
+            parts.push("${KLASP_BASE_REF}".into());
+            parts.push("--to-ref".into());
+            parts.push("HEAD".into());
+        }
+    }
 
     if let Some(path) = config_path {
         parts.push("-c".into());
@@ -364,8 +394,26 @@ mod tests {
     }
 
     #[test]
-    fn build_command_uses_defaults_when_unset() {
-        let cmd = build_command("pre-commit", None);
+    fn build_command_commit_trigger_omits_ref_range() {
+        // Commit trigger must NOT include --from-ref/--to-ref; those scope to
+        // committed history and miss the staged index entirely (issue #64).
+        let cmd = build_command(GitEvent::Commit, "pre-commit", None);
+        assert_eq!(cmd, "pre-commit run --hook-stage 'pre-commit'");
+        assert!(
+            !cmd.contains("--from-ref"),
+            "commit trigger must not contain --from-ref: {cmd}"
+        );
+        assert!(
+            !cmd.contains("--to-ref"),
+            "commit trigger must not contain --to-ref: {cmd}"
+        );
+    }
+
+    #[test]
+    fn build_command_push_trigger_includes_ref_range() {
+        // Push trigger must include --from-ref/--to-ref so pre-commit scopes
+        // to the commits being pushed (current behaviour, preserved).
+        let cmd = build_command(GitEvent::Push, "pre-commit", None);
         assert_eq!(
             cmd,
             "pre-commit run --hook-stage 'pre-commit' --from-ref ${KLASP_BASE_REF} --to-ref HEAD"
@@ -373,12 +421,25 @@ mod tests {
     }
 
     #[test]
-    fn build_command_passes_config_path() {
-        let cmd = build_command("pre-push", Some(Path::new("tools/p.yaml")));
+    fn build_command_push_trigger_passes_config_path() {
+        let cmd = build_command(GitEvent::Push, "pre-push", Some(Path::new("tools/p.yaml")));
         assert_eq!(
             cmd,
             "pre-commit run --hook-stage 'pre-push' --from-ref ${KLASP_BASE_REF} --to-ref HEAD \
              -c 'tools/p.yaml'"
+        );
+    }
+
+    #[test]
+    fn build_command_commit_trigger_passes_config_path() {
+        let cmd = build_command(
+            GitEvent::Commit,
+            "pre-commit",
+            Some(Path::new("tools/p.yaml")),
+        );
+        assert_eq!(
+            cmd,
+            "pre-commit run --hook-stage 'pre-commit' -c 'tools/p.yaml'"
         );
     }
 

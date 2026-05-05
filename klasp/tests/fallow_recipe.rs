@@ -298,11 +298,59 @@ fn fallow_unsupported_version_surfaces_warn_alongside_fail() {
 }
 
 #[test]
-fn fallow_recipe_with_explicit_base_and_config_path() {
-    // Round-trip the optional fields: `base` and `config_path` should
-    // make it from TOML through the recipe to the rendered shell command.
-    // The shim records its argv to a sentinel file so the test can assert
-    // on the flags klasp passed.
+fn fallow_recipe_commit_trigger_omits_base_in_argv() {
+    // Commit trigger: --base must NOT be present. The staged working tree
+    // (not committed history) is the correct scope at PreToolUse time. Issue #64.
+    let project = TempDir::new().expect("tempdir");
+    let scratch = TempDir::new().expect("scratch");
+    let bin_dir = scratch.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("create shim bin");
+    let shim = bin_dir.join("fallow");
+    let argv_log = scratch.path().join("argv.log");
+    let body = format!(
+        r#"#!/usr/bin/env bash
+case "${{1:-}}" in
+  --version) echo "fallow 2.62.0"; exit 0 ;;
+esac
+printf '%s\n' "$@" > "{argv_log}"
+echo '{{"verdict":"pass","summary":{{}}}}'
+exit 0
+"#,
+        argv_log = argv_log.display(),
+    );
+    std::fs::write(&shim, body).expect("write shim");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&shim).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&shim, perms).expect("chmod shim");
+    }
+
+    write_klasp_toml(project.path(), FALLOW_KLASP_TOML);
+
+    let (code, _stderr) = spawn_gate(FIXTURE_GIT_COMMIT, project.path(), &bin_dir, &[]);
+    assert_eq!(code, Some(0));
+    let argv = std::fs::read_to_string(&argv_log).expect("read argv log");
+    assert!(
+        !argv.contains("--base"),
+        "commit trigger must not pass --base to fallow, got:\n{argv}",
+    );
+    // The subcommand and format flags must still be present.
+    assert!(
+        argv.contains("audit"),
+        "expected `audit` subcommand in argv, got:\n{argv}",
+    );
+    assert!(
+        argv.contains("--format\njson"),
+        "expected --format json in argv, got:\n{argv}",
+    );
+}
+
+#[test]
+fn fallow_recipe_commit_trigger_omits_base_even_when_explicit_base_configured() {
+    // When `base = "origin/main"` is set but the trigger is a commit, --base
+    // must still be omitted — only the push trigger uses --base. Issue #64.
     let project = TempDir::new().expect("tempdir");
     let scratch = TempDir::new().expect("scratch");
     let bin_dir = scratch.path().join("bin");
@@ -361,9 +409,10 @@ exit 0
         argv.contains("--format\njson"),
         "expected --format json in argv, got:\n{argv}",
     );
+    // Commit trigger: no --base even when `base` is set in TOML.
     assert!(
-        argv.contains("--base\norigin/main"),
-        "expected --base origin/main in argv, got:\n{argv}",
+        !argv.contains("--base"),
+        "commit trigger must not pass --base even when base is configured, got:\n{argv}",
     );
     assert!(
         argv.contains("-c\ntools/.fallowrc.json"),
@@ -372,11 +421,10 @@ exit 0
 }
 
 #[test]
-fn fallow_recipe_default_base_uses_klasp_base_ref() {
-    // When the user omits `base`, the shell command must substitute
-    // `${KLASP_BASE_REF}` — the gate runtime resolves the merge-base into
-    // that env var before exec'ing `sh -c`. Without an upstream the gate
-    // falls back to `HEAD~1`, which is what should appear in argv.
+fn fallow_recipe_push_trigger_includes_base_in_argv() {
+    // Push trigger: --base must be present so fallow scopes to the ref-range.
+    use std::io::Write as _;
+
     let project = TempDir::new().expect("tempdir");
     let scratch = TempDir::new().expect("scratch");
     let bin_dir = scratch.path().join("bin");
@@ -403,13 +451,76 @@ exit 0
         std::fs::set_permissions(&shim, perms).expect("chmod shim");
     }
 
-    write_klasp_toml(project.path(), FALLOW_KLASP_TOML);
+    write_klasp_toml(
+        project.path(),
+        r#"
+            version = 1
 
-    let (code, _stderr) = spawn_gate(FIXTURE_GIT_COMMIT, project.path(), &bin_dir, &[]);
-    assert_eq!(code, Some(0));
+            [gate]
+            agents = ["claude_code"]
+            policy = "any_fail"
+
+            [[checks]]
+            name = "audit"
+            triggers = [{ on = ["push"] }]
+            timeout_secs = 30
+            [checks.source]
+            type = "fallow"
+        "#,
+    );
+
+    let push_payload = r#"{
+      "hook_event_name": "PreToolUse",
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "git push origin main",
+        "description": "Push the branch."
+      },
+      "session_id": "klasp-fixture-push",
+      "transcript_path": "/tmp/klasp-fixture/transcript.jsonl",
+      "cwd": "/tmp/klasp-fixture/repo"
+    }"#;
+
+    let path_var = match std::env::var_os("PATH") {
+        Some(existing) => {
+            let mut prefix = std::ffi::OsString::from(bin_dir.as_os_str());
+            prefix.push(":");
+            prefix.push(existing);
+            prefix
+        }
+        None => std::ffi::OsString::from(bin_dir.as_os_str()),
+    };
+
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_klasp"));
+    cmd.arg("gate")
+        .env(
+            "KLASP_GATE_SCHEMA",
+            klasp_core::GATE_SCHEMA_VERSION.to_string(),
+        )
+        .env("CLAUDE_PROJECT_DIR", project.path())
+        .env("PATH", &path_var)
+        .current_dir(project.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn().expect("spawn klasp binary");
+    child
+        .stdin
+        .as_mut()
+        .expect("piped stdin")
+        .write_all(push_payload.as_bytes())
+        .expect("write stdin");
+    let output = child.wait_with_output().expect("wait for klasp");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "shim returns pass → gate must exit 0"
+    );
+
     let argv = std::fs::read_to_string(&argv_log).expect("read argv log");
     assert!(
-        argv.contains("--base\nHEAD~1"),
-        "expected --base HEAD~1 (fallback) in argv, got:\n{argv}",
+        argv.contains("--base"),
+        "push trigger must pass --base to fallow, got:\n{argv}",
     );
 }
