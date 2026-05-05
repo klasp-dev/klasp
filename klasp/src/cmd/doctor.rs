@@ -7,17 +7,22 @@
 //!
 //! Check order:
 //!   1. **Config** — `klasp.toml` exists and parses as `version = 1`.
-//!   2. **Hook script** — for each detected surface, the file at
-//!      `surface.hook_path()` is byte-equal to a fresh
+//!   2. **Hook script** — for each surface declared in `[gate].agents`,
+//!      the file at `surface.hook_path()` is byte-equal to a fresh
 //!      `surface.render_hook_script()` at the binary's current
 //!      `GATE_SCHEMA_VERSION`. Catches schema drift between binary and
 //!      installed hook (the exact case the gate runtime fail-opens on).
-//!   3. **Settings** — for each detected surface, `surface.settings_path()`
-//!      exists, parses as JSON, and contains klasp's `PreToolUse[Bash]`
-//!      hook entry.
+//!   3. **Settings** — for each surface declared in `[gate].agents`,
+//!      `surface.settings_path()` exists, parses as JSON, and contains
+//!      klasp's `PreToolUse[Bash]` hook entry.
 //!   4. **PATH** — for each `config.checks[*].source.Shell { command }`,
 //!      the leading executable resolves via `which::which`. WARN-only —
 //!      missing dev tools shouldn't fail doctor.
+//!
+//! Surfaces NOT listed in `[gate].agents` are skipped with an INFO line.
+//! If `AGENTS.md` is present but `"codex"` is not in `[gate].agents`, an
+//! INFO suggestion is emitted (not a FAIL) so the user knows they can
+//! opt in with `klasp install --agent codex`.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -73,7 +78,7 @@ pub fn run(_args: &DoctorArgs) -> ExitCode {
     let mut c = Counters::new();
 
     let config = check_config(&repo_root, &mut c);
-    check_surfaces(&repo_root, &mut c);
+    check_surfaces(&repo_root, config.as_ref(), &mut c);
     if let Some(cfg) = config {
         check_paths(&cfg, &mut c);
     }
@@ -134,26 +139,54 @@ fn check_config(repo_root: &Path, c: &mut Counters) -> Option<ConfigV1> {
     }
 }
 
-/// Checks 2 & 3 — for each registered surface, run hook + settings checks
-/// (when detected). Skipped surfaces emit a single `INFO` line. If zero
-/// surfaces are detected at all, emit one `WARN`.
-fn check_surfaces(repo_root: &Path, c: &mut Counters) {
+/// Checks 2 & 3 — for each surface declared in `[gate].agents`, run hook +
+/// settings checks. Surfaces not in the declared list are skipped with an
+/// INFO line. If `config` is `None` (config load failed), falls back to the
+/// detect-based path so surfaces still produce actionable output.
+///
+/// Additionally, if `AGENTS.md` is present but `"codex"` is not declared in
+/// `[gate].agents`, emit an INFO suggestion (non-fatal) so users learn they
+/// can enable codex gate coverage.
+fn check_surfaces(repo_root: &Path, config: Option<&ConfigV1>, c: &mut Counters) {
     let registry = SurfaceRegistry::default();
-    let mut detected = 0usize;
+    let mut active = 0usize;
+
+    let declared: Option<&[String]> = config.map(|cfg| cfg.gate.agents.as_slice());
 
     for surface in registry.iter() {
         let agent_id = surface.agent_id();
-        if !surface.detect(repo_root) {
-            Counters::info(&format!("{agent_id}: surface not detected, skipping"));
+        let is_declared = match declared {
+            // Config loaded: honour [gate].agents exclusively.
+            Some(agents) => agents.iter().any(|a| a == agent_id),
+            // Config failed to load: fall back to filesystem detection so
+            // the user still gets actionable output for installed surfaces.
+            None => surface.detect(repo_root),
+        };
+
+        if !is_declared {
+            Counters::info(&format!("{agent_id}: not in [gate].agents, skipping"));
             continue;
         }
-        detected += 1;
+        active += 1;
         check_hook(repo_root, surface, c);
         check_settings(repo_root, surface, c);
     }
 
-    if detected == 0 {
-        c.warn("no agent surfaces detected; run `klasp install --force` if needed");
+    if active == 0 {
+        c.warn(
+            "no agent surfaces declared in [gate].agents; run `klasp install --force` if needed",
+        );
+    }
+
+    // Advisory: AGENTS.md present but codex not declared → INFO suggestion.
+    let codex_declared = declared
+        .map(|agents| agents.iter().any(|a| a == "codex"))
+        .unwrap_or(false);
+    if !codex_declared && repo_root.join("AGENTS.md").is_file() {
+        Counters::info(
+            "AGENTS.md present but \"codex\" not in [gate].agents \
+             — run `klasp install --agent codex` to enable codex gate coverage",
+        );
     }
 }
 
