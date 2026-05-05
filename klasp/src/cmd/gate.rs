@@ -20,11 +20,14 @@
 //!    → per-check notice, the gate runs the rest.
 //! 7. `Verdict::merge` → exit 2 only when blocking, else 0.
 
+use std::collections::HashMap;
 use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use klasp_core::{
-    CheckConfig, ConfigV1, GateProtocol, GitEvent, RepoState, Trigger, Verdict, VerdictPolicy,
+    discover_config_for_path, CheckConfig, ConfigV1, GateProtocol, GitEvent, RepoState, Trigger,
+    Verdict, VerdictPolicy,
 };
 
 use crate::cli::{GateArgs, OutputFormat};
@@ -107,9 +110,7 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
         None => return Outcome::Pass,
     };
 
-    // 5. Resolve repo root and load `klasp.toml`. Fail-open on either step
-    // — a missing config is not an error, it's "this repo hasn't enrolled
-    // in klasp yet."
+    // 5. Resolve repo root. Fail-open — no repo root means no gate.
     let repo_root = match git::find_repo_root_from_cwd() {
         Some(r) => r,
         None => {
@@ -121,27 +122,82 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
         }
     };
 
-    let config = match ConfigV1::load(&repo_root) {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = writeln!(stderr, "{NOTICE_PREFIX} config error ({e}), skipping.");
-            return Outcome::Pass;
-        }
-    };
-
-    // 6. Run checks. Per-check failures (no registered source, runtime
-    // error from the source) emit a notice and continue rather than
-    // aborting the whole gate — one broken check must not wedge the
-    // others.
     let registry = SourceRegistry::default_v1();
     let base_ref = git::compute_base_ref(&repo_root);
-    let repo_state = RepoState {
-        root: repo_root,
-        git_event: event,
-        base_ref,
+
+    // 6. Monorepo dispatch: group staged files by nearest `klasp.toml`.
+    // Fall back to single-config mode when there are no staged files
+    // (push event, empty index, or outside git) — preserves pre-v0.2.5
+    // behaviour exactly.
+    let staged = git::staged_files(&repo_root);
+
+    let group_verdicts: Vec<Verdict> = if staged.is_empty() {
+        // Single-config fallback.
+        let config = match ConfigV1::load(&repo_root) {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = writeln!(stderr, "{NOTICE_PREFIX} config error ({e}), skipping.");
+                return Outcome::Pass;
+            }
+        };
+        let repo_state = RepoState {
+            root: repo_root.clone(),
+            git_event: event,
+            base_ref,
+        };
+        run_config_checks(stderr, &config, &repo_state, &registry, event)
+    } else {
+        // Monorepo path: group files → run each group → collect per-group verdicts.
+        let groups = group_by_config(stderr, &staged, &repo_root);
+        if groups.is_empty() {
+            // Every staged file was outside all known configs — treat as pass.
+            return Outcome::Pass;
+        }
+        groups
+            .into_iter()
+            .flat_map(|(config_path, _files)| {
+                let config = match ConfigV1::from_file(&config_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = writeln!(
+                            stderr,
+                            "{NOTICE_PREFIX} config error for {path} ({e}), skipping group.",
+                            path = config_path.display(),
+                        );
+                        return vec![];
+                    }
+                };
+                let repo_state = RepoState {
+                    root: repo_root.clone(),
+                    git_event: event,
+                    base_ref: base_ref.clone(),
+                };
+                run_config_checks(stderr, &config, &repo_state, &registry, event)
+            })
+            .collect()
     };
 
-    let mut verdicts: Vec<Verdict> = Vec::new();
+    // 7. Aggregate cross-group under AnyFail: one failing group blocks the gate.
+    let policy = VerdictPolicy::AnyFail;
+    let final_verdict = Verdict::merge(group_verdicts, policy);
+    dispatch_output(stderr, args, &final_verdict, policy);
+
+    if final_verdict.is_blocking() {
+        Outcome::Block
+    } else {
+        Outcome::Pass
+    }
+}
+
+/// Run all trigger-matching checks in `config` and return their verdicts.
+fn run_config_checks<W: Write>(
+    stderr: &mut W,
+    config: &ConfigV1,
+    repo_state: &RepoState,
+    registry: &SourceRegistry,
+    event: GitEvent,
+) -> Vec<Verdict> {
+    let mut verdicts = Vec::new();
     for check in &config.checks {
         if !triggers_match(check, event) {
             continue;
@@ -157,7 +213,7 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
                 continue;
             }
         };
-        match source.run(check, &repo_state) {
+        match source.run(check, repo_state) {
             Ok(result) => verdicts.push(result.verdict),
             Err(e) => {
                 let _ = writeln!(
@@ -168,17 +224,49 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
             }
         }
     }
+    verdicts
+}
 
-    // 7. Aggregate per-check verdicts. `VerdictPolicy::AnyFail` is the only
-    // policy in v0.1; other variants land in v0.2.5 (see roadmap).
-    let final_verdict = Verdict::merge(verdicts, config.gate.policy);
-    dispatch_output(stderr, args, &final_verdict, config.gate.policy);
+/// Group staged files by nearest `klasp.toml` under `repo_root`.
+///
+/// Files with no enclosing `klasp.toml` under `repo_root` emit a per-file
+/// notice on `stderr` and are omitted — skipped, not an error.
+///
+/// The `Vec<(PathBuf, Vec<PathBuf>)>` shape is intentional: issue #34 (rayon
+/// parallel exec) will parallelise across this slice without restructuring.
+fn group_by_config<W: Write>(
+    stderr: &mut W,
+    staged_files: &[PathBuf],
+    repo_root: &Path,
+) -> Vec<(PathBuf, Vec<PathBuf>)> {
+    let mut order: Vec<PathBuf> = Vec::new();
+    let mut map: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
 
-    if final_verdict.is_blocking() {
-        Outcome::Block
-    } else {
-        Outcome::Pass
+    for file in staged_files {
+        match discover_config_for_path(file, repo_root) {
+            Some(config_path) => {
+                if !map.contains_key(&config_path) {
+                    order.push(config_path.clone());
+                }
+                map.entry(config_path).or_default().push(file.clone());
+            }
+            None => {
+                let _ = writeln!(
+                    stderr,
+                    "{NOTICE_PREFIX} no klasp.toml for {path}, skipping.",
+                    path = file.display(),
+                );
+            }
+        }
     }
+
+    order
+        .into_iter()
+        .map(|k| {
+            let v = map.remove(&k).unwrap_or_default();
+            (k, v)
+        })
+        .collect()
 }
 
 /// Does this check's `triggers = [...]` list mention the current git event?

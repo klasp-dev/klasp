@@ -105,6 +105,31 @@ fn git_merge_base(cwd: &Path, a: &str, b: &str) -> Option<String> {
     }
 }
 
+/// Return staged file paths (absolute) from `git diff --staged --name-only`.
+///
+/// Returns an empty `Vec` on failure (no staging area, not a git repo, etc.).
+/// Callers treat an empty list as "fall back to single-config mode".
+pub fn staged_files(repo_root: &Path) -> Vec<PathBuf> {
+    let output = match Command::new("git")
+        .args(["diff", "--staged", "--name-only", "--diff-filter=ACMRT"])
+        .current_dir(repo_root)
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| repo_root.join(l))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
