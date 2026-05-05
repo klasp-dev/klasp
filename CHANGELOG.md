@@ -12,7 +12,18 @@ follow the migration notes attached to each minor release.
 
 Nothing pending.
 
-## [0.2.0] — unreleased
+## [0.2.2]
+
+First actually-published release of the v0.2 line. Functionally identical to
+the intended v0.2.0 / v0.2.1 work. Both earlier tags shipped but never
+published — `v0.2.0` was blocked by an unbumped `klasp-agents-codex` path-dep
+specifier (`scripts/bump-source-versions.mjs` hardcoded list missed the new
+W2 crate; fixed in #66), and `v0.2.1` was blocked by an invalid `secrets`
+context in step-level `if:` expressions in `release.yml` (W7 OIDC split;
+fixed in #67). v0.2.2 is the first tag pushed against a release.yml that
+GitHub's workflow validator accepts.
+
+
 
 ### Added
 
