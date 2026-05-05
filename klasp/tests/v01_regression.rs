@@ -5,15 +5,15 @@
 //! progresses.
 //!
 //! Criteria covered here:
-//!   1. `klasp install` is idempotent — run twice, state is identical, second
-//!      run does not error.
-//!   2. `klasp uninstall` preserves sibling hooks — non-klasp PreToolUse hooks
-//!      in `.claude/settings.json` survive install+uninstall.
-//!   3a. `klasp doctor` diagnoses missing config (no `klasp.toml`).
-//!   3b. `klasp doctor` diagnoses missing hook (settings.json present but
-//!       klasp's hook entry is absent).
-//!   3c. `klasp doctor` diagnoses schema mismatch (hook present but written
-//!       with a stale schema version).
+//!
+//! 1. `klasp install` is idempotent — run twice, state is identical, second
+//!    run does not error.
+//! 2. `klasp uninstall` preserves sibling hooks — non-klasp PreToolUse hooks
+//!    in `.claude/settings.json` survive install+uninstall.
+//! 3. `klasp doctor` diagnoses three failure modes:
+//!    - missing config (no `klasp.toml`)
+//!    - missing hook (settings.json present but klasp's hook entry is absent)
+//!    - schema mismatch (hook present but written with a stale schema version)
 //!
 //! Criterion 4 (five-platform CI matrix green) is a CI-level acceptance check
 //! and is not unit-testable here. It is verified by the GitHub Actions release
