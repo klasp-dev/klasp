@@ -12,6 +12,44 @@ follow the migration notes attached to each minor release.
 
 Nothing pending.
 
+## [0.2.0] — unreleased
+
+### Added
+
+- **Codex agent support** — `klasp install --agent codex` writes
+  `.codex/git-hooks/<gate>.sh`, wiring the same gate protocol into Codex's
+  git-hook surface. [#52, W2] `--agent all` installs both Claude Code and
+  Codex in one command. [#54, W3] Conflict detection warns (and with
+  `--force` overwrites) when an existing hook is present at the target path.
+  [#52-#54, W2-W3]
+- **Named recipes** — `[checks.source]` now accepts a typed `type` field
+  beyond the existing `type = "shell"` form. Four typed recipes shipped
+  across W4–W6:
+  - `type = "pre_commit"` — invokes `pre-commit run` with the correct
+    `--hook-stage`, `--from-ref`, and `--to-ref` flags; parses per-hook
+    output into structured findings. [#56, W4]
+  - `type = "fallow"` — runs `fallow audit` scoped to `KLASP_BASE_REF`;
+    parses fallow's JSON output into the `Verdict` / `Finding` model.
+    [#57, W5]
+  - `type = "pytest"` — runs pytest, parses JUnit-XML output, maps
+    failures to structured findings. [#58, W6]
+  - `type = "cargo"` — runs `cargo test` (or a configurable subcommand),
+    parses stderr diagnostics into findings. [#58, W6]
+
+  Each recipe emits a `verdict.json` file (path configurable via
+  `verdict_path` in `klasp.toml`; auto-placed in dogfood mode) consumed by
+  the gate before the agent sees a result.
+- **`klasp_core::recipes` trait** — shared abstraction used by all four
+  named recipes, providing uniform `run() -> Verdict` and `parse_output()`
+  contracts so future recipes can be added without touching gate
+  orchestration code. [#56, W4]
+
+### Out of scope (planned for v0.2.5+)
+
+- Parallel check execution, JUnit/SARIF output, monorepo config discovery,
+  configurable verdict policies — v0.2.5
+- Cursor / Aider surfaces — v0.3
+
 ## [0.1.0] — pending tag push
 
 Implementation merged on `main` at
@@ -109,5 +147,6 @@ The MVP. Claude Code only. Shell-command checks. One-command install. See
 
 See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan.
 
-[Unreleased]: https://github.com/klasp-dev/klasp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/klasp-dev/klasp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/klasp-dev/klasp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/klasp-dev/klasp/releases/tag/v0.1.0

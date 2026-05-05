@@ -129,7 +129,16 @@ Prebuilt binaries cover `darwin-arm64`, `linux-x64-gnu`, `linux-arm64-gnu`, and 
 cd your-project
 klasp init                                 # writes klasp.toml at repo root
 $EDITOR klasp.toml                         # add your checks (see below)
-klasp install --agent claude_code          # writes .claude/hooks/klasp-gate.sh + merges .claude/settings.json
+
+# For Claude Code
+klasp install --agent claude               # writes .claude/hooks/klasp-gate.sh + merges .claude/settings.json
+
+# For Codex
+klasp install --agent codex               # writes .codex/git-hooks/<gate>.sh
+
+# Or both at once
+klasp install --agent all                 # installs Claude Code + Codex in one step
+
 klasp doctor                               # verify the install is healthy
 ```
 
