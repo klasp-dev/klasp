@@ -54,20 +54,21 @@ fn klasp_bin() -> &'static str {
 /// Load and parse the real `klasp.toml` from the repo root.
 fn load_root_config() -> ConfigV1 {
     let path = repo_root().join("klasp.toml");
-    ConfigV1::from_file(&path).unwrap_or_else(|e| {
-        panic!("failed to parse {}: {e}", path.display())
-    })
+    ConfigV1::from_file(&path).unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
 }
 
 /// Assert that the config contains a check entry whose source matches `recipe_type`.
 fn assert_has_recipe(config: &ConfigV1, recipe_type: &str) {
-    let found = config.checks.iter().any(|c| match (&c.source, recipe_type) {
-        (CheckSourceConfig::PreCommit { .. }, "pre_commit") => true,
-        (CheckSourceConfig::Fallow { .. }, "fallow") => true,
-        (CheckSourceConfig::Pytest { .. }, "pytest") => true,
-        (CheckSourceConfig::Cargo { .. }, "cargo") => true,
-        _ => false,
-    });
+    let found = config
+        .checks
+        .iter()
+        .any(|c| match (&c.source, recipe_type) {
+            (CheckSourceConfig::PreCommit { .. }, "pre_commit") => true,
+            (CheckSourceConfig::Fallow { .. }, "fallow") => true,
+            (CheckSourceConfig::Pytest { .. }, "pytest") => true,
+            (CheckSourceConfig::Cargo { .. }, "cargo") => true,
+            _ => false,
+        });
     assert!(
         found,
         "klasp.toml must contain a [[checks]] entry with type = \"{recipe_type}\"",
@@ -123,13 +124,7 @@ fn spawn_gate(
 /// Write a shell shim at `bin_dir/<name>` that emits `stdout` and returns
 /// `exit_code`. When `version_arg` is set, the shim handles `--version`
 /// specially by echoing `version_stdout` and exiting 0.
-fn write_shim(
-    bin_dir: &Path,
-    name: &str,
-    version_stdout: &str,
-    pass_stdout: &str,
-    exit_code: u8,
-) {
+fn write_shim(bin_dir: &Path, name: &str, version_stdout: &str, pass_stdout: &str, exit_code: u8) {
     std::fs::create_dir_all(bin_dir).expect("create bin dir");
     let shim = bin_dir.join(name);
     let body = format!(
@@ -286,13 +281,7 @@ fn dogfood_pytest_recipe_pass_exits_0() {
     let scratch = TempDir::new().expect("scratch");
     let bin_dir = scratch.path().join("bin");
 
-    write_shim(
-        &bin_dir,
-        "pytest",
-        "pytest 7.4.0",
-        "1 passed in 0.01s",
-        0,
-    );
+    write_shim(&bin_dir, "pytest", "pytest 7.4.0", "1 passed in 0.01s", 0);
 
     write_isolated_toml(
         project.path(),
