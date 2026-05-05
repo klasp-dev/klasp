@@ -160,15 +160,43 @@ impl ConfigV1 {
     /// `$CLAUDE_PROJECT_DIR` first (set by Claude Code), then the supplied
     /// `repo_root`. The first existing file wins; any parse error
     /// short-circuits.
+    ///
+    /// **Cross-repo guard (issue #65):** when `$CLAUDE_PROJECT_DIR` is set and
+    /// its `klasp.toml` exists, but the process cwd lies *outside* that
+    /// directory, the env candidate is skipped. The gate is then re-resolved
+    /// from the cwd-derived `repo_root`; if no local `klasp.toml` exists
+    /// either, `ConfigNotFound` is returned and the gate fails open (exit 0).
+    /// This prevents session-scoped `CLAUDE_PROJECT_DIR` from bleeding into
+    /// sibling repos.
     pub fn load(repo_root: &Path) -> Result<Self> {
         let mut searched = Vec::new();
 
         if let Ok(claude_dir) = std::env::var("CLAUDE_PROJECT_DIR") {
-            let candidate = PathBuf::from(claude_dir).join("klasp.toml");
+            let env_root = PathBuf::from(&claude_dir);
+            let candidate = env_root.join("klasp.toml");
             if candidate.is_file() {
-                return Self::from_file(&candidate);
+                // Guard: only use the env candidate when the current working
+                // directory is inside the env-var project root. If
+                // canonicalize fails for either path (e.g. the env var points
+                // to a non-existent path), treat the env root as unusable and
+                // fall through to the cwd-derived candidate.
+                let cwd_inside_env_root = std::env::current_dir()
+                    .ok()
+                    .and_then(|cwd| {
+                        let cwd_canon = cwd.canonicalize().ok()?;
+                        let env_canon = env_root.canonicalize().ok()?;
+                        Some(cwd_canon.starts_with(&env_canon))
+                    })
+                    .unwrap_or(false);
+
+                if cwd_inside_env_root {
+                    return Self::from_file(&candidate);
+                }
+                // cwd is outside env_root — skip the env candidate entirely
+                // so we don't run repo-A's checks against repo-B's cwd.
+            } else {
+                searched.push(candidate);
             }
-            searched.push(candidate);
         }
 
         let candidate = repo_root.join("klasp.toml");
@@ -207,6 +235,137 @@ impl ConfigV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---------------------------------------------------------------------------
+    // Helpers shared across load() tests
+    // ---------------------------------------------------------------------------
+
+    const MINIMAL_TOML: &str = r#"
+        version = 1
+        [gate]
+        agents = ["claude_code"]
+    "#;
+
+    fn write_klasp_toml(dir: &std::path::Path) {
+        std::fs::write(dir.join("klasp.toml"), MINIMAL_TOML).expect("write klasp.toml");
+    }
+
+    // ---------------------------------------------------------------------------
+    // ConfigV1::load — cross-repo guard (issue #65)
+    //
+    // All cases that touch CLAUDE_PROJECT_DIR are grouped into a single test to
+    // avoid concurrent test threads clobbering each other's env state. Rust's
+    // default test harness runs tests in the same process; `serial_test` is not
+    // a dev-dep, so we serialise by consolidating here. Individual assertion
+    // groups within the function are labelled by case number matching the spec.
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn load_cwd_guard_cases() {
+        // Stash current dir and any pre-existing env var so we can restore at end.
+        let original_cwd = std::env::current_dir().expect("current_dir");
+        let original_env = std::env::var("CLAUDE_PROJECT_DIR").ok();
+
+        // Helper: always restores env + cwd on drop even if a case panics.
+        // We use a simple RAII struct for cleanliness.
+        struct Guard {
+            cwd: std::path::PathBuf,
+            env: Option<String>,
+        }
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                match &self.env {
+                    Some(v) => std::env::set_var("CLAUDE_PROJECT_DIR", v),
+                    None => std::env::remove_var("CLAUDE_PROJECT_DIR"),
+                }
+                let _ = std::env::set_current_dir(&self.cwd);
+            }
+        }
+        let _guard = Guard {
+            cwd: original_cwd.clone(),
+            env: original_env,
+        };
+
+        // -----------------------------------------------------------------------
+        // Case 1: cwd inside env_root with env candidate present → uses env candidate
+        // -----------------------------------------------------------------------
+        {
+            let env_root = tempfile::tempdir().expect("tempdir env_root");
+            let sub = env_root.path().join("sub");
+            std::fs::create_dir_all(&sub).expect("mkdir sub");
+            write_klasp_toml(env_root.path());
+
+            std::env::set_var("CLAUDE_PROJECT_DIR", env_root.path());
+            std::env::set_current_dir(&sub).expect("cd sub");
+
+            let cfg = ConfigV1::load(env_root.path()).expect("case 1: should load");
+            assert_eq!(cfg.version, 1, "case 1: version mismatch");
+        }
+
+        // -----------------------------------------------------------------------
+        // Case 2: cwd outside env_root, cwd_root candidate present → uses cwd_root
+        // -----------------------------------------------------------------------
+        {
+            let env_root = tempfile::tempdir().expect("tempdir env_root");
+            let cwd_root = tempfile::tempdir().expect("tempdir cwd_root");
+            write_klasp_toml(env_root.path());
+            write_klasp_toml(cwd_root.path());
+
+            std::env::set_var("CLAUDE_PROJECT_DIR", env_root.path());
+            std::env::set_current_dir(cwd_root.path()).expect("cd cwd_root");
+
+            let cfg = ConfigV1::load(cwd_root.path()).expect("case 2: should load");
+            assert_eq!(cfg.version, 1, "case 2: version mismatch");
+        }
+
+        // -----------------------------------------------------------------------
+        // Case 3: cwd outside env_root, no cwd_root candidate → ConfigNotFound
+        // -----------------------------------------------------------------------
+        {
+            let env_root = tempfile::tempdir().expect("tempdir env_root");
+            let cwd_root = tempfile::tempdir().expect("tempdir cwd_root");
+            write_klasp_toml(env_root.path());
+            // intentionally no klasp.toml in cwd_root
+
+            std::env::set_var("CLAUDE_PROJECT_DIR", env_root.path());
+            std::env::set_current_dir(cwd_root.path()).expect("cd cwd_root");
+
+            let err =
+                ConfigV1::load(cwd_root.path()).expect_err("case 3: should be ConfigNotFound");
+            assert!(
+                matches!(err, KlaspError::ConfigNotFound { .. }),
+                "case 3: expected ConfigNotFound, got {err:?}"
+            );
+        }
+
+        // -----------------------------------------------------------------------
+        // Case 4: env var set but path doesn't exist → falls through to cwd_root
+        // -----------------------------------------------------------------------
+        {
+            let cwd_root = tempfile::tempdir().expect("tempdir cwd_root");
+            write_klasp_toml(cwd_root.path());
+
+            std::env::set_var("CLAUDE_PROJECT_DIR", "/tmp/__klasp_nonexistent_dir_8472638");
+            std::env::set_current_dir(cwd_root.path()).expect("cd cwd_root");
+
+            let cfg = ConfigV1::load(cwd_root.path()).expect("case 4: should load cwd candidate");
+            assert_eq!(cfg.version, 1, "case 4: version mismatch");
+        }
+
+        // -----------------------------------------------------------------------
+        // Case 5: env var unset → uses cwd_root candidate (existing behaviour)
+        // -----------------------------------------------------------------------
+        {
+            let cwd_root = tempfile::tempdir().expect("tempdir cwd_root");
+            write_klasp_toml(cwd_root.path());
+
+            std::env::remove_var("CLAUDE_PROJECT_DIR");
+            std::env::set_current_dir(cwd_root.path()).expect("cd cwd_root");
+
+            let cfg = ConfigV1::load(cwd_root.path()).expect("case 5: should load cwd candidate");
+            assert_eq!(cfg.version, 1, "case 5: version mismatch");
+        }
+    }
 
     #[test]
     fn parses_minimal_config() {
