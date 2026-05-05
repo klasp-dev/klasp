@@ -7,8 +7,8 @@ project's own dogfood config at [`/klasp.toml`](../klasp.toml).
 
 > v0.1 shipped exactly one check source: `type = "shell"`. v0.2 W4 added the
 > first typed recipe — `type = "pre_commit"` — alongside it; W5 adds
-> `type = "fallow"`. v0.2 W6 will add `type = "pytest"` and
-> `type = "cargo"` along the same shape. The shell form continues to work
+> `type = "fallow"`; W6 adds `type = "pytest"` and `type = "cargo"`,
+> finishing the v0.2 named-recipe slate. The shell form continues to work
 > unchanged for any tool a recipe doesn't cover yet — see
 > [roadmap.md §v0.2](./roadmap.md#v02--codex--named-recipes-target-3-months-from-v01).
 
@@ -190,6 +190,47 @@ need to chain fallow with other commands in the same shell line.
 Fast feedback on commit, full coverage on push. The two-trigger pattern keeps
 the agent's commit cycle snappy while still gating push on the slow run.
 
+### Typed recipe form (v0.2 W6) — preferred
+
+```toml
+[[checks]]
+name = "pytest"
+triggers = [{ on = ["commit"] }]
+timeout_secs = 120
+[checks.source]
+type = "pytest"
+# Optional. Defaults shown.
+# extra_args = "-x -q tests/"
+# config_path = "pytest.ini"   # forwarded as `pytest -c <path>`
+# junit_xml = true             # write JUnit XML and parse for findings
+```
+
+The typed recipe builds the equivalent
+`pytest [-c <config>] [--junitxml=<path>] [<extra_args>]` invocation
+internally. With `junit_xml = true`, klasp asks pytest to emit a
+JUnit XML report under `.klasp-pytest-junit.xml` at the repo root and
+parses it for per-failure findings (`test \`tests.test_math::test_add\`
+failed: assert (1 + 1) == 3`) with file + line locations. Without
+`junit_xml`, the recipe falls back to a generic count-based finding
+based on pytest's exit code alone.
+
+Pytest's documented exit codes ride through:
+
+| Exit | Meaning | Verdict |
+|---|---|---|
+| 0 | All tests passed | `Pass` |
+| 1 | One or more tests failed | `Fail` (per-failure findings via JUnit, else generic) |
+| 2 | Test run interrupted (`KeyboardInterrupt`) | `Fail` with `interrupted` detail |
+| 3 | Internal pytest error | `Fail` with `internal error` detail |
+| 4 | pytest CLI usage error | `Fail` with `usage error` detail |
+| 5 | No tests collected | `Fail` with `no tests` detail |
+
+pytest 7.x and 8.x are both supported; outside that range the recipe
+surfaces a stderr warning but keeps running on the bet that pytest's
+stable JUnit format stays stable.
+
+### v0.1 shell form (still supported)
+
 ```toml
 [[checks]]
 name = "pytest"
@@ -208,14 +249,70 @@ type = "shell"
 command = "pytest --cov --cov-fail-under=80"
 ```
 
-`-q` keeps pytest's output compact so the agent's stderr buffer doesn't
-overflow on large suites. If you use [pytest-xdist](https://pytest-xdist.readthedocs.io),
-add `-n auto` to either command.
+The shell form falls back on pytest's non-zero exit code as the block
+signal — no per-failure parsing — and is still the right choice if you
+need to chain pytest with other commands in the same shell line. `-q`
+keeps pytest's output compact so the agent's stderr buffer doesn't
+overflow on large suites. If you use
+[pytest-xdist](https://pytest-xdist.readthedocs.io), add `-n auto` to
+either command.
 
 ## cargo
 
-The setup the klasp repo dogfoods — see [`/klasp.toml`](../klasp.toml). Three
-checks split across triggers by cost:
+The setup the klasp repo dogfoods — see [`/klasp.toml`](../klasp.toml).
+Three checks split across triggers by cost.
+
+### Typed recipe form (v0.2 W6) — preferred
+
+```toml
+[[checks]]
+name = "cargo-check"
+triggers = [{ on = ["commit", "push"] }]
+timeout_secs = 60
+[checks.source]
+type = "cargo"
+subcommand = "check"
+# Optional. Defaults shown.
+# extra_args = "--all-features"
+# package = "klasp-core"   # `-p <pkg>`; if None, runs `--workspace`
+
+[[checks]]
+name = "cargo-clippy"
+triggers = [{ on = ["commit", "push"] }]
+timeout_secs = 180
+[checks.source]
+type = "cargo"
+subcommand = "clippy"
+extra_args = "-- -D warnings"
+
+[[checks]]
+name = "cargo-test"
+triggers = [{ on = ["push"] }]
+timeout_secs = 300
+[checks.source]
+type = "cargo"
+subcommand = "test"
+```
+
+The typed recipe dispatches one of `cargo check` / `cargo clippy` /
+`cargo test` / `cargo build` based on the `subcommand` field (other
+values are rejected at run time with a list of accepted ones). For
+`check` / `clippy` / `build`, klasp asks cargo for
+`--message-format=json` and walks the `compiler-message` stream to
+extract per-diagnostic findings with file + line locations and the
+rustc / clippy lint code. For `cargo test`, klasp parses the trailing
+`test result: <status>. N passed; M failed; …` line for a count-based
+summary — per-test-name parsing is deferred to v0.2.5 when cargo's
+JSON test reporter stabilises out of nightly.
+
+`cargo check` is the cheapest sanity check (compilation only, no
+codegen); it catches most class-of-bugs the agent introduces before
+clippy even runs. Use `extra_args = "-- -D warnings"` on clippy to
+ensure warnings are blocking (clippy's default exit code is 0 for
+warnings). `cargo test` is push-only because test wall time is a
+per-commit cost the agent shouldn't pay on every iteration.
+
+### v0.1 shell form (still supported)
 
 ```toml
 [[checks]]
@@ -243,11 +340,9 @@ type = "shell"
 command = "cargo test --workspace"
 ```
 
-`cargo check` is the cheapest sanity check (compilation only, no codegen); it
-catches most class-of-bugs the agent introduces before clippy even runs. Use
-`-- -D warnings` on clippy to ensure warnings are blocking (clippy's default
-exit code is 0 for warnings). `cargo test` is push-only because test wall
-time is a per-commit cost the agent shouldn't pay on every iteration.
+The shell form falls back on cargo's non-zero exit code as the block
+signal — no per-diagnostic parsing — and is still the right choice if
+you need to chain cargo with other commands in the same shell line.
 
 ## ESLint / Biome
 
@@ -316,27 +411,16 @@ without retrying the wrong fix.
 
 ## What's next
 
-v0.2 introduces named recipes — typed `CheckSource` impls that hide the
+v0.2 introduced named recipes — typed `CheckSource` impls that hide the
 verbose `command = "..."` line behind a `type = "<recipe>"` shorthand. The
-first two (`type = "pre_commit"` in W4, `type = "fallow"` in W5) ship in
-v0.2 — see the [pre-commit](#pre-commit) and [fallow](#fallow) sections
-above. W6 adds `pytest` and `cargo`:
-
-```toml
-[[checks]]
-name = "tests"
-triggers = [{ on = ["push"] }]
-[checks.source]
-type = "pytest"       # v0.2 W6
-
-[[checks]]
-name = "build"
-triggers = [{ on = ["commit"] }]
-[checks.source]
-type = "cargo"        # v0.2 W6
-```
+v0.2 slate is now complete: `type = "pre_commit"` (W4), `type = "fallow"`
+(W5), `type = "pytest"` (W6), and `type = "cargo"` (W6). See the
+sections above for worked examples.
 
 Existing v0.1 `type = "shell"` configs continue working unchanged (no schema
 bump). See
 [roadmap.md §v0.2](./roadmap.md#v02--codex--named-recipes-target-3-months-from-v01)
-for the full plan.
+for the full plan and
+[roadmap.md §v0.2.5](./roadmap.md#v025--parallel--monorepo--ci-output-target-5-months-from-v01)
+for what comes next (parallel execution, JUnit per-test-name parsing for
+`cargo test`).

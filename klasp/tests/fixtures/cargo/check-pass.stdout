@@ -1,0 +1,2 @@
+{"reason":"compiler-artifact","package_id":"path+file:///workspace/foo#0.1.0","manifest_path":"/workspace/foo/Cargo.toml","target":{"kind":["lib"],"crate_types":["lib"],"name":"foo","src_path":"/workspace/foo/src/lib.rs","edition":"2021","doc":true,"doctest":true,"test":true},"profile":{"opt_level":"0","debuginfo":2,"debug_assertions":true,"overflow_checks":true,"test":false},"features":[],"filenames":["/workspace/target/debug/libfoo.rlib","/workspace/target/debug/libfoo.rmeta"],"executable":null,"fresh":false}
+{"reason":"build-finished","success":true}

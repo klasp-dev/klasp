@@ -62,19 +62,21 @@ pub struct TriggerConfig {
 
 /// Tagged enum: TOML `type = "shell"` selects the `Shell` variant,
 /// `type = "pre_commit"` selects the v0.2 W4 `PreCommit` named recipe,
-/// `type = "fallow"` selects the v0.2 W5 `Fallow` named recipe.
+/// `type = "fallow"` selects the v0.2 W5 `Fallow` named recipe,
+/// `type = "pytest"` selects the v0.2 W6 `Pytest` named recipe,
+/// `type = "cargo"` selects the v0.2 W6 `Cargo` named recipe.
 /// Unknown `type` values fail at parse time — that's the v0.1 contract
 /// for additive forwards-incompatibility, preserved as new recipes land.
 ///
 /// **Adding new variants is the v0.2 named-recipe extension point** —
-/// each new recipe (`pytest`, `cargo`, …) is a sibling variant here
-/// plus a paired `CheckSource` impl in the binary crate. Field shape
-/// is per-recipe: `Shell` carries a free-form `command`, `PreCommit`
-/// carries optional `hook_stage` / `config_path` fields that map to
-/// pre-commit's own CLI flags, `Fallow` carries optional `config_path`
-/// / `base` fields that map to `fallow audit -c <path> --base <ref>`.
-/// `verdict_path` is deferred — see [docs/design.md §14] for the
-/// explicit scope note.
+/// each new recipe is a sibling variant here plus a paired `CheckSource`
+/// impl in the binary crate. Field shape is per-recipe: `Shell` carries
+/// a free-form `command`, `PreCommit` carries optional `hook_stage` /
+/// `config_path` fields, `Fallow` carries optional `config_path` /
+/// `base` fields, `Pytest` carries optional `extra_args`, `config_path`,
+/// and `junit_xml` toggle, `Cargo` requires a `subcommand` plus optional
+/// `extra_args` / `package`. `verdict_path` is deferred — see
+/// [docs/design.md §14] for the explicit scope note.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CheckSourceConfig {
@@ -110,6 +112,46 @@ pub enum CheckSourceConfig {
         /// release branch.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         base: Option<String>,
+    },
+    Pytest {
+        /// Free-form extra args appended after pytest's own flags.
+        /// e.g. `"-x -q tests/integration"`. `None` runs pytest with
+        /// its own defaults.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        extra_args: Option<String>,
+
+        /// Maps to `pytest -c <config_path>`. `None` lets pytest fall
+        /// back to its own discovery (`pytest.ini`, `pyproject.toml`,
+        /// `tox.ini`, …).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        config_path: Option<PathBuf>,
+
+        /// When `true`, the recipe asks pytest to write a JUnit XML
+        /// report and parses it for per-failure findings. When `false`
+        /// (default), the recipe falls back to a generic count-based
+        /// finding from pytest's exit code alone.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        junit_xml: Option<bool>,
+    },
+    Cargo {
+        /// Required: which `cargo <subcommand>` to dispatch. Accepted
+        /// values are `"check"`, `"clippy"`, `"test"`, `"build"`. Any
+        /// other value fails at run time with an unparseable detail
+        /// (the schema doesn't enum-restrict this so a future cargo
+        /// subcommand can be tried by an adventurous user without a
+        /// klasp release).
+        subcommand: String,
+
+        /// Free-form extra args appended after cargo's own flags
+        /// (e.g. `"--all-features"`). `None` runs cargo with its
+        /// own defaults.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        extra_args: Option<String>,
+
+        /// Maps to `cargo <sub> -p <package>`. `None` runs across
+        /// the workspace via `--workspace`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        package: Option<String>,
     },
 }
 
@@ -253,9 +295,10 @@ mod tests {
     #[test]
     fn rejects_unknown_source_type() {
         // `pre_commit` was an unknown recipe in v0.1, `fallow` was unknown
-        // in v0.2 W4; both are first-class variants now. Pivot to a recipe
-        // that hasn't landed yet (`cargo`, ETA W6) so the
-        // additive-forwards-incompat contract keeps its regression
+        // in v0.2 W4, `pytest` / `cargo` were unknown in W5; all are
+        // first-class variants now. Pivot to a recipe that hasn't landed
+        // yet (placeholder for whichever recipe lands next post-W6) so
+        // the additive-forwards-incompat contract keeps its regression
         // coverage.
         let toml = r#"
             version = 1
@@ -264,8 +307,8 @@ mod tests {
             [[checks]]
             name = "future-recipe"
             [checks.source]
-            type = "cargo"
-            command = "test"
+            type = "future_recipe_not_yet_landed"
+            command = "noop"
         "#;
         let err = ConfigV1::parse(toml).expect_err("should reject");
         assert!(matches!(err, KlaspError::ConfigParse(_)));
@@ -421,6 +464,181 @@ mod tests {
             [checks.source]
             type = "fallow"
             bases = "main"
+        "#;
+        let err = ConfigV1::parse(toml).expect_err("should reject");
+        assert!(matches!(err, KlaspError::ConfigParse(_)));
+    }
+
+    #[test]
+    fn parses_pytest_recipe_minimal() {
+        // Bare `type = "pytest"` with no extra fields: every optional
+        // field defaults to `None` and the recipe applies its own
+        // run-time defaults.
+        let toml = r#"
+            version = 1
+            [gate]
+
+            [[checks]]
+            name = "tests"
+            [checks.source]
+            type = "pytest"
+        "#;
+        let config = ConfigV1::parse(toml).expect("should parse");
+        assert_eq!(config.checks.len(), 1);
+        match &config.checks[0].source {
+            CheckSourceConfig::Pytest {
+                extra_args,
+                config_path,
+                junit_xml,
+            } => {
+                assert!(extra_args.is_none());
+                assert!(config_path.is_none());
+                assert!(junit_xml.is_none());
+            }
+            other => panic!("expected Pytest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_pytest_recipe_with_fields() {
+        let toml = r#"
+            version = 1
+            [gate]
+
+            [[checks]]
+            name = "tests"
+            [checks.source]
+            type = "pytest"
+            extra_args = "-x -q tests/"
+            config_path = "pytest.ini"
+            junit_xml = true
+        "#;
+        let config = ConfigV1::parse(toml).expect("should parse");
+        match &config.checks[0].source {
+            CheckSourceConfig::Pytest {
+                extra_args,
+                config_path,
+                junit_xml,
+            } => {
+                assert_eq!(extra_args.as_deref(), Some("-x -q tests/"));
+                assert_eq!(
+                    config_path
+                        .as_ref()
+                        .map(|p| p.to_string_lossy().into_owned()),
+                    Some("pytest.ini".to_string())
+                );
+                assert_eq!(*junit_xml, Some(true));
+            }
+            other => panic!("expected Pytest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_field_on_pytest_variant() {
+        // Same footgun closure as the pre_commit / fallow variants: a
+        // typo on the `pytest` variant must fail at parse time.
+        let toml = r#"
+            version = 1
+            [gate]
+
+            [[checks]]
+            name = "tests"
+            [checks.source]
+            type = "pytest"
+            extra_arg = "-x"
+        "#;
+        let err = ConfigV1::parse(toml).expect_err("should reject");
+        assert!(matches!(err, KlaspError::ConfigParse(_)));
+    }
+
+    #[test]
+    fn parses_cargo_recipe_minimal() {
+        // `type = "cargo"` requires `subcommand`; the other fields
+        // default to `None` and the recipe runs across the workspace.
+        let toml = r#"
+            version = 1
+            [gate]
+
+            [[checks]]
+            name = "build"
+            [checks.source]
+            type = "cargo"
+            subcommand = "check"
+        "#;
+        let config = ConfigV1::parse(toml).expect("should parse");
+        assert_eq!(config.checks.len(), 1);
+        match &config.checks[0].source {
+            CheckSourceConfig::Cargo {
+                subcommand,
+                extra_args,
+                package,
+            } => {
+                assert_eq!(subcommand, "check");
+                assert!(extra_args.is_none());
+                assert!(package.is_none());
+            }
+            other => panic!("expected Cargo, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_cargo_recipe_with_fields() {
+        let toml = r#"
+            version = 1
+            [gate]
+
+            [[checks]]
+            name = "lint"
+            [checks.source]
+            type = "cargo"
+            subcommand = "clippy"
+            extra_args = "--all-features -- -D warnings"
+            package = "klasp-core"
+        "#;
+        let config = ConfigV1::parse(toml).expect("should parse");
+        match &config.checks[0].source {
+            CheckSourceConfig::Cargo {
+                subcommand,
+                extra_args,
+                package,
+            } => {
+                assert_eq!(subcommand, "clippy");
+                assert_eq!(extra_args.as_deref(), Some("--all-features -- -D warnings"));
+                assert_eq!(package.as_deref(), Some("klasp-core"));
+            }
+            other => panic!("expected Cargo, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_cargo_recipe_missing_subcommand() {
+        // `subcommand` is required (no `#[serde(default)]`), so a
+        // bare `type = "cargo"` must fail at parse time.
+        let toml = r#"
+            version = 1
+            [gate]
+
+            [[checks]]
+            name = "build"
+            [checks.source]
+            type = "cargo"
+        "#;
+        let err = ConfigV1::parse(toml).expect_err("should reject");
+        assert!(matches!(err, KlaspError::ConfigParse(_)));
+    }
+
+    #[test]
+    fn rejects_unknown_field_on_cargo_variant() {
+        let toml = r#"
+            version = 1
+            [gate]
+
+            [[checks]]
+            name = "build"
+            [checks.source]
+            type = "cargo"
+            subcommand = "check"
+            packages = "klasp-core"
         "#;
         let err = ConfigV1::parse(toml).expect_err("should reject");
         assert!(matches!(err, KlaspError::ConfigParse(_)));
