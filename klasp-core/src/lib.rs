@@ -17,8 +17,8 @@ pub mod trigger;
 pub mod verdict;
 
 pub use config::{
-    CheckConfig, CheckSourceConfig, ConfigV1, GateConfig, TriggerConfig, CLAUDE_PROJECT_DIR_ENV,
-    CONFIG_VERSION,
+    discover_config_for_path, load_config_for_path, CheckConfig, CheckSourceConfig, ConfigV1,
+    GateConfig, TriggerConfig, CLAUDE_PROJECT_DIR_ENV, CONFIG_VERSION,
 };
 pub use error::{KlaspError, Result};
 pub use protocol::{GateError, GateInput, GateProtocol, ToolInput, GATE_SCHEMA_VERSION};

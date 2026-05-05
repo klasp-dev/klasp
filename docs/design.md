@@ -196,6 +196,24 @@ This sets up multi-version compatibility from day one without needing it yet.
 
 > **Implementation note (W6-7).** The shipped `CheckConfig` struct in `klasp-core/src/config.rs` has four fields — `name`, `triggers`, `source`, `timeout_secs` — and intentionally **does not** ship a `verdict_path` field. v0.1's only `CheckSource` (`Shell`) maps the child's exit code to `Verdict::Pass | Fail` directly; the `verdict_path` design originally implied for parsing recipe-tool JSON is deferred to v0.2 named recipes (see [`recipes.md` §What's next](./recipes.md#whats-next)). `KLASP_BASE_REF` is wired through the `RepoState::base_ref` field rather than computed inside `Shell::run`, so the v0.2 named recipes (`pre_commit`, `fallow`, `pytest`, `cargo`) can read the merge-base off the same struct without re-implementing the resolution logic.
 
+### 3.6 Monorepo config discovery (v0.2.5+)
+
+Repos with per-package `klasp.toml` files need richer resolution than "look at
+`$CLAUDE_PROJECT_DIR`". The v0.2.5 walk-up algorithm, implemented in
+`discover_config_for_path(start, repo_root) -> Option<PathBuf>`:
+
+1. Canonicalize both `start` and `repo_root` (resolves macOS `/var` → `/private/var` symlinks).
+2. If `start` is a file, begin from its parent directory.
+3. Walk upward, checking for `klasp.toml` at each level.
+4. Stop at `repo_root` (inclusive). Return `None` if no config found.
+
+At gate time, staged files are grouped by nearest config via `staged_files()` +
+`group_by_config()`. Each group runs its checks independently; verdicts are merged
+cross-group under `VerdictPolicy::AnyFail`. Files with no enclosing config emit a
+notice on stderr and are skipped — not treated as an error. When no staged files
+are present (push event or empty index) the gate falls back to single-config mode,
+preserving pre-v0.2.5 behaviour exactly.
+
 ---
 
 ## 4. Module layout

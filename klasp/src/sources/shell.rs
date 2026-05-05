@@ -320,6 +320,7 @@ mod tests {
             root: cwd(),
             git_event: GitEvent::Commit,
             base_ref: "HEAD~1".to_string(),
+            staged_files: vec![],
         }
     }
 
@@ -391,6 +392,7 @@ mod tests {
             root: cwd(),
             git_event: GitEvent::Commit,
             base_ref: "deadbeefcafebabe".to_string(),
+            staged_files: vec![],
         };
         let result = ShellSource::new()
             .run(

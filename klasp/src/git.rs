@@ -105,6 +105,48 @@ fn git_merge_base(cwd: &Path, a: &str, b: &str) -> Option<String> {
     }
 }
 
+/// Return staged file paths (absolute) from `git diff --staged -z --name-only`.
+///
+/// Uses `-z` (NUL-terminated output) and `-c core.quotePath=false` to receive
+/// verbatim paths, including those with non-ASCII bytes, spaces, tabs, newlines,
+/// or quote characters. Git's default quoting (e.g. `"caf\303\251.ts"` for
+/// `café.ts`) would produce literal-backslash paths that don't exist on disk,
+/// causing those files to be silently dropped from gate enforcement.
+///
+/// Returns an empty `Vec` on failure (no staging area, not a git repo, etc.).
+/// Callers treat an empty list as "fall back to single-config mode".
+pub fn staged_files(repo_root: &Path) -> Vec<PathBuf> {
+    let output = match Command::new("git")
+        .args([
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--staged",
+            "-z",
+            "--name-only",
+            "--diff-filter=ACMRT",
+        ])
+        .current_dir(repo_root)
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    // `-z` separates entries with NUL bytes and appends a trailing NUL.
+    // Split on NUL, skip the trailing empty chunk produced by the final NUL.
+    output
+        .stdout
+        .split(|&b| b == 0)
+        .filter(|chunk| !chunk.is_empty())
+        .map(|chunk| repo_root.join(String::from_utf8_lossy(chunk).as_ref()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,6 +184,39 @@ mod tests {
         init_repo_with_commits(tmp.path(), 2);
         // No upstream, no `origin/*` — the canonical fallback path.
         assert_eq!(compute_base_ref(tmp.path()), "HEAD~1");
+    }
+
+    /// `staged_files()` must return the real on-disk path for a file whose name
+    /// contains non-ASCII bytes (UTF-8 multi-byte sequence). Git's default
+    /// `core.quotePath=true` would emit `"caf\303\251.ts"` (octal escapes
+    /// wrapped in double-quotes); the `-z` / `core.quotePath=false` fix should
+    /// produce the literal path `café.ts` so `repo_root.join("café.ts")` points
+    /// to the file that actually exists.
+    #[test]
+    fn staged_files_returns_verbatim_path_for_non_ascii_filename() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path();
+        init_repo_with_commits(repo, 0);
+
+        // Stage a file whose name contains a non-ASCII character (U+00E9 é).
+        let filename = "café.ts";
+        std::fs::write(repo.join(filename), b"export {}").expect("write non-ASCII file");
+        run(repo, &["add", filename]);
+
+        let files = staged_files(repo);
+        assert_eq!(files.len(), 1, "expected exactly one staged file");
+
+        let got = &files[0];
+        let expected = repo.join(filename);
+        assert_eq!(
+            got, &expected,
+            "staged_files() must return the real path, not a quoted/escaped one"
+        );
+        assert!(
+            got.exists(),
+            "returned path must exist on disk: {}",
+            got.display()
+        );
     }
 
     #[test]

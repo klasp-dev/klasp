@@ -257,6 +257,7 @@ mod tests {
             root: std::env::temp_dir(),
             git_event: GitEvent::Commit,
             base_ref: "HEAD~1".into(),
+            staged_files: vec![],
         };
         let result = CargoSource::new()
             .run(&cfg, &state)

@@ -160,6 +160,51 @@ pub enum CheckSourceConfig {
     },
 }
 
+/// Walk up from `start` to `repo_root` looking for `klasp.toml`.
+///
+/// Lookup order:
+/// 1. Canonicalize both `start` and `repo_root` (resolves macOS symlinks).
+/// 2. If `start` is a file, begin from its parent directory.
+/// 3. Walk upward, checking for `klasp.toml` at each level, stopping at
+///    `repo_root` inclusive.
+/// 4. Return `None` if no config found or `start` is outside `repo_root`.
+pub fn discover_config_for_path(start: &Path, repo_root: &Path) -> Option<PathBuf> {
+    let root = repo_root.canonicalize().ok()?;
+    let start_dir = if start.is_file() {
+        start.parent().map(Path::to_path_buf)?
+    } else {
+        start.to_path_buf()
+    };
+    let start_canon = start_dir.canonicalize().ok()?;
+    if !start_canon.starts_with(&root) {
+        return None;
+    }
+    let mut current = start_canon;
+    loop {
+        let candidate = current.join("klasp.toml");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if current == root {
+            break;
+        }
+        match current.parent() {
+            Some(p) => current = p.to_path_buf(),
+            None => break,
+        }
+    }
+    None
+}
+
+/// Convenience wrapper: discover nearest `klasp.toml` then load it.
+///
+/// Returns `None` if no config file is found in the walk-up chain.
+/// Returns `Some(Err(_))` if a config file exists but fails to parse.
+pub fn load_config_for_path(start: &Path, repo_root: &Path) -> Option<Result<(PathBuf, ConfigV1)>> {
+    let config_path = discover_config_for_path(start, repo_root)?;
+    Some(ConfigV1::from_file(&config_path).map(|cfg| (config_path, cfg)))
+}
+
 /// True when the process cwd resolves under `root`. Both paths are
 /// canonicalised so symlinked layouts (`/var` → `/private/var` on macOS,
 /// worktrees, etc.) compare correctly. Any failure to canonicalise either
@@ -795,5 +840,69 @@ mod tests {
         "#;
         let err = ConfigV1::parse(toml).expect_err("should reject");
         assert!(matches!(err, KlaspError::ConfigParse(_)));
+    }
+
+    // ── discover_config_for_path unit tests ─────────────────────────────────
+
+    #[test]
+    fn discover_returns_none_for_path_outside_repo_root() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("klasp.toml"), MINIMAL_TOML).unwrap();
+
+        let outside = tmp.path().join("other");
+        std::fs::create_dir_all(&outside).unwrap();
+        assert!(discover_config_for_path(&outside, &repo).is_none());
+    }
+
+    #[test]
+    fn discover_finds_config_at_repo_root_for_deep_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        let deep = repo.join("a").join("b").join("c");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(repo.join("klasp.toml"), MINIMAL_TOML).unwrap();
+
+        let found = discover_config_for_path(&deep, &repo).unwrap();
+        assert_eq!(found, repo.canonicalize().unwrap().join("klasp.toml"));
+    }
+
+    #[test]
+    fn discover_prefers_nearest_config_over_root() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        let pkg = repo.join("packages").join("web");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(repo.join("klasp.toml"), MINIMAL_TOML).unwrap();
+        std::fs::write(pkg.join("klasp.toml"), MINIMAL_TOML).unwrap();
+
+        let found = discover_config_for_path(&pkg, &repo).unwrap();
+        assert_eq!(found, pkg.canonicalize().unwrap().join("klasp.toml"));
+    }
+
+    #[test]
+    fn discover_starts_from_parent_when_given_a_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        let pkg = repo.join("packages").join("web");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(repo.join("klasp.toml"), MINIMAL_TOML).unwrap();
+        std::fs::write(pkg.join("klasp.toml"), MINIMAL_TOML).unwrap();
+        std::fs::write(pkg.join("index.ts"), "").unwrap();
+
+        let found = discover_config_for_path(&pkg.join("index.ts"), &repo).unwrap();
+        assert_eq!(found, pkg.canonicalize().unwrap().join("klasp.toml"));
+    }
+
+    #[test]
+    fn discover_returns_none_when_no_config_in_chain() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        let deep = repo.join("a").join("b");
+        std::fs::create_dir_all(&deep).unwrap();
+        // No klasp.toml anywhere.
+
+        assert!(discover_config_for_path(&deep, &repo).is_none());
     }
 }
