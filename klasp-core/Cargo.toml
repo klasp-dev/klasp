@@ -9,7 +9,10 @@ homepage.workspace = true
 authors.workspace = true
 description = "Public traits, types, and protocol for klasp — block AI coding agents on the same quality gates humans hit at git commit."
 documentation = "https://docs.rs/klasp-core"
-readme = "../README.md"
+# NOTE: README.md is a copy of the root README.md kept here so `cargo package`
+# and docs.rs resolve it from within this crate directory. Keep in sync with
+# the root README.md when updating project-level documentation.
+readme = "README.md"
 keywords = ["ai", "agents", "git-hooks", "klasp"]
 categories = ["development-tools", "command-line-utilities"]
 
