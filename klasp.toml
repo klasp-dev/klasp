@@ -63,3 +63,49 @@ timeout_secs = 300
 [checks.source]
 type = "shell"
 command = "cargo test --workspace"
+
+# ---------------------------------------------------------------------------
+# Named recipe entries — dogfood mode (issue #33 item 2).
+#
+# These entries exercise the four built-in named recipes on klasp's own repo.
+# No verdict_path is configured on any entry; klasp auto-emits verdicts to
+# the default location. Triggers are scoped so each recipe only fires when
+# the relevant toolchain is meaningful:
+#
+#   pre_commit  — commit trigger; runs the repo's .pre-commit-config.yaml hooks.
+#   fallow      — commit trigger; audits JS/TS drift against the diff base.
+#   pytest      — push trigger;  exercises the Python layer (pypi/ shim).
+#   cargo       — push trigger;  mirrors cargo-check above via the named recipe.
+#
+# The push-only triggers for pytest and cargo mean the named recipes don't
+# double-fire alongside the shell-based checks on every commit; the shell
+# checks already cover the commit path.
+# ---------------------------------------------------------------------------
+[[checks]]
+name = "pre_commit"
+triggers = [{ on = ["commit"] }]
+timeout_secs = 60
+[checks.source]
+type = "pre_commit"
+
+[[checks]]
+name = "fallow"
+triggers = [{ on = ["commit"] }]
+timeout_secs = 60
+[checks.source]
+type = "fallow"
+
+[[checks]]
+name = "pytest"
+triggers = [{ on = ["push"] }]
+timeout_secs = 120
+[checks.source]
+type = "pytest"
+
+[[checks]]
+name = "cargo"
+triggers = [{ on = ["push"] }]
+timeout_secs = 300
+[checks.source]
+type = "cargo"
+subcommand = "check"
