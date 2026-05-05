@@ -1,0 +1,6 @@
+# pre-commit config — required by klasp.toml's `[[checks]] type = "pre_commit"`
+# recipe (added in v0.2 W7 dogfood). Empty `repos:` is a valid no-op config;
+# pre-commit exits 0 with no hooks to run. Real hooks (rust fmt mirror, yaml
+# lint, secret scan) get added here in a follow-up — for now the cargo recipe
+# already covers fmt + clippy + test, so the no-op is a clean placeholder.
+repos: []

@@ -9,14 +9,14 @@
 // line and the project.version line) — both are stable, single-occurrence,
 // and easy to anchor.
 //
-// Also bumps the path-dependency version specifiers in
-// klasp-agents-claude/Cargo.toml and klasp/Cargo.toml so that
-// `cargo publish` accepts the dependency once klasp-core lands on the
-// registry at the new version.
+// Also bumps every path-dependency version specifier across the workspace so
+// `cargo publish` accepts each dep once its target crate lands on the registry
+// at the new version. The walker below auto-discovers member crates — adding
+// a new workspace member requires no script change.
 //
 // Usage:  node scripts/bump-source-versions.mjs 0.1.0
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -76,28 +76,38 @@ patchFile(join(repoRoot, "pypi", "pyproject.toml"), [
   },
 ]);
 
-// Path-dependency version specifiers — these line up the published
-// crate version with the dependency declared in downstream crates so
-// `cargo publish` accepts them.
-patchFile(join(repoRoot, "klasp-agents-claude", "Cargo.toml"), [
-  {
-    description: "klasp-core dep version",
-    find: /klasp-core\s*=\s*\{\s*path\s*=\s*"\.\.\/klasp-core"\s*,\s*version\s*=\s*"[^"]*"\s*\}/,
-    replace: `klasp-core = { path = "../klasp-core", version = "${version}" }`,
-  },
-]);
+// Path-dependency version specifiers — line up the published crate version
+// with dep declarations in downstream crates so `cargo publish` accepts them.
+// Walks every workspace member's Cargo.toml and bumps every path-dep's version
+// specifier. Adding a new member crate (e.g. `klasp-agents-codex` in W2)
+// requires no script change.
+const PATH_DEP_RE =
+  /(\b[\w-]+\s*=\s*\{\s*path\s*=\s*"[^"]+"\s*,\s*version\s*=\s*")[^"]*("\s*\})/g;
 
-patchFile(join(repoRoot, "klasp", "Cargo.toml"), [
-  {
-    description: "klasp-core dep version",
-    find: /klasp-core\s*=\s*\{\s*path\s*=\s*"\.\.\/klasp-core"\s*,\s*version\s*=\s*"[^"]*"\s*\}/,
-    replace: `klasp-core = { path = "../klasp-core", version = "${version}" }`,
-  },
-  {
-    description: "klasp-agents-claude dep version",
-    find: /klasp-agents-claude\s*=\s*\{\s*path\s*=\s*"\.\.\/klasp-agents-claude"\s*,\s*version\s*=\s*"[^"]*"\s*\}/,
-    replace: `klasp-agents-claude = { path = "../klasp-agents-claude", version = "${version}" }`,
-  },
-]);
+const EXCLUDED_DIRS = new Set(["target", "node_modules"]);
+
+function isMemberDir(entry, root) {
+  if (!entry.isDirectory()) return false;
+  if (entry.name.startsWith(".") || EXCLUDED_DIRS.has(entry.name)) return false;
+  return existsSync(join(root, entry.name, "Cargo.toml"));
+}
+
+const memberCargoTomls = readdirSync(repoRoot, { withFileTypes: true })
+  .filter((e) => isMemberDir(e, repoRoot))
+  .map((e) => join(repoRoot, e.name, "Cargo.toml"));
+
+let touched = 0;
+for (const cargoToml of memberCargoTomls) {
+  const original = readFileSync(cargoToml, "utf8");
+  const modified = original.replace(PATH_DEP_RE, `$1${version}$2`);
+  if (modified !== original) {
+    writeFileSync(cargoToml, modified);
+    console.log(`patched path-deps in ${cargoToml}`);
+    touched++;
+  }
+}
+if (touched === 0) {
+  console.log("path-deps already at target version (nothing to patch)");
+}
 
 console.log(`bumped source manifests to version ${version} (pypi: ${pypiVersion})`);
