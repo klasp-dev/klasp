@@ -150,7 +150,8 @@ klasp uninstall --agent claude_code        # removes the hook + settings entry, 
 | Four-platform binary distribution (cargo / npm / PyPI) | Shipped in v0.1 (live post-tag); darwin-arm64, linux-x64-gnu, linux-arm64-gnu, win-x64. x86 mac → `cargo install klasp` from source. |
 | Codex via `AGENTS.md` + git hooks | v0.2 (W1-W3 shipped) |
 | Named recipe: `type = "pre_commit"` | Shipped in v0.2 W4 |
-| Named recipes: `type = "fallow"` / `"pytest"` / `"cargo"` | v0.2 (W5-W6) |
+| Named recipe: `type = "fallow"` | Shipped in v0.2 W5 |
+| Named recipes: `type = "pytest"` / `"cargo"` | v0.2 (W6) |
 | Parallel check execution | v0.2.5 |
 | Cursor / Aider surfaces | v0.3 |
 | Plugin protocol | v0.3 (experimental) → v1.0 (stable) |

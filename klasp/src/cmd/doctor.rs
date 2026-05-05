@@ -267,9 +267,9 @@ fn check_settings(repo_root: &Path, surface: &dyn AgentSurface, c: &mut Counters
 /// on PATH. WARN-only: a missing dev tool isn't an install bug, but the user
 /// should know the gate will fail at runtime if invoked.
 ///
-/// Recipe sources (v0.2 W4: `pre_commit`) advertise a known argv0 directly
-/// — the recipe knows which binary it shells out to even before the gate
-/// renders the full command.
+/// Recipe sources (v0.2 W4: `pre_commit`, W5: `fallow`) advertise a known
+/// argv0 directly — the recipe knows which binary it shells out to even
+/// before the gate renders the full command.
 fn check_paths(config: &ConfigV1, c: &mut Counters) {
     for check in &config.checks {
         match &check.source {
@@ -286,14 +286,20 @@ fn check_paths(config: &ConfigV1, c: &mut Counters) {
                     check.name
                 )),
             },
-            CheckSourceConfig::PreCommit { .. } => match which::which("pre-commit") {
-                Ok(_) => c.ok(&format!("path[{}]: `pre-commit` found in PATH", check.name)),
-                Err(_) => c.warn(&format!(
-                    "path[{}]: `pre-commit` not found in PATH (recipe: pre_commit)",
-                    check.name
-                )),
-            },
+            CheckSourceConfig::PreCommit { .. } => check_recipe_argv0(c, &check.name, "pre-commit"),
+            CheckSourceConfig::Fallow { .. } => check_recipe_argv0(c, &check.name, "fallow"),
         }
+    }
+}
+
+/// Per-recipe PATH probe. Centralised so a new recipe gets PATH coverage
+/// in one line and the OK/WARN message format stays consistent.
+fn check_recipe_argv0(c: &mut Counters, check_name: &str, argv0: &str) {
+    match which::which(argv0) {
+        Ok(_) => c.ok(&format!("path[{check_name}]: `{argv0}` found in PATH")),
+        Err(_) => c.warn(&format!(
+            "path[{check_name}]: `{argv0}` not found in PATH (recipe: {argv0})"
+        )),
     }
 }
 

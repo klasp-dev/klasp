@@ -61,17 +61,20 @@ pub struct TriggerConfig {
 }
 
 /// Tagged enum: TOML `type = "shell"` selects the `Shell` variant,
-/// `type = "pre_commit"` selects the v0.2 `PreCommit` named recipe.
+/// `type = "pre_commit"` selects the v0.2 W4 `PreCommit` named recipe,
+/// `type = "fallow"` selects the v0.2 W5 `Fallow` named recipe.
 /// Unknown `type` values fail at parse time — that's the v0.1 contract
 /// for additive forwards-incompatibility, preserved as new recipes land.
 ///
 /// **Adding new variants is the v0.2 named-recipe extension point** —
-/// each new recipe (`fallow`, `pytest`, `cargo`, …) is a sibling
-/// variant here plus a paired `CheckSource` impl in the binary crate.
-/// Field shape is per-recipe: `Shell` carries a free-form `command`,
-/// while `PreCommit` carries optional `hook_stage` / `config_path`
-/// fields that map to pre-commit's own CLI flags. `verdict_path` is
-/// deferred — see [docs/design.md §14] for the explicit scope note.
+/// each new recipe (`pytest`, `cargo`, …) is a sibling variant here
+/// plus a paired `CheckSource` impl in the binary crate. Field shape
+/// is per-recipe: `Shell` carries a free-form `command`, `PreCommit`
+/// carries optional `hook_stage` / `config_path` fields that map to
+/// pre-commit's own CLI flags, `Fallow` carries optional `config_path`
+/// / `base` fields that map to `fallow audit -c <path> --base <ref>`.
+/// `verdict_path` is deferred — see [docs/design.md §14] for the
+/// explicit scope note.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CheckSourceConfig {
@@ -90,6 +93,23 @@ pub enum CheckSourceConfig {
         /// (`.pre-commit-config.yaml` at the repo root).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         config_path: Option<PathBuf>,
+    },
+    Fallow {
+        /// Maps to `fallow audit -c <config_path>`. `None` lets fallow
+        /// fall back to its own discovery (`.fallowrc.json`,
+        /// `.fallowrc.jsonc`, or `fallow.toml` at the repo root).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        config_path: Option<PathBuf>,
+
+        /// Maps to `fallow audit --base <ref>`. `None` falls back to
+        /// `${KLASP_BASE_REF}` at run time, which the gate runtime
+        /// resolves to the merge-base of `HEAD` against the upstream
+        /// tracking branch. Set this only when the diff-base for the
+        /// audit should diverge from the gate's resolved base ref —
+        /// e.g. auditing against a fixed mainline for a long-lived
+        /// release branch.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<String>,
     },
 }
 
@@ -232,10 +252,11 @@ mod tests {
 
     #[test]
     fn rejects_unknown_source_type() {
-        // `pre_commit` was an unknown recipe in v0.1; now in v0.2 W4 it's a
-        // first-class variant. This test pivots to a recipe that hasn't
-        // landed yet (`fallow`, ETA W5) so the additive-forwards-incompat
-        // contract keeps its regression coverage.
+        // `pre_commit` was an unknown recipe in v0.1, `fallow` was unknown
+        // in v0.2 W4; both are first-class variants now. Pivot to a recipe
+        // that hasn't landed yet (`cargo`, ETA W6) so the
+        // additive-forwards-incompat contract keeps its regression
+        // coverage.
         let toml = r#"
             version = 1
             [gate]
@@ -243,8 +264,8 @@ mod tests {
             [[checks]]
             name = "future-recipe"
             [checks.source]
-            type = "fallow"
-            base = "main"
+            type = "cargo"
+            command = "test"
         "#;
         let err = ConfigV1::parse(toml).expect_err("should reject");
         assert!(matches!(err, KlaspError::ConfigParse(_)));
@@ -330,6 +351,79 @@ mod tests {
             }
             other => panic!("expected PreCommit, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_fallow_recipe_minimal() {
+        // Bare `type = "fallow"` with no extra fields: both optional
+        // fields default to `None` and the recipe applies its own
+        // run-time defaults (`base = "${KLASP_BASE_REF}"`,
+        // `config_path = <fallow's own discovery>`).
+        let toml = r#"
+            version = 1
+            [gate]
+
+            [[checks]]
+            name = "audit"
+            [checks.source]
+            type = "fallow"
+        "#;
+        let config = ConfigV1::parse(toml).expect("should parse");
+        assert_eq!(config.checks.len(), 1);
+        match &config.checks[0].source {
+            CheckSourceConfig::Fallow { config_path, base } => {
+                assert!(config_path.is_none());
+                assert!(base.is_none());
+            }
+            other => panic!("expected Fallow, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_fallow_recipe_with_fields() {
+        let toml = r#"
+            version = 1
+            [gate]
+
+            [[checks]]
+            name = "audit"
+            [checks.source]
+            type = "fallow"
+            config_path = "tools/.fallowrc.json"
+            base = "origin/main"
+        "#;
+        let config = ConfigV1::parse(toml).expect("should parse");
+        match &config.checks[0].source {
+            CheckSourceConfig::Fallow { config_path, base } => {
+                assert_eq!(
+                    config_path
+                        .as_ref()
+                        .map(|p| p.to_string_lossy().into_owned()),
+                    Some("tools/.fallowrc.json".to_string())
+                );
+                assert_eq!(base.as_deref(), Some("origin/main"));
+            }
+            other => panic!("expected Fallow, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_field_on_fallow_variant() {
+        // Same footgun closure as the pre_commit variant: a typo like
+        // `bases` (plural) on the `fallow` variant must fail at parse
+        // time rather than silently default to `None`.
+        let toml = r#"
+            version = 1
+            [gate]
+
+            [[checks]]
+            name = "audit"
+            [checks.source]
+            type = "fallow"
+            bases = "main"
+        "#;
+        let err = ConfigV1::parse(toml).expect_err("should reject");
+        assert!(matches!(err, KlaspError::ConfigParse(_)));
     }
 
     #[test]

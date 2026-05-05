@@ -5,11 +5,11 @@ copy-pasteable into the `[[checks]]` section of your config; for the surrounding
 shape, see [`design.md` §3.5](./design.md#35-configv1-versioned-config) or the
 project's own dogfood config at [`/klasp.toml`](../klasp.toml).
 
-> v0.1 shipped exactly one check source: `type = "shell"`. v0.2 W4 adds the
-> first typed recipe — `type = "pre_commit"` — alongside it. v0.2 W5/W6 will
-> add `type = "fallow"`, `type = "pytest"`, and `type = "cargo"` along the
-> same shape. The shell form continues to work unchanged for any tool a
-> recipe doesn't cover yet — see
+> v0.1 shipped exactly one check source: `type = "shell"`. v0.2 W4 added the
+> first typed recipe — `type = "pre_commit"` — alongside it; W5 adds
+> `type = "fallow"`. v0.2 W6 will add `type = "pytest"` and
+> `type = "cargo"` along the same shape. The shell form continues to work
+> unchanged for any tool a recipe doesn't cover yet — see
 > [roadmap.md §v0.2](./roadmap.md#v02--codex--named-recipes-target-3-months-from-v01).
 
 ## Patterns
@@ -133,7 +133,43 @@ agent commit re-lints the whole repo.
 ## fallow
 
 [fallow](https://github.com/fallow-dev/fallow) is the diff-aware audit tool
-klasp's gate is modeled on. Run its audit JSON output against the diff:
+klasp's gate is modeled on. The recipe runs `fallow audit --format json`
+against the diff and parses the structured verdict into per-finding rows
+the agent can act on.
+
+### Typed recipe form (v0.2 W5) — preferred
+
+```toml
+[[checks]]
+name = "fallow"
+triggers = [{ on = ["commit", "push"] }]
+timeout_secs = 60
+[checks.source]
+type = "fallow"
+# Optional. Defaults shown.
+# base = "${KLASP_BASE_REF}"
+# config_path = ".fallowrc.json"
+```
+
+The recipe builds the equivalent
+`fallow audit --format json --quiet --base <ref> [-c <config_path>]`
+invocation internally, then maps fallow's top-level `verdict` field to a
+klasp verdict (`pass` / `warn` / `fail`). Per-finding rows from
+`complexity.findings[]`, `dead_code.unused_*[]`, and
+`duplication.clone_groups[]` carry through with file + line locations so
+the agent can navigate to the offending site. fallow 2.x is supported;
+outside that range the recipe surfaces a stderr warning but keeps
+running on the bet that fallow's stable JSON schema stays stable.
+
+`base` defaults to `${KLASP_BASE_REF}` (the gate-resolved merge-base),
+which is what most users want — set it explicitly only when the audit
+diff-base needs to diverge from the gate's resolved base ref (e.g. a
+long-lived release branch auditing against a fixed mainline).
+`config_path` is forwarded as `-c <path>`; omit it to let fallow's own
+discovery find `.fallowrc.json`, `.fallowrc.jsonc`, or `fallow.toml` at
+the repo root.
+
+### v0.1 shell form (still supported)
 
 ```toml
 [[checks]]
@@ -145,12 +181,9 @@ type = "shell"
 command = "fallow audit --base ${KLASP_BASE_REF} --quiet --format json"
 ```
 
-> v0.1 surfaces fallow's findings only via its non-zero exit code and
-> redirected stdout/stderr — klasp does not parse fallow's JSON. The v0.2
-> named recipes (`type = "fallow"`, `type = "pytest"`) will own JSON-output
-> parsing for tools that emit structured verdicts and render typed findings
-> into the gate's block message. Until then, fall back on the check tool's
-> exit code (any non-zero blocks).
+The shell form falls back on fallow's non-zero exit code as the block
+signal — no per-finding parsing — and is still the right choice if you
+need to chain fallow with other commands in the same shell line.
 
 ## pytest
 
@@ -285,22 +318,22 @@ without retrying the wrong fix.
 
 v0.2 introduces named recipes — typed `CheckSource` impls that hide the
 verbose `command = "..."` line behind a `type = "<recipe>"` shorthand. The
-first one (`type = "pre_commit"`) shipped in W4 — see the
-[pre-commit](#pre-commit) section above. W5/W6 add `fallow`, `pytest`, and
-`cargo`:
+first two (`type = "pre_commit"` in W4, `type = "fallow"` in W5) ship in
+v0.2 — see the [pre-commit](#pre-commit) and [fallow](#fallow) sections
+above. W6 adds `pytest` and `cargo`:
 
 ```toml
-[[checks]]
-name = "audit"
-triggers = [{ on = ["commit", "push"] }]
-[checks.source]
-type = "fallow"       # v0.2 W5: parses fallow's JSON, surfaces structured findings
-
 [[checks]]
 name = "tests"
 triggers = [{ on = ["push"] }]
 [checks.source]
 type = "pytest"       # v0.2 W6
+
+[[checks]]
+name = "build"
+triggers = [{ on = ["commit"] }]
+[checks.source]
+type = "cargo"        # v0.2 W6
 ```
 
 Existing v0.1 `type = "shell"` configs continue working unchanged (no schema

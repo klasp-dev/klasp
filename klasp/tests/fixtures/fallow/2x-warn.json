@@ -1,0 +1,90 @@
+{
+  "schema_version": 3,
+  "version": "2.62.0",
+  "command": "audit",
+  "verdict": "warn",
+  "changed_files_count": 1,
+  "base_ref": "main",
+  "head_sha": "feedface",
+  "elapsed_ms": 50,
+  "summary": {
+    "dead_code_issues": 0,
+    "dead_code_has_errors": false,
+    "complexity_findings": 1,
+    "max_cyclomatic": 4,
+    "duplication_clone_groups": 0
+  },
+  "attribution": {
+    "gate": "all",
+    "dead_code_introduced": 0,
+    "dead_code_inherited": 0,
+    "complexity_introduced": 0,
+    "complexity_inherited": 1,
+    "duplication_introduced": 0,
+    "duplication_inherited": 0
+  },
+  "dead_code": {
+    "summary": { "total_issues": 0 },
+    "unused_files": [],
+    "unused_exports": [],
+    "unused_types": [],
+    "private_type_leaks": [],
+    "unused_dependencies": [],
+    "unused_dev_dependencies": [],
+    "unused_optional_dependencies": [],
+    "unused_enum_members": [],
+    "unused_class_members": [],
+    "unresolved_imports": [],
+    "unlisted_dependencies": [],
+    "duplicate_exports": [],
+    "type_only_dependencies": [],
+    "test_only_dependencies": [],
+    "circular_dependencies": [],
+    "boundary_violations": [],
+    "stale_suppressions": []
+  },
+  "duplication": {
+    "clone_groups": [],
+    "clone_families": [],
+    "stats": {
+      "total_files": 1,
+      "files_with_clones": 0,
+      "total_lines": 20,
+      "duplicated_lines": 0,
+      "total_tokens": 80,
+      "duplicated_tokens": 0,
+      "clone_groups": 0,
+      "clone_instances": 0,
+      "duplication_percentage": 0.0
+    }
+  },
+  "complexity": {
+    "findings": [
+      {
+        "path": "src/legacy.ts",
+        "name": "legacyHelper",
+        "line": 3,
+        "col": 0,
+        "cyclomatic": 4,
+        "cognitive": 16,
+        "line_count": 18,
+        "param_count": 2,
+        "exceeded": "cognitive",
+        "severity": "moderate",
+        "crap": 18.0,
+        "coverage_tier": "low"
+      }
+    ],
+    "summary": {
+      "files_analyzed": 1,
+      "functions_analyzed": 1,
+      "functions_above_threshold": 1,
+      "max_cyclomatic_threshold": 20,
+      "max_cognitive_threshold": 15,
+      "max_crap_threshold": 30.0,
+      "severity_critical_count": 0,
+      "severity_high_count": 0,
+      "severity_moderate_count": 1
+    }
+  }
+}
