@@ -81,8 +81,18 @@ patchFile(join(repoRoot, "pypi", "pyproject.toml"), [
 // Walks every workspace member's Cargo.toml and bumps every path-dep's version
 // specifier. Adding a new member crate (e.g. `klasp-agents-codex` in W2)
 // requires no script change.
+//
+// Convention: this regex assumes `path = ` precedes `version = ` in inline
+// tables. TOML allows either order; if a future dep is written
+// `version = "...", path = "..."` it will be silently skipped. Keep the
+// path-first convention in this workspace, or generalise the regex.
+//
+// The trailing `(")` anchor matches only the closing quote of the version
+// string (not the closing `}` of the inline table) so deps with extra fields
+// after `version` (e.g. `, features = [...]`, `, default-features = false`,
+// `, optional = true`) are still matched and bumped.
 const PATH_DEP_RE =
-  /(\b[\w-]+\s*=\s*\{\s*path\s*=\s*"[^"]+"\s*,\s*version\s*=\s*")[^"]*("\s*\})/g;
+  /(\b[\w-]+\s*=\s*\{\s*path\s*=\s*"[^"]+"\s*,\s*version\s*=\s*")[^"]*(")/g;
 
 const EXCLUDED_DIRS = new Set(["target", "node_modules"]);
 
