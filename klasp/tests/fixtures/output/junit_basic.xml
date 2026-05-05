@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites name="klasp" tests="3" failures="2" errors="0">
+  <testsuite name="klasp" tests="3" failures="2" errors="0" time="0">
+    <testcase classname="src/math.rs" name="test-failure:src/math.rs:10" time="0">
+      <failure message="Expected 1 + 1 == 3">Expected 1 + 1 == 3</failure>
+    </testcase>
+    <testcase classname="src/lib.rs" name="lint-warning:src/lib.rs:5 [warn]" time="0"/>
+    <testcase classname="src/compare.rs" name="test-failure:src/compare.rs:20" time="0">
+      <failure message="assertion failed: a &lt; b">assertion failed: a &lt; b</failure>
+    </testcase>
+  </testsuite>
+</testsuites>

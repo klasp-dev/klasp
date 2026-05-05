@@ -8,6 +8,7 @@
 mod cli;
 mod cmd;
 mod git;
+mod output;
 mod registry;
 mod sources;
 
