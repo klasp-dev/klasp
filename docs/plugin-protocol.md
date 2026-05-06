@@ -419,6 +419,29 @@ on-disk TOML cannot be coerced into surprising shapes.
 
 ---
 
+## Reference plugin
+
+`examples/klasp-plugin-pre-commit/` in the klasp repository is the canonical
+reference implementation of the v0 plugin protocol. It wraps the
+[pre-commit](https://pre-commit.com) framework and demonstrates:
+
+- A standalone crate with no dependency on `klasp-core` (types are copied from
+  the wire spec, not imported — this is intentional).
+- Correct `--describe` and `--gate` dispatch via `clap`.
+- Output capping, binary-missing handling, and protocol-version mismatch warnings.
+
+**To build your own plugin:** fork `examples/klasp-plugin-pre-commit/` into its
+own repository, rename the binary in `Cargo.toml`, update `PLUGIN_NAME` and
+`CONFIG_TYPES` in `src/main.rs`, and replace `src/runner.rs` with your own check
+logic. See [examples/klasp-plugin-pre-commit/README.md](../examples/klasp-plugin-pre-commit/README.md)
+for step-by-step instructions.
+
+The built-in `pre_commit` recipe (`type = "pre_commit"` in `klasp.toml`) remains
+the default and is not replaced by the reference plugin. The plugin exists purely
+as a demonstrative reference.
+
+---
+
 ## Versioning Summary
 
 | Constant | Value | Meaning |

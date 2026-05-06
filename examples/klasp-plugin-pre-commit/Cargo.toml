@@ -1,0 +1,32 @@
+# This empty [workspace] table opts this crate out of the parent klasp workspace.
+# It is intentionally standalone so third-party plugin authors can fork this
+# directory into their own repository without carrying any klasp workspace
+# dependencies.
+[workspace]
+
+[package]
+name = "klasp-plugin-pre-commit"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Reference plugin for klasp — wraps pre-commit and speaks the v0 plugin protocol"
+license = "Apache-2.0"
+repository = "https://github.com/klasp-dev/klasp"
+
+# This crate is intentionally NOT a member of the klasp workspace.
+# See the root Cargo.toml [workspace] exclude = ["examples/*"] comment.
+# Plugin authors should fork this directory into their own repo.
+
+[[bin]]
+name = "klasp-plugin-pre-commit"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+which = "6"
+anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"
