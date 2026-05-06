@@ -23,6 +23,8 @@ use thiserror::Error;
 /// The literal command string klasp writes into `commit-cmd-pre`.
 pub const KLASP_CMD: &str = "klasp gate --agent aider";
 
+const COMMIT_CMD_PRE_KEY: &str = "commit-cmd-pre";
+
 #[derive(Debug, Error)]
 pub enum AiderConfError {
     #[error("could not parse .aider.conf.yml: {0}")]
@@ -31,9 +33,9 @@ pub enum AiderConfError {
     NotAMapping,
 }
 
-/// Returns `true` if `commit-cmd-pre` already contains the klasp invocation.
-pub fn contains_klasp(doc: &Value) -> bool {
-    match doc.get("commit-cmd-pre") {
+#[cfg(test)]
+fn contains_klasp(doc: &Value) -> bool {
+    match doc.get(COMMIT_CMD_PRE_KEY) {
         None => false,
         Some(Value::String(s)) => is_klasp_cmd(s),
         Some(Value::Sequence(seq)) => seq
@@ -43,8 +45,12 @@ pub fn contains_klasp(doc: &Value) -> bool {
     }
 }
 
+// Match exactly `KLASP_CMD` or any aider-tagged variant
+// (`klasp gate --agent aider [extra-flags]`). Cross-agent invocations like
+// `klasp gate --agent codex` are user-owned and must NOT be uninstalled by
+// the aider surface — the `--agent aider` prefix is the discriminator.
 fn is_klasp_cmd(s: &str) -> bool {
-    s == KLASP_CMD || s.starts_with("klasp gate")
+    s == KLASP_CMD || s.starts_with("klasp gate --agent aider ")
 }
 
 /// Insert `KLASP_CMD` into the parsed document. Returns `true` when the
@@ -58,7 +64,7 @@ fn is_klasp_cmd(s: &str) -> bool {
 pub fn install_into_doc(doc: &mut Value) -> Result<bool, AiderConfError> {
     let map = doc.as_mapping_mut().ok_or(AiderConfError::NotAMapping)?;
 
-    let key = Value::String("commit-cmd-pre".to_string());
+    let key = Value::String(COMMIT_CMD_PRE_KEY.to_string());
     match map.get(&key).cloned() {
         None => {
             map.insert(key, Value::String(KLASP_CMD.to_string()));
@@ -101,7 +107,7 @@ pub fn install_into_doc(doc: &mut Value) -> Result<bool, AiderConfError> {
 ///   collapse to scalar; if empty, remove key
 pub fn uninstall_from_doc(doc: &mut Value) -> Result<bool, AiderConfError> {
     let map = doc.as_mapping_mut().ok_or(AiderConfError::NotAMapping)?;
-    let key = Value::String("commit-cmd-pre".to_string());
+    let key = Value::String(COMMIT_CMD_PRE_KEY.to_string());
 
     match map.get(&key).cloned() {
         None => Ok(false),
@@ -110,11 +116,12 @@ pub fn uninstall_from_doc(doc: &mut Value) -> Result<bool, AiderConfError> {
             Ok(true)
         }
         Some(Value::Sequence(seq)) => {
+            let original_len = seq.len();
             let filtered: Vec<Value> = seq
                 .into_iter()
                 .filter(|v| !matches!(v, Value::String(s) if is_klasp_cmd(s)))
                 .collect();
-            if filtered.len() == seq_original_len(map, &key) {
+            if filtered.len() == original_len {
                 return Ok(false);
             }
             match filtered.len() {
@@ -131,13 +138,6 @@ pub fn uninstall_from_doc(doc: &mut Value) -> Result<bool, AiderConfError> {
             Ok(true)
         }
         _ => Ok(false),
-    }
-}
-
-fn seq_original_len(map: &serde_yaml_ng::Mapping, key: &Value) -> usize {
-    match map.get(key) {
-        Some(Value::Sequence(s)) => s.len(),
-        _ => 0,
     }
 }
 

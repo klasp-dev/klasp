@@ -308,7 +308,6 @@ name = "klasp-agents-aider"
 version = "0.2.5"
 dependencies = [
  "klasp-core",
- "serde",
  "serde_yaml_ng",
  "tempfile",
  "thiserror",
