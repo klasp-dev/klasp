@@ -7,6 +7,10 @@ members = [
     "klasp-agents-codex",
     "klasp-agents-aider",
 ]
+# examples/ contains forkable reference plugins that are intentionally
+# outside the workspace — they demonstrate third-party plugin authoring
+# without depending on klasp-core. Each subdirectory is its own crate.
+exclude = ["examples/*"]
 
 [workspace.package]
 version = "0.2.5"
