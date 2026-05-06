@@ -333,6 +333,66 @@ tools.
 
 ---
 
+## Disable list
+
+Users can prevent a plugin from being invoked by adding it to a per-user
+disable list. This is a klasp-side concept — it does not affect the plugin wire
+format.
+
+### File location
+
+The default path is `~/.config/klasp/disabled-plugins.toml`.
+
+Override the path at any time via the `KLASP_DISABLED_PLUGINS_FILE` environment
+variable. This is the preferred mechanism for test isolation and for users who
+prefer a non-standard config directory.
+
+```sh
+# Override for a single command:
+KLASP_DISABLED_PLUGINS_FILE=/tmp/test-disabled.toml klasp plugins list
+
+# Override permanently in your shell profile:
+export KLASP_DISABLED_PLUGINS_FILE="$XDG_CONFIG_HOME/klasp/disabled.toml"
+```
+
+### Format
+
+```toml
+# ~/.config/klasp/disabled-plugins.toml
+disabled = ["my-linter", "another-plugin"]
+```
+
+Single key `disabled`, value is a list of plugin names **without** the
+`klasp-plugin-` prefix. An absent file or `disabled = []` are both treated as
+"no plugins disabled". The file is created (including parent directories) on
+the first `klasp plugins disable <name>` invocation.
+
+### CLI
+
+```sh
+# Add a plugin to the disable list:
+klasp plugins disable my-linter
+
+# Disabled plugins appear in list output with a "disabled" status tag:
+klasp plugins list
+```
+
+There is no `klasp plugins enable` command. To re-enable a plugin, remove its
+name from the `disabled` list in the TOML file.
+
+### Runtime semantics
+
+When `klasp gate` evaluates a check whose `type = "plugin"` points at a
+disabled plugin, klasp returns `Verdict::Pass` for that check without
+spawning the plugin binary. The gate continues to run all other checks
+normally.
+
+This is intentionally a quiet skip — the user explicitly disabled the plugin,
+so no warn-level noise is emitted. Use `klasp gate -v` (verbose, future flag)
+to observe which checks were skipped.
+
+---
+
 ## Versioning Summary
 
 | Constant | Value | Meaning |

@@ -29,6 +29,8 @@ pub enum Cmd {
     Gate(GateArgs),
     /// Diagnose the local install (config, hook script, schema version).
     Doctor(DoctorArgs),
+    /// Manage klasp plugins.
+    Plugins(PluginsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -99,6 +101,32 @@ pub struct GateArgs {
 #[derive(Debug, Args)]
 pub struct DoctorArgs {}
 
+#[derive(Debug, Args)]
+pub struct PluginsArgs {
+    #[command(subcommand)]
+    pub action: PluginsAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PluginsAction {
+    /// List klasp-plugin-* binaries found on $PATH.
+    List,
+    /// Print the plugin's --describe output (protocol version, capabilities).
+    Info {
+        /// Plugin name (without the `klasp-plugin-` prefix).
+        name: String,
+    },
+    /// Add a plugin to the per-user disable list.
+    ///
+    /// Disabled plugins are skipped silently during `klasp gate`. The disable
+    /// list is stored at $KLASP_DISABLED_PLUGINS_FILE or
+    /// ~/.config/klasp/disabled-plugins.toml.
+    Disable {
+        /// Plugin name (without the `klasp-plugin-` prefix).
+        name: String,
+    },
+}
+
 pub fn run() -> ExitCode {
     let cli = Cli::parse();
     match &cli.command {
@@ -107,5 +135,6 @@ pub fn run() -> ExitCode {
         Cmd::Uninstall(args) => cmd::uninstall::run(args),
         Cmd::Gate(args) => cmd::gate::run(args),
         Cmd::Doctor(args) => cmd::doctor::run(args),
+        Cmd::Plugins(args) => cmd::plugins::run(&args.action),
     }
 }
