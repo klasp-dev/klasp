@@ -16,6 +16,7 @@
 //!
 //! **Timeout.** Default 60 s; override via `KLASP_PLUGIN_TIMEOUT_SECS` env var.
 
+use std::collections::HashSet;
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
@@ -23,9 +24,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use klasp_core::{
-    plugin_error_warn, CheckConfig, CheckResult, CheckSource, CheckSourceConfig, CheckSourceError,
-    Finding, PluginConfig, PluginGateInput, PluginGateOutput, PluginTrigger, PluginVerdict,
-    RepoState, Verdict, GATE_SCHEMA_VERSION, KLASP_PLUGIN_BIN_PREFIX, PLUGIN_PROTOCOL_VERSION,
+    plugin_disable_load, plugin_error_warn, CheckConfig, CheckResult, CheckSource,
+    CheckSourceConfig, CheckSourceError, Finding, PluginConfig, PluginGateInput, PluginGateOutput,
+    PluginTrigger, PluginVerdict, RepoState, Verdict, GATE_SCHEMA_VERSION, KLASP_PLUGIN_BIN_PREFIX,
+    PLUGIN_PROTOCOL_VERSION,
 };
 
 /// Default plugin subprocess timeout. Intentionally shorter than the 120 s
@@ -62,6 +64,8 @@ pub struct PluginSource {
     /// `Err(message)` otherwise. Cached so a plugin invoked across many checks
     /// describes once per gate run.
     describe_ok: OnceLock<Result<(), String>>,
+    /// Memoised disable list. Read once per `PluginSource` instance.
+    disabled: OnceLock<HashSet<String>>,
 }
 
 impl PluginSource {
@@ -76,6 +80,7 @@ impl PluginSource {
             id,
             binary: OnceLock::new(),
             describe_ok: OnceLock::new(),
+            disabled: OnceLock::new(),
         }
     }
 
@@ -127,6 +132,12 @@ impl CheckSource for PluginSource {
 impl PluginSource {
     /// Top-level plugin invocation. All error paths return `Verdict::Warn`.
     fn run_plugin(&self, config: &CheckConfig, state: &RepoState) -> Verdict {
+        // Check disable list before doing any binary resolution.
+        let disabled = self.disabled.get_or_init(|| plugin_disable_load(None));
+        if disabled.contains(&self.plugin_name) {
+            return Verdict::Pass;
+        }
+
         let binary = match self.resolve_binary() {
             Ok(p) => p.clone(),
             Err(msg) => return plugin_error_warn(&self.plugin_name, msg.clone()),
@@ -151,13 +162,16 @@ impl PluginSource {
 /// Run `--describe` and validate the protocol version. Pure function — no
 /// caching — so it can be called from `OnceLock::get_or_init`.
 fn run_describe(binary: &std::path::Path) -> Result<(), String> {
-    let timeout = PluginSource::timeout();
-    let output = spawn_and_wait(binary, &["--describe"], None, timeout, &[])
-        .map_err(|msg| format!("--describe failed: {msg}"))?;
+    fetch_describe(binary).map(|_| ())
+}
 
-    let describe: klasp_core::PluginDescribe = serde_json::from_str(&output.stdout)
-        .map_err(|e| format!("--describe produced malformed JSON: {e}"))?;
-
+/// Run `--describe` and return the full `PluginDescribe` struct without
+/// version validation. Used by `klasp plugins info` and `klasp plugins list`
+/// to present the raw capability advertisement to the user.
+pub(crate) fn fetch_describe(
+    binary: &std::path::Path,
+) -> Result<klasp_core::PluginDescribe, String> {
+    let describe = fetch_describe_with_timeout(binary, PluginSource::timeout())?;
     if describe.protocol_version != PLUGIN_PROTOCOL_VERSION {
         return Err(format!(
             "reports protocol_version={} but klasp supports only {}; \
@@ -165,8 +179,22 @@ fn run_describe(binary: &std::path::Path) -> Result<(), String> {
             describe.protocol_version, PLUGIN_PROTOCOL_VERSION,
         ));
     }
+    Ok(describe)
+}
 
-    Ok(())
+/// Like `fetch_describe` but does not validate the protocol version. Used by
+/// `klasp plugins info` so the user can inspect future-version plugins; uses
+/// the same hardened `spawn_and_wait` path (timeout + OOM cap + drain threads).
+/// `timeout` lets callers (e.g. `klasp plugins list`) cap describe time more
+/// aggressively than the gate-runtime default.
+pub(crate) fn fetch_describe_with_timeout(
+    binary: &std::path::Path,
+    timeout: std::time::Duration,
+) -> Result<klasp_core::PluginDescribe, String> {
+    let output = spawn_and_wait(binary, &["--describe"], None, timeout, &[])
+        .map_err(|msg| format!("--describe failed: {msg}"))?;
+    serde_json::from_str(&output.stdout)
+        .map_err(|e| format!("--describe produced malformed JSON: {e}"))
 }
 
 /// Run `--gate` with the gate input on stdin and parse the output verdict.

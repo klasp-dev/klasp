@@ -11,6 +11,7 @@
 pub mod config;
 pub mod error;
 pub mod plugin;
+pub mod plugin_disable;
 pub mod protocol;
 pub mod source;
 pub mod surface;
@@ -26,6 +27,10 @@ pub use plugin::{
     plugin_error_warn, PluginConfig, PluginDescribe, PluginFinding, PluginGateInput,
     PluginGateOutput, PluginSupports, PluginTrigger, PluginTriggerKind, PluginVerdict,
     KLASP_PLUGIN_BIN_PREFIX, KLASP_PLUGIN_RULE,
+};
+pub use plugin_disable::{
+    add as plugin_disable_add, load as plugin_disable_load, resolve_disable_list_path,
+    validate_plugin_name, KLASP_DISABLED_PLUGINS_FILE_ENV,
 };
 pub use protocol::{
     GateError, GateInput, GateProtocol, ToolInput, GATE_SCHEMA_VERSION, PLUGIN_PROTOCOL_VERSION,
