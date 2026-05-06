@@ -171,13 +171,7 @@ fn run_describe(binary: &std::path::Path) -> Result<(), String> {
 pub(crate) fn fetch_describe(
     binary: &std::path::Path,
 ) -> Result<klasp_core::PluginDescribe, String> {
-    let timeout = PluginSource::timeout();
-    let output = spawn_and_wait(binary, &["--describe"], None, timeout, &[])
-        .map_err(|msg| format!("--describe failed: {msg}"))?;
-
-    let describe: klasp_core::PluginDescribe = serde_json::from_str(&output.stdout)
-        .map_err(|e| format!("--describe produced malformed JSON: {e}"))?;
-
+    let describe = fetch_describe_with_timeout(binary, PluginSource::timeout())?;
     if describe.protocol_version != PLUGIN_PROTOCOL_VERSION {
         return Err(format!(
             "reports protocol_version={} but klasp supports only {}; \
@@ -185,8 +179,22 @@ pub(crate) fn fetch_describe(
             describe.protocol_version, PLUGIN_PROTOCOL_VERSION,
         ));
     }
-
     Ok(describe)
+}
+
+/// Like `fetch_describe` but does not validate the protocol version. Used by
+/// `klasp plugins info` so the user can inspect future-version plugins; uses
+/// the same hardened `spawn_and_wait` path (timeout + OOM cap + drain threads).
+/// `timeout` lets callers (e.g. `klasp plugins list`) cap describe time more
+/// aggressively than the gate-runtime default.
+pub(crate) fn fetch_describe_with_timeout(
+    binary: &std::path::Path,
+    timeout: std::time::Duration,
+) -> Result<klasp_core::PluginDescribe, String> {
+    let output = spawn_and_wait(binary, &["--describe"], None, timeout, &[])
+        .map_err(|msg| format!("--describe failed: {msg}"))?;
+    serde_json::from_str(&output.stdout)
+        .map_err(|e| format!("--describe produced malformed JSON: {e}"))
 }
 
 /// Run `--gate` with the gate input on stdin and parse the output verdict.

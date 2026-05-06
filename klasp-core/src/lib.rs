@@ -30,7 +30,7 @@ pub use plugin::{
 };
 pub use plugin_disable::{
     add as plugin_disable_add, load as plugin_disable_load, resolve_disable_list_path,
-    KLASP_DISABLED_PLUGINS_FILE_ENV,
+    validate_plugin_name, KLASP_DISABLED_PLUGINS_FILE_ENV,
 };
 pub use protocol::{
     GateError, GateInput, GateProtocol, ToolInput, GATE_SCHEMA_VERSION, PLUGIN_PROTOCOL_VERSION,

@@ -23,10 +23,11 @@ Plugins follow the naming convention `klasp-plugin-<name>`. When a `klasp.toml`
 check declares `type = "plugin"` with `name = "my-linter"`, klasp looks for
 `klasp-plugin-my-linter` on `$PATH` using `which::which`.
 
-Discovery is **lazy** — it only happens when a check with `type = "plugin"` is
-encountered during `klasp gate`. There is no startup scan of `$PATH`. The
-`klasp plugins list` subcommand (#42, W3) will perform a full scan; that is out
-of scope for v0.3.
+Discovery during `klasp gate` is **lazy** — it only happens when a check with
+`type = "plugin"` is encountered. There is no startup scan of `$PATH`. The
+`klasp plugins list` subcommand (#42, W3) does perform a full `$PATH` scan to
+enumerate all installed plugins, but that is explicit and read-only — gate
+itself never enumerates.
 
 **Example `klasp.toml` entry:**
 
@@ -390,6 +391,31 @@ normally.
 This is intentionally a quiet skip — the user explicitly disabled the plugin,
 so no warn-level noise is emitted. Use `klasp gate -v` (verbose, future flag)
 to observe which checks were skipped.
+
+### Concurrency
+
+`klasp plugins disable` is **not** lock-protected. Two concurrent invocations
+can lose a write (last writer wins). For v0.3, run `disable` commands
+sequentially. A future release may add file locking if this proves
+problematic in practice.
+
+### Malformed file handling
+
+If the disable list contains invalid TOML (typically from a hand-edit error):
+
+- `klasp gate` degrades gracefully — `plugin_disable_load` writes a one-line
+  warning to stderr and treats the list as empty (so no plugin is silently
+  skipped because of a typo).
+- `klasp plugins disable <name>` **refuses** to overwrite a malformed file —
+  it returns an error pointing at the parse failure so the user can fix or
+  delete the file manually rather than losing previously-disabled entries.
+
+### Plugin name validation
+
+Names accepted by `klasp plugins disable` (and required for the binary lookup
+`klasp-plugin-<name>`) are restricted to ASCII letters, digits, `-`, and `_`.
+Path separators, shell metachars, and control characters are rejected so the
+on-disk TOML cannot be coerced into surprising shapes.
 
 ---
 

@@ -10,14 +10,23 @@
 use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use klasp_core::{
-    plugin_disable_add, plugin_disable_load, resolve_disable_list_path, PluginDescribe,
+    plugin_disable_add, plugin_disable_load, resolve_disable_list_path, validate_plugin_name,
     KLASP_PLUGIN_BIN_PREFIX,
 };
 
 use crate::cli::PluginsAction;
-use crate::sources::plugin::fetch_describe;
+use crate::sources::plugin::fetch_describe_with_timeout;
+
+/// Default per-binary timeout for `klasp plugins list`'s `--describe` calls.
+/// Intentionally much shorter than the gate's 60 s plugin timeout — `list`
+/// is interactive, and one hung plugin shouldn't make the whole listing
+/// appear hung.
+const DEFAULT_LIST_TIMEOUT_SECS: u64 = 5;
+
+const NAME_COL: usize = 24;
 
 pub fn run(action: &PluginsAction) -> ExitCode {
     match action {
@@ -29,59 +38,94 @@ pub fn run(action: &PluginsAction) -> ExitCode {
 
 // ── list ─────────────────────────────────────────────────────────────────────
 
+fn list_timeout() -> Duration {
+    let secs = env::var("KLASP_PLUGIN_LIST_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_LIST_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
+
+/// Truncate `s` to fit `NAME_COL`, appending an ellipsis if it overflows.
+fn fit_name(s: &str) -> String {
+    if s.chars().count() > NAME_COL {
+        let truncated: String = s.chars().take(NAME_COL - 1).collect();
+        format!("{truncated}…")
+    } else {
+        s.to_string()
+    }
+}
+
 /// Scan `$PATH` for `klasp-plugin-*` binaries and print a status table.
 fn cmd_list() -> ExitCode {
     let disabled = plugin_disable_load(None);
     let plugins = scan_path_for_plugins();
 
     if plugins.is_empty() {
-        eprintln!("No klasp-plugin-* binaries found on $PATH.");
+        eprintln!("No `{KLASP_PLUGIN_BIN_PREFIX}*` binaries found on $PATH.");
         return ExitCode::SUCCESS;
     }
 
-    // Header
-    println!("{:<20} {:<10} {:<10} STATUS", "NAME", "VERSION", "PROTOCOL");
+    println!(
+        "{:<width$} {:<10} STATUS",
+        "NAME",
+        "PROTOCOL",
+        width = NAME_COL
+    );
+
+    let timeout = list_timeout();
 
     for bin_path in &plugins {
         let file_name = bin_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let name = file_name
             .strip_prefix(KLASP_PLUGIN_BIN_PREFIX)
             .unwrap_or(file_name);
+        let display_name = fit_name(name);
 
         if disabled.contains(name) {
-            // Still call --describe to get version info, but tag as disabled.
-            let (version, protocol) = describe_version_fields(bin_path);
-            println!("{:<20} {:<10} {:<10} disabled", name, version, protocol);
+            // No describe spawn for disabled plugins — they're skipped at gate
+            // time anyway, and a hung disabled plugin shouldn't slow `list`.
+            println!(
+                "{:<width$} {:<10} disabled",
+                display_name,
+                "—",
+                width = NAME_COL,
+            );
             continue;
         }
 
-        match fetch_describe(bin_path) {
+        match fetch_describe_with_timeout(bin_path, timeout) {
             Ok(desc) => {
-                let version = desc
-                    .name
-                    .strip_prefix(KLASP_PLUGIN_BIN_PREFIX)
-                    .map(|_| "—".to_string()) // name carries no semver in v0
-                    .unwrap_or_else(|| "—".to_string());
+                let status = if desc.protocol_version == klasp_core::PLUGIN_PROTOCOL_VERSION {
+                    "enabled".to_string()
+                } else {
+                    format!(
+                        "proto-mismatch (klasp speaks v{})",
+                        klasp_core::PLUGIN_PROTOCOL_VERSION
+                    )
+                };
                 println!(
-                    "{:<20} {:<10} {:<10} enabled",
-                    name, version, desc.protocol_version,
+                    "{:<width$} {:<10} {}",
+                    display_name,
+                    desc.protocol_version,
+                    status,
+                    width = NAME_COL,
                 );
             }
             Err(reason) => {
-                println!("{:<20} {:<10} {:<10} {}", name, "—", "—", reason);
+                let short_reason = reason.lines().next().unwrap_or(&reason);
+                println!(
+                    "{:<width$} {:<10} describe-failed: {}",
+                    display_name,
+                    "—",
+                    short_reason,
+                    width = NAME_COL,
+                );
             }
         }
     }
 
     ExitCode::SUCCESS
-}
-
-/// Call `--describe` and return (version_str, protocol_str) for display only.
-fn describe_version_fields(bin_path: &std::path::Path) -> (String, String) {
-    match fetch_describe(bin_path) {
-        Ok(desc) => ("—".to_string(), desc.protocol_version.to_string()),
-        Err(_) => ("—".to_string(), "—".to_string()),
-    }
 }
 
 /// Walk each `$PATH` entry and collect binaries whose names start with
@@ -120,8 +164,15 @@ fn scan_path_for_plugins() -> Vec<PathBuf> {
 
 // ── info ─────────────────────────────────────────────────────────────────────
 
-/// Run `--describe` for a named plugin and pretty-print the result.
+/// Run `--describe` for a named plugin and pretty-print the result. Does not
+/// validate the protocol version — `info` is for inspecting any plugin,
+/// including future-version ones the user might be debugging.
 fn cmd_info(name: &str) -> ExitCode {
+    if let Err(e) = validate_plugin_name(name) {
+        eprintln!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+
     let bin_name = format!("{KLASP_PLUGIN_BIN_PREFIX}{name}");
     let binary = match which::which(&bin_name) {
         Ok(p) => p,
@@ -131,17 +182,17 @@ fn cmd_info(name: &str) -> ExitCode {
         }
     };
 
-    match fetch_describe_raw(&binary) {
-        Ok(desc) => {
-            match serde_json::to_string_pretty(&desc) {
-                Ok(pretty) => println!("{pretty}"),
-                Err(e) => {
-                    eprintln!("error: could not serialize describe output: {e}");
-                    return ExitCode::FAILURE;
-                }
+    match fetch_describe_with_timeout(&binary, list_timeout()) {
+        Ok(desc) => match serde_json::to_string_pretty(&desc) {
+            Ok(pretty) => {
+                println!("{pretty}");
+                ExitCode::SUCCESS
             }
-            ExitCode::SUCCESS
-        }
+            Err(e) => {
+                eprintln!("error: could not serialize describe output: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Err(reason) => {
             eprintln!("error: {reason}");
             ExitCode::FAILURE
@@ -149,40 +200,17 @@ fn cmd_info(name: &str) -> ExitCode {
     }
 }
 
-/// Run `--describe` and return the raw `PluginDescribe` without protocol
-/// version validation (so `info` shows what the plugin actually reports, even
-/// if it's a future/incompatible version).
-fn fetch_describe_raw(binary: &std::path::Path) -> Result<PluginDescribe, String> {
-    use std::process::{Command, Stdio};
-
-    let output = Command::new(binary)
-        .arg("--describe")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("failed to spawn `{}`: {e}", binary.display()))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "`{}` --describe exited {}: {}",
-            binary.display(),
-            output.status.code().unwrap_or(-1),
-            stderr.trim(),
-        ));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(stdout.as_ref())
-        .map_err(|e| format!("--describe produced malformed JSON: {e}"))
-}
-
 // ── disable ───────────────────────────────────────────────────────────────────
 
-/// Add a plugin to the per-user disable list.
+/// Add a plugin to the per-user disable list. Validates the name first so a
+/// malicious or accidental string (path separators, shell metachars, control
+/// chars) can't end up in the on-disk TOML.
 fn cmd_disable(name: &str) -> ExitCode {
-    // Check if already disabled.
+    if let Err(e) = validate_plugin_name(name) {
+        eprintln!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+
     let existing = plugin_disable_load(None);
     if existing.contains(name) {
         println!("{name} already disabled");
@@ -193,8 +221,7 @@ fn cmd_disable(name: &str) -> ExitCode {
     match plugin_disable_add(name, None) {
         Ok(()) => {
             println!(
-                "disabled {name}; klasp gate will skip this plugin.\n\
-                 Disable list: {}",
+                "disabled {name}; klasp gate will skip this plugin.\nDisable list: {}",
                 path.display()
             );
             ExitCode::SUCCESS
