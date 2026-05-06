@@ -5,6 +5,7 @@ members = [
     "klasp-core",
     "klasp-agents-claude",
     "klasp-agents-codex",
+    "klasp-agents-aider",
 ]
 
 [workspace.package]
@@ -27,3 +28,4 @@ tracing = "0.1"
 regex = "1"
 which = "6"
 tempfile = "3"
+serde_yaml_ng = "0.10"
