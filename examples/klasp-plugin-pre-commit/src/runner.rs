@@ -18,7 +18,10 @@ use crate::protocol::{
     PROTOCOL_VERSION,
 };
 
-/// Rule slug for infrastructure errors emitted by this plugin.
+/// Rule slug prefix for infrastructure errors emitted by this plugin
+/// (input-parse-error, output-serialize-failed, etc).
+const HOOK_RULE_PREFIX_INFRA: &str = "klasp-plugin-pre-commit/";
+/// Rule slug for missing pre-commit binary.
 const BINARY_MISSING_RULE: &str = "klasp-plugin-pre-commit/binary-missing";
 /// Rule slug for unknown-protocol warnings emitted by this plugin.
 const PROTOCOL_WARN_RULE: &str = "klasp-plugin-pre-commit/protocol-warn";
@@ -173,13 +176,20 @@ fn build_findings(output: &PreCommitOutput, _kind: &PluginTriggerKind) -> Vec<Pl
 }
 
 /// Parse `"<hook>....Failed"` lines from pre-commit stdout.
-/// Format is stable from pre-commit 3.0 through 4.x.
+/// Format is stable from pre-commit 3.0 through 4.x. Bounds the iterator at
+/// `MAX_FINDINGS + 1` so a runaway pre-commit producing tens of thousands of
+/// failure lines doesn't grow the findings vec unboundedly before truncation.
 fn parse_failed_hooks(stdout: &str) -> Vec<PluginFinding> {
     stdout
         .lines()
         .filter_map(|line| {
             let line = line.trim_end();
             let head = line.strip_suffix("Failed")?;
+            // Require at least one trailing dot so narrative lines like
+            // "Note: The build Failed" don't produce spurious findings.
+            if !head.contains('.') {
+                return None;
+            }
             let head = head.trim_end_matches(|c: char| c == '.' || c.is_whitespace());
             if head.is_empty() {
                 return None;
@@ -195,21 +205,26 @@ fn parse_failed_hooks(stdout: &str) -> Vec<PluginFinding> {
                 &format!("hook `{head}` failed"),
             ))
         })
+        .take(MAX_FINDINGS + 1)
         .collect()
 }
 
 /// Cap findings at `MAX_FINDINGS` and append a sentinel if truncated.
+///
+/// `parse_failed_hooks` already bounds the input at `MAX_FINDINGS + 1` so the
+/// vec can never grow unboundedly; this function preserves that cap and emits
+/// a generic "more findings not shown" sentinel since the exact overflow
+/// count is not available.
 fn truncate_findings(mut findings: Vec<PluginFinding>) -> Vec<PluginFinding> {
     if findings.len() <= MAX_FINDINGS {
         return findings;
     }
-    let overflow = findings.len() - MAX_FINDINGS;
     findings.truncate(MAX_FINDINGS);
     findings.push(warn_finding(
         "klasp-plugin-pre-commit/truncated",
         &format!(
-            "{overflow} additional finding{} not shown (truncated at {MAX_FINDINGS})",
-            if overflow == 1 { "" } else { "s" }
+            "additional findings not shown (truncated at {MAX_FINDINGS}); \
+             re-run pre-commit locally for the full list"
         ),
     ));
     findings
@@ -232,5 +247,20 @@ fn warn_finding(rule: &str, message: &str) -> PluginFinding {
         file: None,
         line: None,
         message: message.to_string(),
+    }
+}
+
+/// Build a single-finding `Verdict::Warn` `PluginGateOutput` for plugin
+/// infrastructure errors (input parse failure, internal serialization error,
+/// etc). Callers exit 0 after writing this — the gate must continue running
+/// other checks even when this plugin's input is broken.
+pub fn infra_warn(rule_suffix: &str, message: impl Into<String>) -> PluginGateOutput {
+    PluginGateOutput {
+        protocol_version: PROTOCOL_VERSION,
+        verdict: PluginVerdict::Warn,
+        findings: vec![warn_finding(
+            &format!("{HOOK_RULE_PREFIX_INFRA}{rule_suffix}"),
+            &message.into(),
+        )],
     }
 }

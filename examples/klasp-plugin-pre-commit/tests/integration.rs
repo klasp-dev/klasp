@@ -3,6 +3,10 @@
 //! Each test drives the compiled binary directly via `CARGO_BIN_EXE_klasp-plugin-pre-commit`.
 //! Fixture pre-commit scripts are written to a tempdir and prepended to PATH.
 //!
+//! Tests are gated on `#[cfg(unix)]` because the bash-shim approach is Unix-only.
+//! On Windows, the plugin still compiles but these specific integration tests
+//! are skipped (a future Windows-native test would need a different fixture).
+//!
 //! Test list:
 //! 1. `describe_emits_protocol_v0`
 //! 2. `gate_with_no_failing_hooks_returns_pass`
@@ -10,6 +14,8 @@
 //! 4. `gate_with_missing_pre_commit_returns_warn`
 //! 5. `gate_truncates_excessive_findings`
 //! 6. `gate_input_with_unknown_protocol_version_warns`
+
+#![cfg(unix)]
 
 use std::io::Write as IoWrite;
 use std::os::unix::fs::PermissionsExt;
@@ -303,4 +309,43 @@ fn gate_input_with_unknown_protocol_version_warns() {
         }),
         "must have a protocol-warn finding; findings: {findings:?}"
     );
+}
+
+/// `--gate` with malformed JSON on stdin → exit 0 + warn-verdict JSON.
+/// Verifies the plugin honours its documented "exit 0 in all cases" contract
+/// even when the input from klasp is broken — this is the path third-party
+/// authors are most likely to copy incorrectly.
+#[test]
+fn gate_with_malformed_input_returns_warn_and_exits_zero() {
+    let (code, stdout, stderr) =
+        run_plugin(&["--gate"], Some("{not valid json"), None);
+    assert_eq!(
+        code, 0,
+        "plugin must exit 0 on malformed stdin; stderr: {stderr}"
+    );
+
+    let v: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("plugin must emit valid JSON even on bad input: {e}\nstdout={stdout}"));
+    assert_eq!(v["verdict"].as_str(), Some("warn"));
+    let findings = v["findings"].as_array().expect("findings is array");
+    assert!(
+        findings.iter().any(|f| {
+            f["rule"].as_str().unwrap_or("").contains("input-parse-error")
+        }),
+        "must have an input-parse-error finding; findings: {findings:?}"
+    );
+}
+
+/// `--gate` with empty stdin → exit 0 + warn-verdict JSON.
+#[test]
+fn gate_with_empty_input_returns_warn_and_exits_zero() {
+    let (code, stdout, stderr) = run_plugin(&["--gate"], Some(""), None);
+    assert_eq!(
+        code, 0,
+        "plugin must exit 0 on empty stdin; stderr: {stderr}"
+    );
+
+    let v: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("plugin must emit valid JSON on empty input: {e}\nstdout={stdout}"));
+    assert_eq!(v["verdict"].as_str(), Some("warn"));
 }

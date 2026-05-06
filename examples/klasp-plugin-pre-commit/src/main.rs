@@ -26,10 +26,11 @@
 mod protocol;
 mod runner;
 
-use anyhow::Result;
+use std::io::{BufReader, Write};
+
 use clap::Parser;
 
-use protocol::{PluginDescribe, PluginSupports, PROTOCOL_VERSION};
+use protocol::{PluginDescribe, PluginGateOutput, PluginSupports, PROTOCOL_VERSION};
 
 /// Canonical binary name (must match the `klasp-plugin-` prefix convention).
 const PLUGIN_NAME: &str = "klasp-plugin-pre-commit";
@@ -53,42 +54,76 @@ struct Args {
     gate: bool,
 }
 
-fn main() -> Result<()> {
+fn main() {
     let args = Args::parse();
 
     if args.describe {
-        return cmd_describe();
+        cmd_describe();
+        std::process::exit(0);
     }
 
     if args.gate {
-        return cmd_gate();
+        cmd_gate();
+        std::process::exit(0);
     }
 
-    // No subcommand: print short help and exit 0.
-    println!(
+    // No subcommand: print short help to stderr (stdout is reserved for
+    // protocol output) and exit 0.
+    eprintln!(
         "{PLUGIN_NAME}: a reference klasp plugin.\n\
          Usage: {PLUGIN_NAME} --describe | --gate\n\
          See README.md for documentation."
     );
-    Ok(())
 }
 
-/// Emit `PluginDescribe` JSON to stdout.
-fn cmd_describe() -> Result<()> {
+/// Emit `PluginDescribe` JSON to stdout. Infallible — `PluginDescribe`
+/// serialization cannot fail given the static `PluginSupports` shape.
+fn cmd_describe() {
     let describe = PluginDescribe {
         protocol_version: PROTOCOL_VERSION,
         name: PLUGIN_NAME.to_string(),
         config_types: CONFIG_TYPES.iter().map(|s| s.to_string()).collect(),
         supports: PluginSupports { verdict_v0: true },
     };
-    println!("{}", serde_json::to_string(&describe)?);
-    Ok(())
+    let json = serde_json::to_string(&describe).unwrap_or_else(|_| {
+        serde_json::to_string(&runner::infra_warn(
+            "describe-serialize-failed",
+            "internal error: failed to serialize PluginDescribe",
+        ))
+        .unwrap_or_else(|_| String::from("{}"))
+    });
+    write_stdout_line(&json);
 }
 
 /// Read `PluginGateInput` from stdin, run pre-commit, emit `PluginGateOutput`.
-fn cmd_gate() -> Result<()> {
-    let input: protocol::PluginGateInput = serde_json::from_reader(std::io::stdin())?;
-    let output = runner::run_gate(&input);
-    println!("{}", serde_json::to_string(&output)?);
-    Ok(())
+/// All error paths convert to a `Verdict::Warn` JSON output and exit 0 — the
+/// plugin protocol mandates that the gate continues running other checks even
+/// when this plugin's input is malformed or its environment is broken.
+fn cmd_gate() {
+    let stdin = std::io::stdin();
+    let output: PluginGateOutput =
+        match serde_json::from_reader::<_, protocol::PluginGateInput>(BufReader::new(stdin.lock()))
+        {
+            Ok(input) => runner::run_gate(&input),
+            Err(e) => runner::infra_warn(
+                "input-parse-error",
+                format!("failed to parse PluginGateInput from stdin: {e}"),
+            ),
+        };
+
+    let json = serde_json::to_string(&output)
+        .unwrap_or_else(|_| String::from(
+            r#"{"protocol_version":0,"verdict":"warn","findings":[{"severity":"warn","rule":"klasp-plugin-pre-commit/output-serialize-failed","message":"internal error: PluginGateOutput serialize failed"}]}"#,
+        ));
+    write_stdout_line(&json);
+}
+
+/// Write `s + "\n"` to a locked stdout in a single flushed sequence so
+/// klasp's reader sees a complete JSON line without interleaving.
+fn write_stdout_line(s: &str) {
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let _ = out.write_all(s.as_bytes());
+    let _ = out.write_all(b"\n");
+    let _ = out.flush();
 }

@@ -12,6 +12,8 @@ rust-version = "1.75"
 description = "Reference plugin for klasp — wraps pre-commit and speaks the v0 plugin protocol"
 license = "Apache-2.0"
 repository = "https://github.com/klasp-dev/klasp"
+# Reference plugin: fork the directory into your own repo before publishing.
+publish = false
 
 # This crate is intentionally NOT a member of the klasp workspace.
 # See the root Cargo.toml [workspace] exclude = ["examples/*"] comment.
