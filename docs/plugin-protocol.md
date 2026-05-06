@@ -108,7 +108,6 @@ Written by klasp to the plugin's stdin before closing the pipe.
   "schema_version": 2,
   "trigger": {
     "kind": "commit",
-    "ref": null,
     "files": ["src/foo.rs", "src/bar.rs"]
   },
   "config": {
@@ -126,7 +125,6 @@ Written by klasp to the plugin's stdin before closing the pipe.
 | `protocol_version` | `u32` | `PLUGIN_PROTOCOL_VERSION` (`0`). |
 | `schema_version` | `u32` | `KLASP_GATE_SCHEMA` value (currently `2`). |
 | `trigger.kind` | `"commit" \| "push"` | Git event that triggered the gate. |
-| `trigger.ref` | `string \| null` | Push destination ref; `null` for commits. |
 | `trigger.files` | `string[]` | Absolute paths of staged files in scope. Empty for push events or single-config mode. |
 | `config.type` | `string` | Plugin name from `klasp.toml`. |
 | `config.args` | `string[]` | Extra args from `klasp.toml`'s `args` field. |
@@ -232,8 +230,8 @@ environment. The following env vars are set explicitly (and are stable at v0):
 |---|---|
 | `KLASP_BASE_REF` | Merge-base ref (e.g., `origin/main` or `HEAD~1`). |
 | `KLASP_GATE_SCHEMA` | Gate wire-protocol version (currently `2`). |
+| `KLASP_PROJECT_DIR` | Absolute path to the repo root klasp is gating. |
 | `KLASP_PLUGIN_PROTOCOL_VERSION` | Plugin protocol version (currently `0`). |
-| `CLAUDE_PROJECT_DIR` | Repo root as set by Claude Code (may be unset outside Claude Code). |
 
 Plugins may read any env var from the inherited environment. They must not rely
 on env vars that are not listed above as stable — those are implementation

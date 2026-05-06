@@ -24,7 +24,8 @@ pub use config::{
 pub use error::{KlaspError, Result};
 pub use plugin::{
     plugin_error_warn, PluginConfig, PluginDescribe, PluginFinding, PluginGateInput,
-    PluginGateOutput, PluginSupports, PluginTrigger, PluginVerdict,
+    PluginGateOutput, PluginSupports, PluginTrigger, PluginTriggerKind, PluginVerdict,
+    KLASP_PLUGIN_BIN_PREFIX, KLASP_PLUGIN_RULE,
 };
 pub use protocol::{
     GateError, GateInput, GateProtocol, ToolInput, GATE_SCHEMA_VERSION, PLUGIN_PROTOCOL_VERSION,

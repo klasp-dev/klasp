@@ -325,7 +325,7 @@ fn check_paths(config: &ConfigV1, c: &mut Counters) {
             CheckSourceConfig::Cargo { .. } => check_recipe_argv0(c, &check.name, "cargo"),
             // Plugin sources: probe for `klasp-plugin-<name>` on PATH.
             CheckSourceConfig::Plugin { name, .. } => {
-                let binary = format!("klasp-plugin-{name}");
+                let binary = format!("{}{}", klasp_core::KLASP_PLUGIN_BIN_PREFIX, name);
                 match which::which(&binary) {
                     Ok(_) => c.ok(&format!("path[{}]: `{binary}` found in PATH", check.name)),
                     Err(_) => c.warn(&format!(

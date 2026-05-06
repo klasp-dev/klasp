@@ -71,16 +71,11 @@ name = "{plugin_name}"
     // Synthetic Claude Code `git commit` payload.
     let payload = r#"{"tool_name":"Bash","tool_input":{"command":"git commit -m 'test'"}}"#;
 
-    // Locate the `klasp` binary produced by cargo.
-    let binary = std::env::current_exe()
-        .expect("current_exe")
-        .parent()
-        .expect("parent")
-        .parent() // strip `deps/` from integration test binary path
-        .expect("parent2")
-        .join("klasp");
+    // Locate the `klasp` binary produced by cargo. CARGO_BIN_EXE_klasp is
+    // guaranteed by Cargo for integration tests in the same package as the bin.
+    let binary = env!("CARGO_BIN_EXE_klasp");
 
-    let mut cmd = Command::new(&binary);
+    let mut cmd = Command::new(binary);
     cmd.arg("gate")
         .env("KLASP_GATE_SCHEMA", "2")
         .env("PATH", path)

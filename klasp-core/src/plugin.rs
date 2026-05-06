@@ -16,6 +16,16 @@ use crate::protocol::PLUGIN_PROTOCOL_VERSION;
 use crate::trigger::GitEvent;
 use crate::verdict::{Finding, Severity};
 
+/// Prefix for plugin binary names on `$PATH`. A plugin named `my-linter` is
+/// invoked as `klasp-plugin-my-linter`. Renaming this prefix is a single-site edit.
+pub const KLASP_PLUGIN_BIN_PREFIX: &str = "klasp-plugin-";
+
+/// Rule slug used for all plugin infrastructure errors (binary missing,
+/// non-zero exit, malformed JSON, version mismatch, timeout). Plugin-reported
+/// findings carry their own rule strings — this slug only identifies klasp's
+/// own plugin-runtime warnings.
+pub const KLASP_PLUGIN_RULE: &str = "klasp::plugin";
+
 /// What a plugin sends in response to `--describe`. Used by klasp to
 /// verify forward-compatibility before invoking `--gate`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,13 +49,28 @@ pub struct PluginSupports {
     pub verdict_v0: bool,
 }
 
+/// Git event tier as reported on the plugin wire. Mirrors `GitEvent` but
+/// kept distinct so wire-format evolution is decoupled from internal types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginTriggerKind {
+    Commit,
+    Push,
+}
+
+impl From<GitEvent> for PluginTriggerKind {
+    fn from(event: GitEvent) -> Self {
+        match event {
+            GitEvent::Commit => PluginTriggerKind::Commit,
+            GitEvent::Push => PluginTriggerKind::Push,
+        }
+    }
+}
+
 /// Git event information forwarded to plugins.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginTrigger {
-    /// `"commit"` or `"push"`.
-    pub kind: String,
-    /// Target ref (push destination) or `null` for commits.
-    pub r#ref: Option<String>,
+    pub kind: PluginTriggerKind,
     /// Absolute paths of staged files in scope for this check group.
     /// Empty array when running in single-config / push mode.
     pub files: Vec<String>,
@@ -53,14 +78,8 @@ pub struct PluginTrigger {
 
 impl PluginTrigger {
     pub fn from_event(event: GitEvent, staged_files: &[std::path::PathBuf]) -> Self {
-        let kind = match event {
-            GitEvent::Commit => "commit",
-            GitEvent::Push => "push",
-        }
-        .to_string();
         Self {
-            kind,
-            r#ref: None,
+            kind: event.into(),
             files: staged_files
                 .iter()
                 .map(|p| p.to_string_lossy().into_owned())
@@ -165,15 +184,19 @@ impl From<PluginFinding> for Finding {
     }
 }
 
-/// Construct a `Verdict::Warn` for a plugin infrastructure error. Plugins
+/// Construct a `Verdict::Warn` for a plugin infrastructure error. Plugin
 /// errors (non-zero exit, malformed JSON, timeout, unknown version) produce a
-/// `Verdict::Warn` with `rule = "klasp::plugin"`. The gate continues with
+/// `Verdict::Warn` with `rule = KLASP_PLUGIN_RULE`. The gate continues with
 /// the remaining checks — plugin errors never crash klasp.
-pub fn plugin_error_warn(message: impl Into<String>) -> crate::verdict::Verdict {
+///
+/// The plugin name is prepended to the message so renderers and JUnit
+/// formatters can attribute the warning to a specific plugin.
+pub fn plugin_error_warn(plugin_name: &str, reason: impl Into<String>) -> crate::verdict::Verdict {
+    let reason = reason.into();
     crate::verdict::Verdict::Warn {
         findings: vec![Finding {
-            rule: "klasp::plugin".to_string(),
-            message: message.into(),
+            rule: KLASP_PLUGIN_RULE.to_string(),
+            message: format!("plugin `{plugin_name}`: {reason}"),
             file: None,
             line: None,
             severity: Severity::Warn,
