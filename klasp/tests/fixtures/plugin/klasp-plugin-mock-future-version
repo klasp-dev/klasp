@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Mock plugin: --describe reports protocol_version=99 (future, incompatible).
+set -euo pipefail
+
+if [[ "${1:-}" == "--describe" ]]; then
+    printf '{"protocol_version":99,"name":"klasp-plugin-mock-future-version","config_types":["mock-future"],"supports":{"verdict_v0":true}}\n'
+    exit 0
+fi
+
+if [[ "${1:-}" == "--gate" ]]; then
+    cat > /dev/null
+    printf '{"protocol_version":99,"verdict":"pass","findings":[]}\n'
+    exit 0
+fi
+
+echo "unknown subcommand: ${1:-}" >&2
+exit 1

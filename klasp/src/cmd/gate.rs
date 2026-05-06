@@ -250,6 +250,8 @@ fn run_sequential<W: Write>(
                 continue;
             }
         };
+        // `SourceForCheck::run` delegates to the underlying CheckSource impl
+        // (built-in or plugin subprocess) transparently.
         match source.run(check, repo_state) {
             Ok(result) => verdicts.push(result.verdict),
             Err(e) => {
@@ -290,6 +292,8 @@ fn run_parallel(
                     return None;
                 }
             };
+            // `SourceForCheck::run` delegates to the underlying CheckSource impl
+            // (built-in or plugin subprocess) transparently.
             match source.run(check, repo_state) {
                 Ok(result) => Some(result.verdict),
                 Err(e) => {

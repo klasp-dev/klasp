@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Mock plugin: exits non-zero on both --describe and --gate.
+set -euo pipefail
+
+# Drain stdin to avoid broken-pipe noise.
+if [[ "${1:-}" == "--gate" ]]; then
+    cat > /dev/null
+fi
+
+echo "mock-crashing: simulated crash" >&2
+exit 42

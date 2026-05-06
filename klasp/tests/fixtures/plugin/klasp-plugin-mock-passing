@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Mock plugin: --describe reports v0; --gate returns pass verdict.
+set -euo pipefail
+
+if [[ "${1:-}" == "--describe" ]]; then
+    printf '{"protocol_version":0,"name":"klasp-plugin-mock-passing","config_types":["mock-passing"],"supports":{"verdict_v0":true}}\n'
+    exit 0
+fi
+
+if [[ "${1:-}" == "--gate" ]]; then
+    # Drain stdin so the pipe doesn't block.
+    cat > /dev/null
+    printf '{"protocol_version":0,"verdict":"pass","findings":[]}\n'
+    exit 0
+fi
+
+echo "unknown subcommand: ${1:-}" >&2
+exit 1

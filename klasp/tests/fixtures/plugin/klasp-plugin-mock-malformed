@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Mock plugin: --describe reports valid JSON; --gate prints garbage (not JSON).
+set -euo pipefail
+
+if [[ "${1:-}" == "--describe" ]]; then
+    printf '{"protocol_version":0,"name":"klasp-plugin-mock-malformed","config_types":["mock-malformed"],"supports":{"verdict_v0":true}}\n'
+    exit 0
+fi
+
+if [[ "${1:-}" == "--gate" ]]; then
+    cat > /dev/null
+    # Intentionally malformed — not valid JSON.
+    printf 'this is not json at all { broken\n'
+    exit 0
+fi
+
+echo "unknown subcommand: ${1:-}" >&2
+exit 1

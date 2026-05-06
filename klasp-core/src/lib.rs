@@ -10,6 +10,7 @@
 
 pub mod config;
 pub mod error;
+pub mod plugin;
 pub mod protocol;
 pub mod source;
 pub mod surface;
@@ -21,7 +22,13 @@ pub use config::{
     GateConfig, TriggerConfig, CLAUDE_PROJECT_DIR_ENV, CONFIG_VERSION,
 };
 pub use error::{KlaspError, Result};
-pub use protocol::{GateError, GateInput, GateProtocol, ToolInput, GATE_SCHEMA_VERSION};
+pub use plugin::{
+    plugin_error_warn, PluginConfig, PluginDescribe, PluginFinding, PluginGateInput,
+    PluginGateOutput, PluginSupports, PluginTrigger, PluginVerdict,
+};
+pub use protocol::{
+    GateError, GateInput, GateProtocol, ToolInput, GATE_SCHEMA_VERSION, PLUGIN_PROTOCOL_VERSION,
+};
 pub use source::{CheckResult, CheckSource, CheckSourceError, RepoState};
 pub use surface::{AgentSurface, InstallContext, InstallError, InstallReport};
 pub use trigger::{GitEvent, Trigger};

@@ -323,6 +323,18 @@ fn check_paths(config: &ConfigV1, c: &mut Counters) {
             CheckSourceConfig::Fallow { .. } => check_recipe_argv0(c, &check.name, "fallow"),
             CheckSourceConfig::Pytest { .. } => check_recipe_argv0(c, &check.name, "pytest"),
             CheckSourceConfig::Cargo { .. } => check_recipe_argv0(c, &check.name, "cargo"),
+            // Plugin sources: probe for `klasp-plugin-<name>` on PATH.
+            CheckSourceConfig::Plugin { name, .. } => {
+                let binary = format!("klasp-plugin-{name}");
+                match which::which(&binary) {
+                    Ok(_) => c.ok(&format!("path[{}]: `{binary}` found in PATH", check.name)),
+                    Err(_) => c.warn(&format!(
+                        "path[{}]: plugin binary `{binary}` not found in PATH \
+                         (install it to enable this check)",
+                        check.name
+                    )),
+                }
+            }
         }
     }
 }
