@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Mock plugin: sleeps 10s on --gate to trigger timeout tests.
+set -euo pipefail
+
+if [[ "${1:-}" == "--describe" ]]; then
+    printf '{"protocol_version":0,"name":"klasp-plugin-mock-slow","config_types":["mock-slow"],"supports":{"verdict_v0":true}}\n'
+    exit 0
+fi
+
+if [[ "${1:-}" == "--gate" ]]; then
+    cat > /dev/null
+    sleep 10
+    printf '{"protocol_version":0,"verdict":"pass","findings":[]}\n'
+    exit 0
+fi
+
+echo "unknown subcommand: ${1:-}" >&2
+exit 1

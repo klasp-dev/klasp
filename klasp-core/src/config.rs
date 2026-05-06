@@ -77,8 +77,13 @@ pub struct TriggerConfig {
 /// `type = "fallow"` selects the v0.2 W5 `Fallow` named recipe,
 /// `type = "pytest"` selects the v0.2 W6 `Pytest` named recipe,
 /// `type = "cargo"` selects the v0.2 W6 `Cargo` named recipe.
-/// Unknown `type` values fail at parse time — that's the v0.1 contract
-/// for additive forwards-incompatibility, preserved as new recipes land.
+/// `type = "plugin"` selects the v0.3 subprocess plugin model — the plugin
+/// binary is identified by the required `name` field (e.g. `name = "my-linter"`
+/// maps to the `klasp-plugin-my-linter` binary on `$PATH`).
+///
+/// Unknown `type` values (other than the above) fail at parse time — that's
+/// the v0.1 contract for additive forwards-incompatibility, preserved as
+/// new recipes land.
 ///
 /// **Adding new variants is the v0.2 named-recipe extension point** —
 /// each new recipe is a sibling variant here plus a paired `CheckSource`
@@ -94,6 +99,26 @@ pub struct TriggerConfig {
 pub enum CheckSourceConfig {
     Shell {
         command: String,
+    },
+    /// v0.3 subprocess plugin. The plugin binary `klasp-plugin-<name>` is
+    /// discovered lazily on `$PATH` when the gate encounters this config.
+    /// `args` is an optional list of extra arguments passed to the plugin on
+    /// every `--gate` invocation; `settings` is an optional opaque JSON object
+    /// forwarded verbatim inside `PluginGateInput.config.settings` so the
+    /// plugin can consume arbitrary config without klasp knowing its schema.
+    Plugin {
+        /// Name of the plugin binary to invoke. `name = "my-linter"` resolves
+        /// to `klasp-plugin-my-linter` on `$PATH`.
+        name: String,
+        /// Optional extra arguments forwarded to the plugin on every `--gate`
+        /// invocation. Plugins receive these inside `PluginGateInput`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        args: Vec<String>,
+        /// Optional opaque config block forwarded verbatim to the plugin inside
+        /// `PluginGateInput.config.settings`. Plugins may define any schema
+        /// here; klasp treats it as a JSON blob.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        settings: Option<serde_json::Value>,
     },
     PreCommit {
         /// Maps to `pre-commit run --hook-stage <stage>`. `None` defaults

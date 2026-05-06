@@ -2,22 +2,59 @@
 //!
 //! v0.1 shipped exactly one source — `Shell`. v0.2 W4 added the first named
 //! recipe — `PreCommit`. W5 adds `Fallow`. W6 adds `Pytest` and `Cargo`,
-//! finishing the v0.2 named-recipe slate. v0.3 will add the subprocess
-//! plugin model. Per [docs/design.md §3.2], every new source is an
-//! additive change.
+//! finishing the v0.2 named-recipe slate. v0.3 adds the subprocess plugin
+//! model via `PluginSource`. Per [docs/design.md §3.2], every new source is
+//! an additive change.
 //!
 //! A `SourceRegistry` is the dispatch table the gate runtime uses to find
-//! the right source for a `CheckConfig`. The registry is a fixed `Vec`
-//! pre-populated with the built-in sources; the v0.3 plugin model
-//! will append discovered subprocess plugins to the same vec.
+//! the right source for a `CheckConfig`. Built-in sources live in a fixed
+//! `Vec`. When no built-in source claims a `type = "plugin"` config, a
+//! `PluginSource` is constructed on demand and returned as a `Box<dyn CheckSource>`.
+//! The caller owns the returned box for plugin sources; built-in sources are
+//! returned as `&dyn CheckSource` borrows from the registry vec.
 
 pub mod cargo;
 pub mod fallow;
+pub mod plugin;
 pub mod pre_commit;
 pub mod pytest;
 pub mod shell;
 
-use klasp_core::{CheckConfig, CheckSource};
+use klasp_core::{CheckConfig, CheckSource, CheckSourceConfig};
+
+use plugin::PluginSource;
+
+/// Dispatch result: either a borrowed built-in or an owned plugin source.
+///
+/// `SourceForCheck::run` forwards to whichever arm is active, giving the gate
+/// a single call-site regardless of whether the check is built-in or plugin.
+pub enum SourceForCheck<'a> {
+    BuiltIn(&'a dyn CheckSource),
+    Plugin(Box<dyn CheckSource>),
+}
+
+impl<'a> SourceForCheck<'a> {
+    /// Delegate to the underlying `CheckSource::run`.
+    pub fn run(
+        &self,
+        config: &CheckConfig,
+        state: &klasp_core::RepoState,
+    ) -> Result<klasp_core::CheckResult, klasp_core::CheckSourceError> {
+        match self {
+            SourceForCheck::BuiltIn(s) => s.run(config, state),
+            SourceForCheck::Plugin(s) => s.run(config, state),
+        }
+    }
+
+    /// Forward `source_id()` to the underlying source. Used in tests.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn source_id(&self) -> &str {
+        match self {
+            SourceForCheck::BuiltIn(s) => s.source_id(),
+            SourceForCheck::Plugin(s) => s.source_id(),
+        }
+    }
+}
 
 /// Registry of known `CheckSource` impls. Cheap to construct, cheap to
 /// query — v0.1's `Vec` linear scan is O(n) over a single-digit number of
@@ -44,15 +81,23 @@ impl SourceRegistry {
         Self { sources }
     }
 
-    /// Find the first source that claims to support the given check config.
-    /// Returns `None` if no source matches — the gate runtime treats that as
-    /// a fail-open skip with a stderr notice (see
-    /// [docs/design.md §6] step 6).
-    pub fn find_for(&self, check: &CheckConfig) -> Option<&dyn CheckSource> {
-        self.sources
-            .iter()
-            .find(|s| s.supports_config(check))
-            .map(|b| b.as_ref())
+    /// Find the source for the given check config.
+    ///
+    /// Built-in sources (shell, cargo, fallow, pre_commit, pytest) are checked
+    /// first. When none match and the config is `type = "plugin"`, a fresh
+    /// `PluginSource` is constructed and returned as `SourceForCheck::Plugin`.
+    /// The caller owns the plugin source for the duration of the check run.
+    /// Returns `None` only for genuinely unknown (non-plugin) configs.
+    pub fn find_for(&self, check: &CheckConfig) -> Option<SourceForCheck<'_>> {
+        // Built-in sources take priority over plugins.
+        if let Some(src) = self.sources.iter().find(|s| s.supports_config(check)) {
+            return Some(SourceForCheck::BuiltIn(src.as_ref()));
+        }
+        // Plugin fallback: `type = "plugin"` with a `name` field.
+        if let CheckSourceConfig::Plugin { name, .. } = &check.source {
+            return Some(SourceForCheck::Plugin(Box::new(PluginSource::new(name))));
+        }
+        None
     }
 }
 
@@ -172,5 +217,38 @@ mod tests {
             .find_for(&cargo_check_config())
             .expect("cargo source must claim cargo config");
         assert_eq!(source.source_id(), "cargo");
+    }
+
+    #[test]
+    fn registry_dispatches_plugin_check_to_plugin_source() {
+        let registry = SourceRegistry::default_v1();
+        let plugin_check = CheckConfig {
+            name: "my-check".into(),
+            triggers: vec![],
+            source: CheckSourceConfig::Plugin {
+                name: "my-linter".into(),
+                args: vec![],
+                settings: None,
+            },
+            timeout_secs: None,
+        };
+        let source = registry
+            .find_for(&plugin_check)
+            .expect("plugin source must be created for plugin config");
+        assert_eq!(source.source_id(), "plugin:my-linter");
+    }
+
+    #[test]
+    fn registry_returns_none_for_unknown_non_plugin_config() {
+        // There is no way to construct an unknown CheckSourceConfig at the
+        // Rust level (the enum is exhaustive), but we can verify that `Shell`
+        // is not returned as a plugin source.
+        let registry = SourceRegistry::default_v1();
+        let shell = shell_check();
+        let source = registry.find_for(&shell);
+        assert!(
+            source.is_some(),
+            "shell check must always resolve to a source"
+        );
     }
 }

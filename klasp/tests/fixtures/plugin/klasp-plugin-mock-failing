@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Mock plugin: --describe reports v0; --gate returns fail verdict with 2 findings.
+set -euo pipefail
+
+if [[ "${1:-}" == "--describe" ]]; then
+    printf '{"protocol_version":0,"name":"klasp-plugin-mock-failing","config_types":["mock-failing"],"supports":{"verdict_v0":true}}\n'
+    exit 0
+fi
+
+if [[ "${1:-}" == "--gate" ]]; then
+    cat > /dev/null
+    printf '{"protocol_version":0,"verdict":"fail","findings":[{"severity":"error","rule":"mock/E001","file":"src/a.rs","line":10,"message":"first finding"},{"severity":"error","rule":"mock/E002","file":"src/b.rs","line":20,"message":"second finding"}]}\n'
+    exit 0
+fi
+
+echo "unknown subcommand: ${1:-}" >&2
+exit 1

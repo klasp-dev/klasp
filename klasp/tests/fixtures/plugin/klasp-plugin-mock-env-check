@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Mock plugin: --gate asserts KLASP_BASE_REF is set, then returns pass.
+set -euo pipefail
+
+if [[ "${1:-}" == "--describe" ]]; then
+    printf '{"protocol_version":0,"name":"klasp-plugin-mock-env-check","config_types":["mock-env-check"],"supports":{"verdict_v0":true}}\n'
+    exit 0
+fi
+
+if [[ "${1:-}" == "--gate" ]]; then
+    cat > /dev/null
+    if [[ -z "${KLASP_BASE_REF:-}" ]]; then
+        printf '{"protocol_version":0,"verdict":"fail","findings":[{"severity":"error","rule":"mock/missing-env","message":"KLASP_BASE_REF is not set"}]}\n'
+        exit 0
+    fi
+    printf '{"protocol_version":0,"verdict":"pass","findings":[]}\n'
+    exit 0
+fi
+
+echo "unknown subcommand: ${1:-}" >&2
+exit 1

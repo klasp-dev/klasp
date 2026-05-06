@@ -20,6 +20,14 @@ use serde::Deserialize;
 /// fail-open with a notice; `klasp install` regenerates the shim.
 pub const GATE_SCHEMA_VERSION: u32 = 2;
 
+/// Plugin subprocess protocol version. Separate from [`GATE_SCHEMA_VERSION`] so
+/// plugin upgrades and gate upgrades evolve independently.
+///
+/// `0` is the explicit experimental tier — this protocol **may break in any
+/// v0.3.x release**. It graduates to `1` only at v1.0 after real plugin authors
+/// have stressed it. See `docs/plugin-protocol.md` for the full spec.
+pub const PLUGIN_PROTOCOL_VERSION: u32 = 0;
+
 /// The Claude Code `PreToolUse` payload klasp consumes from stdin.
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct GateInput {
