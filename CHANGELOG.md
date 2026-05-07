@@ -12,6 +12,17 @@ follow the migration notes attached to each minor release.
 
 Nothing pending.
 
+## [0.3.1]
+
+### Fixed
+
+- **`klasp gate` accepts `--agent`/`--trigger` flags ([#91])** — installed Codex
+  git-hooks and Aider `commit-cmd-pre` both pass these flags; clap previously
+  rejected them with exit 2, blocking every commit regardless of verdict. Both
+  flags are now accepted-and-ignored (informational hints). Gate dispatch is
+  unchanged: agent identity is resolved from `KLASP_AGENT_ID` env, trigger from
+  the tool-input payload's `hook_event_name`.
+
 ## [0.3.0]
 
 One `klasp.toml`, three surfaces, identical gate contract. Aider joins Claude Code

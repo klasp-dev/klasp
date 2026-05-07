@@ -57,6 +57,14 @@ enum Outcome {
 }
 
 fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
+    // `--agent` and `--trigger` are accepted-and-ignored informational hints.
+    // Installed hooks (Codex git-hooks, Aider commit-cmd-pre) pass these flags
+    // so their invocations aren't rejected by clap. The gate already resolves
+    // the effective agent from `KLASP_AGENT_ID` (env) and the trigger from the
+    // tool-input payload's `hook_event_name`; both flags are therefore redundant
+    // and intentionally not wired into dispatch. See issue #91 and docs/design.md §6.
+    let _ = (args.agent.as_deref(), args.trigger.as_deref());
+
     // 1. Schema handshake — env var, not stdin (see design §3.3).
     match GateProtocol::read_schema_from_env() {
         Ok(env_value) => {
