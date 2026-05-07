@@ -28,8 +28,8 @@ use std::process::ExitCode;
 use rayon::prelude::*;
 
 use klasp_core::{
-    discover_config_for_path, CheckConfig, ConfigV1, GateProtocol, GitEvent, RepoState, Trigger,
-    Verdict, VerdictPolicy,
+    discover_config_for_path, CheckConfig, CheckResult, ConfigV1, GateProtocol, GitEvent,
+    RepoState, Trigger, UserTrigger, Verdict, VerdictPolicy,
 };
 
 use crate::cli::{GateArgs, OutputFormat};
@@ -100,17 +100,20 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
         }
     };
 
-    // 4. Trigger classification. If `tool_input.command` is absent, the
-    // tool call isn't a Bash invocation we care about → pass through. Same
-    // for commands the trigger regex doesn't classify as commit/push.
+    // 4. Trigger classification. Built-in commit/push regex runs first; if it
+    // doesn't match, user-defined [[trigger]] blocks are consulted after the
+    // config is loaded. Commands absent or unmatched by any trigger → pass through.
     let command = match input.tool_input.command.as_deref() {
         Some(c) => c,
         None => return Outcome::Pass,
     };
-    let event = match Trigger::classify(command) {
-        Some(e) => e,
-        None => return Outcome::Pass,
-    };
+
+    // Agent identity for user-trigger agent-filter matching. Read from env
+    // so the hook script can export KLASP_AGENT_ID=claude_code without
+    // requiring a schema bump. Falls back to empty string → no agent filtering.
+    let agent_id = std::env::var("KLASP_AGENT_ID").unwrap_or_default();
+
+    let builtin_event = Trigger::classify(command);
 
     // 5. Resolve repo root. Fail-open — no repo root means no gate.
     let repo_root = match git::find_repo_root_from_cwd() {
@@ -133,6 +136,9 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
     // behaviour exactly.
     let staged = git::staged_files(&repo_root);
 
+    // Accumulated per-check results across all groups (used by JSON formatter).
+    let mut all_check_results: Vec<CheckResult> = Vec::new();
+
     let group_verdicts: Vec<Verdict> = if staged.is_empty() {
         // Single-config fallback: no staged files (push event, empty index, or
         // outside git). Use the root config's own policy for this single group.
@@ -143,14 +149,23 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
                 return Outcome::Pass;
             }
         };
+        // Resolve effective git event: built-in OR user trigger.
+        let compiled_triggers = config.compiled_triggers();
+        let event = match resolve_event(builtin_event, command, &compiled_triggers, &agent_id) {
+            Some(e) => e,
+            None => return Outcome::Pass,
+        };
         let repo_state = RepoState {
             root: repo_root.clone(),
             git_event: event,
             base_ref,
             staged_files: vec![],
         };
-        let check_verdicts = run_config_checks(stderr, &config, &repo_state, &registry, event);
-        vec![Verdict::merge(check_verdicts, config.gate.policy)]
+        let check_results = run_config_checks(stderr, &config, &repo_state, &registry, event);
+        let verdicts: Vec<Verdict> = check_results.iter().map(|r| r.verdict.clone()).collect();
+        let group_verdict = Verdict::merge(verdicts, config.gate.policy);
+        all_check_results.extend(check_results);
+        vec![group_verdict]
     } else {
         // Monorepo path: group files → run each group under its own policy →
         // collect one verdict per group.
@@ -173,6 +188,8 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
                         return None;
                     }
                 };
+                let compiled_triggers = config.compiled_triggers();
+                let event = resolve_event(builtin_event, command, &compiled_triggers, &agent_id)?;
                 let group_policy = config.gate.policy;
                 let repo_state = RepoState {
                     root: repo_root.clone(),
@@ -181,9 +198,13 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
                     // Scope this invocation to the files belonging to this group.
                     staged_files: files,
                 };
-                let check_verdicts =
+                let check_results =
                     run_config_checks(stderr, &config, &repo_state, &registry, event);
-                Some(Verdict::merge(check_verdicts, group_policy))
+                let verdicts: Vec<Verdict> =
+                    check_results.iter().map(|r| r.verdict.clone()).collect();
+                let group_verdict = Verdict::merge(verdicts, group_policy);
+                all_check_results.extend(check_results);
+                Some(group_verdict)
             })
             .collect()
     };
@@ -192,7 +213,13 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
     // regardless of the individual group policies already applied above.
     let cross_group_policy = VerdictPolicy::AnyFail;
     let final_verdict = Verdict::merge(group_verdicts, cross_group_policy);
-    dispatch_output(stderr, args, &final_verdict, cross_group_policy);
+    dispatch_output(
+        stderr,
+        args,
+        &final_verdict,
+        cross_group_policy,
+        &all_check_results,
+    );
 
     if final_verdict.is_blocking() {
         Outcome::Block
@@ -201,7 +228,34 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
     }
 }
 
-/// Run all trigger-matching checks in `config` and return their verdicts.
+/// Resolve the effective [`GitEvent`] for a command.
+///
+/// Built-in commit/push regex is tried first. If it matches, return that event.
+/// Otherwise, check user-defined `[[trigger]]` blocks. If any user trigger
+/// matches, return `GitEvent::Commit` as a sentinel (user triggers fire the
+/// gate without caring about commit-vs-push semantics — checks filter on
+/// `triggers = [{ on = ["commit"] }]` themselves). Returns `None` if no
+/// trigger matches (pass-through).
+fn resolve_event(
+    builtin: Option<GitEvent>,
+    command: &str,
+    user_triggers: &[UserTrigger],
+    agent_id: &str,
+) -> Option<GitEvent> {
+    if let Some(event) = builtin {
+        return Some(event);
+    }
+    // User triggers fire with Commit semantics by default so existing
+    // `triggers = [{ on = ["commit"] }]` checks participate.
+    let matched = user_triggers.iter().any(|t| t.matches(command, agent_id));
+    if matched {
+        Some(GitEvent::Commit)
+    } else {
+        None
+    }
+}
+
+/// Run all trigger-matching checks in `config` and return their results.
 ///
 /// When `config.gate.parallel == true`, checks execute concurrently via
 /// rayon's work-stealing thread pool. Per-check stderr notices use
@@ -216,7 +270,7 @@ fn run_config_checks<W: Write>(
     repo_state: &RepoState,
     registry: &SourceRegistry,
     event: GitEvent,
-) -> Vec<Verdict> {
+) -> Vec<CheckResult> {
     let triggered: Vec<&CheckConfig> = config
         .checks
         .iter()
@@ -236,8 +290,8 @@ fn run_sequential<W: Write>(
     triggered: &[&CheckConfig],
     repo_state: &RepoState,
     registry: &SourceRegistry,
-) -> Vec<Verdict> {
-    let mut verdicts = Vec::new();
+) -> Vec<CheckResult> {
+    let mut results = Vec::new();
     for check in triggered {
         let source = match registry.find_for(check) {
             Some(s) => s,
@@ -253,7 +307,7 @@ fn run_sequential<W: Write>(
         // `SourceForCheck::run` delegates to the underlying CheckSource impl
         // (built-in or plugin subprocess) transparently.
         match source.run(check, repo_state) {
-            Ok(result) => verdicts.push(result.verdict),
+            Ok(result) => results.push(result),
             Err(e) => {
                 let _ = writeln!(
                     stderr,
@@ -263,7 +317,7 @@ fn run_sequential<W: Write>(
             }
         }
     }
-    verdicts
+    results
 }
 
 /// Execute checks in parallel via rayon's work-stealing pool.
@@ -277,7 +331,7 @@ fn run_parallel(
     triggered: &[&CheckConfig],
     repo_state: &RepoState,
     registry: &SourceRegistry,
-) -> Vec<Verdict> {
+) -> Vec<CheckResult> {
     triggered
         .par_iter()
         .filter_map(|check| {
@@ -295,7 +349,7 @@ fn run_parallel(
             // `SourceForCheck::run` delegates to the underlying CheckSource impl
             // (built-in or plugin subprocess) transparently.
             match source.run(check, repo_state) {
-                Ok(result) => Some(result.verdict),
+                Ok(result) => Some(result),
                 Err(e) => {
                     let _ = writeln!(
                         io::stderr(),
@@ -377,13 +431,14 @@ fn triggers_match(check: &CheckConfig, event: GitEvent) -> bool {
 ///
 /// - `Terminal` → write the human-readable text to `stderr` (existing v0.1
 ///   behaviour preserved for all users who don't pass `--format`).
-/// - `Junit` / `Sarif` → write the machine-readable output to `--output` path
-///   when provided, otherwise to stdout.
+/// - `Junit` / `Sarif` / `Json` → write the machine-readable output to
+///   `--output` path when provided, otherwise to stdout.
 fn dispatch_output<W: Write>(
     stderr: &mut W,
     args: &GateArgs,
     verdict: &Verdict,
     policy: VerdictPolicy,
+    check_results: &[CheckResult],
 ) {
     match args.format {
         OutputFormat::Terminal => {
@@ -396,6 +451,10 @@ fn dispatch_output<W: Write>(
         }
         OutputFormat::Sarif => {
             let json = output::sarif::render(verdict, policy);
+            write_machine_output(&json, args);
+        }
+        OutputFormat::Json => {
+            let json = output::json::render(verdict, policy, check_results);
             write_machine_output(&json, args);
         }
     }

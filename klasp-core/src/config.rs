@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{KlaspError, Result};
+use crate::trigger_config::{validate_user_triggers, UserTrigger, UserTriggerConfig};
 use crate::verdict::VerdictPolicy;
 
 /// Config schema version. Bumps only when the TOML syntax breaks; new
@@ -33,6 +34,12 @@ pub struct ConfigV1 {
 
     #[serde(default)]
     pub checks: Vec<CheckConfig>,
+
+    /// User-defined `[[trigger]]` blocks. These extend (not replace) the
+    /// built-in commit/push regex. Validated eagerly on parse via
+    /// [`UserTriggerConfig`] → [`UserTrigger`] compilation.
+    #[serde(default, rename = "trigger")]
+    pub triggers: Vec<UserTriggerConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -300,8 +307,8 @@ impl ConfigV1 {
         Self::parse(&bytes)
     }
 
-    /// Parse from raw TOML. Validates the `version` field as part of the
-    /// parse step so caller code never sees a malformed `ConfigV1`.
+    /// Parse from raw TOML. Validates the `version` field and eagerly compiles
+    /// all `[[trigger]]` regexes so caller code never sees a malformed `ConfigV1`.
     pub fn parse(s: &str) -> Result<Self> {
         let config: ConfigV1 = toml::from_str(s)?;
         if config.version != CONFIG_VERSION {
@@ -310,7 +317,17 @@ impl ConfigV1 {
                 supported: CONFIG_VERSION,
             });
         }
+        // Eagerly validate all user triggers — bad regexes are config errors.
+        validate_user_triggers(&config.triggers)?;
         Ok(config)
+    }
+
+    /// Compile and return user triggers as validated [`UserTrigger`] objects.
+    ///
+    /// This is infallible post-parse because [`Self::parse`] already validated
+    /// them. Callers that hold a parsed `ConfigV1` may call this freely.
+    pub fn compiled_triggers(&self) -> Vec<UserTrigger> {
+        validate_user_triggers(&self.triggers).expect("triggers already validated at parse time")
     }
 }
 

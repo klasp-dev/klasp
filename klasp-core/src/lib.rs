@@ -16,6 +16,7 @@ pub mod protocol;
 pub mod source;
 pub mod surface;
 pub mod trigger;
+pub mod trigger_config;
 pub mod verdict;
 
 pub use config::{
@@ -33,9 +34,11 @@ pub use plugin_disable::{
     validate_plugin_name, KLASP_DISABLED_PLUGINS_FILE_ENV,
 };
 pub use protocol::{
-    GateError, GateInput, GateProtocol, ToolInput, GATE_SCHEMA_VERSION, PLUGIN_PROTOCOL_VERSION,
+    GateError, GateInput, GateProtocol, ToolInput, GATE_SCHEMA_VERSION, KLASP_OUTPUT_SCHEMA,
+    PLUGIN_PROTOCOL_VERSION,
 };
 pub use source::{CheckResult, CheckSource, CheckSourceError, RepoState};
 pub use surface::{AgentSurface, InstallContext, InstallError, InstallReport};
 pub use trigger::{GitEvent, Trigger};
+pub use trigger_config::{validate_user_triggers, UserTrigger, UserTriggerConfig};
 pub use verdict::{Finding, Severity, Verdict, VerdictPolicy};

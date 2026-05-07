@@ -1,4 +1,4 @@
-# klasp recipes (v0.1, v0.2)
+# klasp recipes (v0.1, v0.2, v0.3)
 
 Worked `klasp.toml` snippets for the most common check tools. Every snippet is
 copy-pasteable into the `[[checks]]` section of your config; for the surrounding
@@ -13,6 +13,34 @@ project's own dogfood config at [`/klasp.toml`](../klasp.toml).
 > [roadmap.md §v0.2](./roadmap.md#v02--codex--named-recipes-target-3-months-from-v01).
 
 ## Patterns
+
+### Custom `[[trigger]]` blocks (v0.3+)
+
+Built-in klasp triggers fire when the agent runs `git commit` or `git push`.
+v0.3 adds user-configurable `[[trigger]]` blocks so you can extend this to
+custom workflows (`jj git push`, `gh pr create`, custom aliases):
+
+```toml
+# Fire on any `jj git push` variant, but only for the claude_code agent.
+[[trigger]]
+name = "jj-push"
+pattern = "^jj git push"
+agents = ["claude_code"]
+
+# Fire on the exact command "gh pr create" for any agent.
+[[trigger]]
+name = "gh-pr"
+commands = ["gh pr create"]
+```
+
+Rules:
+
+- `pattern` — Rust regex tested against the full tool-input command string.
+- `commands` — exact strings; matched in full (no substring).
+- `agents` — restrict firing to listed agents; empty = all agents.
+- At least one of `pattern` or `commands` is required per block.
+- User triggers **extend** the built-in commit/push triggers; they do not
+  replace them.
 
 ### Commit vs push triggers
 

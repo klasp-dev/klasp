@@ -1,0 +1,14 @@
+version = 1
+
+[gate]
+agents = ["claude_code", "codex"]
+
+[[trigger]]
+name = "gh-pr-create"
+commands = ["gh pr create"]
+
+[[checks]]
+name = "format"
+[checks.source]
+type = "shell"
+command = "true"

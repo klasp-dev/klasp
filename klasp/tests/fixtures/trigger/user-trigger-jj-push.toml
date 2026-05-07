@@ -1,0 +1,16 @@
+version = 1
+
+[gate]
+agents = ["claude_code"]
+
+[[trigger]]
+name = "jj-push"
+pattern = "^jj git push"
+agents = ["claude_code"]
+commands = ["jj git push", "jj git push -m main"]
+
+[[checks]]
+name = "lint"
+[checks.source]
+type = "shell"
+command = "true"

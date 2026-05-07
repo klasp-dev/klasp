@@ -1,0 +1,12 @@
+{
+  "output_schema_version": 1,
+  "gate_schema_version": 2,
+  "verdict": "pass",
+  "checks": [],
+  "stats": {
+    "total_checks": 0,
+    "pass": 0,
+    "warn": 0,
+    "fail": 0
+  }
+}
