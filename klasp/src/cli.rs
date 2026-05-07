@@ -98,6 +98,20 @@ pub struct GateArgs {
     /// stderr for `terminal`.
     #[arg(long)]
     pub output: Option<PathBuf>,
+
+    /// Informational: the agent surface that invoked the gate. Klasp resolves
+    /// the effective agent from `KLASP_AGENT_ID` and the tool-input payload;
+    /// this flag is accepted-and-ignored so installed hooks (Codex git-hooks,
+    /// Aider commit-cmd-pre) can pass it without clap rejecting them.
+    /// Future versions may use this as a hint for trigger classification.
+    #[arg(long)]
+    pub agent: Option<String>,
+
+    /// Informational: the trigger kind (`commit` or `push`). Same accept-and-
+    /// ignore semantics as `--agent`. Klasp resolves the trigger from the
+    /// tool-input payload's `hook_event_name`.
+    #[arg(long)]
+    pub trigger: Option<String>,
 }
 
 #[derive(Debug, Args)]

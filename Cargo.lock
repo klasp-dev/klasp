@@ -289,7 +289,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "klasp"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "klasp-agents-aider"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "klasp-core",
  "serde_yaml_ng",
@@ -316,7 +316,7 @@ dependencies = [
 
 [[package]]
 name = "klasp-agents-claude"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "insta",
  "klasp-core",
@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "klasp-agents-codex"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "klasp-core",
  "tempfile",
@@ -336,7 +336,7 @@ dependencies = [
 
 [[package]]
 name = "klasp-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "regex",
  "serde",

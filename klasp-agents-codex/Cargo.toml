@@ -14,7 +14,7 @@ keywords = ["ai", "agents", "codex", "klasp"]
 categories = ["development-tools", "command-line-utilities"]
 
 [dependencies]
-klasp-core = { path = "../klasp-core", version = "0.3.0" }
+klasp-core = { path = "../klasp-core", version = "0.3.1" }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 
