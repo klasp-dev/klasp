@@ -286,7 +286,7 @@ jobs:
   # cannot produce a single binary doesn't pollute crates.io with a release
   # the other channels skipped.
   #
-  # Order: klasp-core -> klasp-agents-claude -> klasp-agents-codex -> klasp.
+  # Order: klasp-core -> klasp-agents-claude -> klasp-agents-codex -> klasp-agents-aider -> klasp.
   # Each upstream crate must be live on crates.io before the downstream
   # `cargo publish` accepts its dependency.
   #
@@ -409,6 +409,42 @@ jobs:
         run: |
           set -euo pipefail
           crate="klasp-agents-codex"
+          url="https://crates.io/api/v1/crates/${crate}/${VERSION}"
+          echo "Polling ${url} ..."
+          for i in $(seq 1 36); do
+            status=$(curl -sf -o /dev/null -w "%{http_code}" \
+              -H "User-Agent: klasp-release-workflow" "$url" || echo "000")
+            if [ "$status" = "200" ]; then
+              echo "${crate} ${VERSION} is live on crates.io (attempt ${i})."
+              exit 0
+            fi
+            echo "  attempt ${i}/36: got HTTP ${status}; retrying in 5s ..."
+            sleep 5
+          done
+          echo "ERROR: ${crate} ${VERSION} did not appear on crates.io within 180s." >&2
+          exit 1
+
+      - name: publish klasp-agents-aider
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          crate="klasp-agents-aider"
+          if [ "$(curl -sf -o /dev/null -w '%{http_code}' \
+              -H 'User-Agent: klasp-release-workflow' \
+              "https://crates.io/api/v1/crates/${crate}/${VERSION}" || echo 000)" = "200" ]; then
+            echo "${crate} ${VERSION} already on crates.io; skipping publish."
+            exit 0
+          fi
+          cargo publish -p "${crate}" --no-verify --allow-dirty
+
+      - name: wait for klasp-agents-aider to land
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          crate="klasp-agents-aider"
           url="https://crates.io/api/v1/crates/${crate}/${VERSION}"
           echo "Polling ${url} ..."
           for i in $(seq 1 36); do
