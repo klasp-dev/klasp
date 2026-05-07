@@ -1,7 +1,7 @@
 {
   "name": "@klasp-dev/klasp",
   "version": "0.0.0",
-  "description": "Block AI coding agents (Claude Code, Cursor, Codex, Aider) on the same quality gates your humans hit at git commit.",
+  "description": "Block AI coding agents (Claude Code, Codex, Aider) on the same quality gates your humans hit at git commit.",
   "homepage": "https://klasp.dev",
   "repository": {
     "type": "git",

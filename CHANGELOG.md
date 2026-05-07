@@ -27,6 +27,37 @@ assessment in W5/#44).
   chained (klasp first, user value second). The `aider` surface is now registered
   in the CLI surface registry alongside `claude_code` and `codex`.
   `klasp install --agent all` installs all three in one step.
+- **Plugin protocol v0 ([#41])** — subprocess + JSON over stdin/stdout.
+  `PLUGIN_PROTOCOL_VERSION = 0` is the explicit experimental tier; protocol may
+  break in any v0.3.x release. Spec at `docs/plugin-protocol.md`. Failure modes
+  (binary missing, malformed JSON, version mismatch, timeout) all degrade to
+  `Verdict::Warn` with `rule = "klasp::plugin"`. 16 MiB output cap, 60 s default
+  timeout (override via `KLASP_PLUGIN_TIMEOUT_SECS`).
+- **`klasp plugins` subcommand ([#42])** — `list` scans `$PATH` for
+  `klasp-plugin-*` binaries with status (enabled / disabled / proto-mismatch);
+  `info <name>` pretty-prints the plugin's `--describe`; `disable <name>` writes
+  to a per-user disable list at `$KLASP_DISABLED_PLUGINS_FILE` (default
+  `~/.config/klasp/disabled-plugins.toml`). The gate runtime skips disabled
+  plugins quietly (`Verdict::Pass` without spawning).
+- **Reference plugin: `klasp-plugin-pre-commit` ([#43])** — standalone Rust
+  crate at `examples/klasp-plugin-pre-commit/` (excluded from the workspace).
+  Wraps the `pre-commit` framework. Demonstrates that third-party plugin
+  authors can ship without depending on `klasp-core`. Fork the directory into
+  your own repo to start a new plugin.
+- **Cursor go/no-go assessment ([#44])** — published at
+  `docs/cursor-assessment.md`. Verdict: NO-GO. Cursor's hook surface remains
+  beta through 3.3 with open silent-allow correctness bugs in
+  `beforeShellExecution`. CursorSurface deferred to v0.3.x or v1.0 pending
+  hook stability + bug fix.
+- **Configurable `[[trigger]]` blocks ([#45])** — extend the built-in
+  commit/push regex with user-defined patterns. Supports `pattern` (regex),
+  `commands` (literal allowlist), and `agents` (filter). User triggers add
+  matches the built-in misses; they cannot restrict built-in coverage. See
+  `docs/recipes.md` for examples.
+- **`klasp gate --format json` with `KLASP_OUTPUT_SCHEMA = 1` ([#45])** —
+  stable JSON output for downstream tooling. Spec at `docs/output-schema.md`;
+  committed to backward-compat from v0.3 forward (additions only, no
+  removals or renames).
 - **Aider captured-session integration test ([#46])** — `klasp/tests/aider_captured_session.rs`
   verifies that a failing commit via Aider is blocked by klasp with a structured
   verdict identical in shape to Claude Code and Codex (same `klasp-gate: blocked`
@@ -254,7 +285,12 @@ See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan.
 [#36]: https://github.com/klasp-dev/klasp/pull/36
 [#37]: https://github.com/klasp-dev/klasp/pull/37
 [#38]: https://github.com/klasp-dev/klasp/pull/38
-[#40]: https://github.com/klasp-dev/klasp/pull/40
+[#40]: https://github.com/klasp-dev/klasp/issues/40
+[#41]: https://github.com/klasp-dev/klasp/issues/41
+[#42]: https://github.com/klasp-dev/klasp/issues/42
+[#43]: https://github.com/klasp-dev/klasp/issues/43
+[#44]: https://github.com/klasp-dev/klasp/issues/44
+[#45]: https://github.com/klasp-dev/klasp/issues/45
 [#46]: https://github.com/klasp-dev/klasp/issues/46
 [#68]: https://github.com/klasp-dev/klasp/issues/68
 [#69]: https://github.com/klasp-dev/klasp/issues/69

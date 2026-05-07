@@ -42,9 +42,9 @@ pub struct InitArgs {
 
 #[derive(Debug, Args)]
 pub struct InstallArgs {
-    /// Restrict installation to one agent (`claude_code`, `codex`) or pass
-    /// `all` to install every surface listed in `klasp.toml`'s `[gate].agents`.
-    /// Omit to install all auto-detected surfaces.
+    /// Restrict installation to one agent (`claude_code`, `codex`, `aider`) or
+    /// pass `all` to install every surface listed in `klasp.toml`'s
+    /// `[gate].agents`. Omit to install all auto-detected surfaces.
     #[arg(long)]
     pub agent: Option<String>,
     /// Print what would be written without touching the filesystem.
@@ -61,7 +61,7 @@ pub struct InstallArgs {
 
 #[derive(Debug, Args)]
 pub struct UninstallArgs {
-    /// Restrict removal to one agent (`claude_code`, `codex`) or pass
+    /// Restrict removal to one agent (`claude_code`, `codex`, `aider`) or pass
     /// `all` to uninstall every surface listed in `klasp.toml`'s
     /// `[gate].agents`. Omit to walk every registered surface.
     #[arg(long)]

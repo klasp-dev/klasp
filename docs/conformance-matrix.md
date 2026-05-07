@@ -19,7 +19,7 @@ See [issue #68](https://github.com/klasp-dev/klasp/issues/68) for the tracking d
 |---|---|---|---|---|---|---|---|---|---|
 | Claude Code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (husky / lefthook / pre-commit framework) | ✓ | — |
 | Codex CLI | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| Aider | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | v0.3 W1 (#40, #46) |
+| Aider | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | ✓ | v0.3 W1 (#40, #46). Aider has no push-time hook (`.aider.conf.yml` exposes `commit-cmd-pre` only) and no conflicting hook-manager surface — both columns are intentional `—`, not regressions. |
 | Cursor | — | — | — | — | — | — | — | — | Not supported in v0.3 (see [cursor-assessment.md](./cursor-assessment.md)); hook surface is beta with open correctness bugs |
 | Windsurf | — | — | — | — | — | — | — | — | Not surveyed |
 | Cline | — | — | — | — | — | — | — | — | Not surveyed |

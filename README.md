@@ -131,7 +131,7 @@ klasp init                                 # writes klasp.toml at repo root
 $EDITOR klasp.toml                         # add your checks (see below)
 
 # For Claude Code
-klasp install --agent claude               # writes .claude/hooks/klasp-gate.sh + merges .claude/settings.json
+klasp install --agent claude_code          # writes .claude/hooks/klasp-gate.sh + merges .claude/settings.json
 
 # For Codex
 klasp install --agent codex               # writes .codex/git-hooks/<gate>.sh
