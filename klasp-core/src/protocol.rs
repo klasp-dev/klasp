@@ -28,6 +28,17 @@ pub const GATE_SCHEMA_VERSION: u32 = 2;
 /// have stressed it. See `docs/plugin-protocol.md` for the full spec.
 pub const PLUGIN_PROTOCOL_VERSION: u32 = 0;
 
+/// `klasp gate --format json` output schema version.
+///
+/// Stable from v0.3 forward — within a v0.3.x release series additions are
+/// allowed but removals and renames are not. See `docs/output-schema.md` for
+/// the full spec and stability commitment.
+///
+/// This constant is separate from `GATE_SCHEMA_VERSION` (the stdin wire
+/// protocol) — `KLASP_OUTPUT_SCHEMA` governs the machine-readable JSON that
+/// `klasp gate --format json` writes to stdout or `--output`.
+pub const KLASP_OUTPUT_SCHEMA: u32 = 1;
+
 /// The Claude Code `PreToolUse` payload klasp consumes from stdin.
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct GateInput {

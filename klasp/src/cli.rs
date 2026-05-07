@@ -84,6 +84,8 @@ pub enum OutputFormat {
     Junit,
     /// SARIF 2.1.0 JSON written to stdout or `--output`.
     Sarif,
+    /// Stable JSON output (KLASP_OUTPUT_SCHEMA = 1) written to stdout or `--output`.
+    Json,
 }
 
 #[derive(Debug, Args)]

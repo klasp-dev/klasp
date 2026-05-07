@@ -1,0 +1,27 @@
+{
+  "output_schema_version": 1,
+  "gate_schema_version": __GATE_SCHEMA_VERSION__,
+  "verdict": "fail",
+  "checks": [
+    {
+      "name": "rustfmt",
+      "source": "shell",
+      "verdict": "fail",
+      "findings": [
+        {
+          "severity": "error",
+          "rule": "fmt",
+          "file": "src/lib.rs",
+          "line": 10,
+          "message": "not formatted"
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "total_checks": 1,
+    "pass": 0,
+    "warn": 0,
+    "fail": 1
+  }
+}

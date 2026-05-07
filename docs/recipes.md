@@ -1,4 +1,4 @@
-# klasp recipes (v0.1, v0.2)
+# klasp recipes (v0.1, v0.2, v0.3)
 
 Worked `klasp.toml` snippets for the most common check tools. Every snippet is
 copy-pasteable into the `[[checks]]` section of your config; for the surrounding
@@ -13,6 +13,40 @@ project's own dogfood config at [`/klasp.toml`](../klasp.toml).
 > [roadmap.md §v0.2](./roadmap.md#v02--codex--named-recipes-target-3-months-from-v01).
 
 ## Patterns
+
+### Custom `[[trigger]]` blocks (v0.3+)
+
+Built-in klasp triggers fire when the agent runs `git commit` or `git push`.
+v0.3 adds user-configurable `[[trigger]]` blocks so you can extend this to
+custom workflows the built-in regex doesn't catch:
+
+```toml
+# Fire on the exact command "gh pr create" for any agent.
+[[trigger]]
+name = "gh-pr"
+commands = ["gh pr create"]
+
+# Fire on any `make deploy` variant.
+[[trigger]]
+name = "make-deploy"
+pattern = "^make\\s+deploy"
+```
+
+Rules:
+
+- `pattern` — Rust regex tested against the full tool-input command string.
+- `commands` — exact strings; matched in full (no substring).
+- `agents` — restrict firing to listed agents; empty = all agents.
+- At least one of `pattern` or `commands` is required per block.
+- When both `pattern` and `commands` are set, a command fires if it matches
+  *either* (the two are OR'd, not AND'd).
+- User triggers **extend** the built-in commit/push triggers; they do not
+  replace them. The built-in classifier wins for any command containing
+  `git commit` or `git push` (including wrapped invocations like
+  `jj git push`). User triggers therefore cannot use the `agents` filter
+  to *restrict* built-in matches — only to *add* matches the built-in misses.
+  If you need agent-specific commit/push gating, use `[gate].agents` at the
+  config level instead.
 
 ### Commit vs push triggers
 

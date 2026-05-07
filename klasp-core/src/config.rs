@@ -7,10 +7,12 @@
 //! parse time.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{KlaspError, Result};
+use crate::trigger_config::{validate_user_triggers, UserTrigger, UserTriggerConfig};
 use crate::verdict::VerdictPolicy;
 
 /// Config schema version. Bumps only when the TOML syntax breaks; new
@@ -33,6 +35,19 @@ pub struct ConfigV1 {
 
     #[serde(default)]
     pub checks: Vec<CheckConfig>,
+
+    /// User-defined `[[trigger]]` blocks. These extend (not replace) the
+    /// built-in commit/push regex. Validated eagerly on parse via
+    /// [`UserTriggerConfig`] → [`UserTrigger`] compilation.
+    #[serde(default, rename = "trigger")]
+    pub triggers: Vec<UserTriggerConfig>,
+
+    /// Compiled-once cache of `triggers`. Populated by [`Self::parse`] so the
+    /// regex work happens once per config load (not once per gate run).
+    /// `OnceLock` is `Clone` (when `T: Clone`); a fresh clone of `ConfigV1`
+    /// retains the cached compiled vector.
+    #[serde(skip)]
+    compiled: OnceLock<Vec<UserTrigger>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -300,8 +315,8 @@ impl ConfigV1 {
         Self::parse(&bytes)
     }
 
-    /// Parse from raw TOML. Validates the `version` field as part of the
-    /// parse step so caller code never sees a malformed `ConfigV1`.
+    /// Parse from raw TOML. Validates the `version` field and eagerly compiles
+    /// all `[[trigger]]` regexes so caller code never sees a malformed `ConfigV1`.
     pub fn parse(s: &str) -> Result<Self> {
         let config: ConfigV1 = toml::from_str(s)?;
         if config.version != CONFIG_VERSION {
@@ -310,7 +325,22 @@ impl ConfigV1 {
                 supported: CONFIG_VERSION,
             });
         }
+        // Eagerly validate AND cache. Throwing the compiled result away here
+        // and re-compiling on every `compiled_triggers()` call would multiply
+        // regex work by N groups in monorepo dispatch.
+        let compiled = validate_user_triggers(&config.triggers)?;
+        let _ = config.compiled.set(compiled);
         Ok(config)
+    }
+
+    /// Return the compiled user triggers. Populated by [`Self::parse`]; calling
+    /// this on a `ConfigV1` constructed by other means falls back to a fresh
+    /// compile (still infallible post-parse, but avoid the path).
+    pub fn compiled_triggers(&self) -> &[UserTrigger] {
+        self.compiled.get_or_init(|| {
+            validate_user_triggers(&self.triggers)
+                .expect("triggers already validated at parse time")
+        })
     }
 }
 

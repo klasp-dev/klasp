@@ -1,0 +1,33 @@
+{
+  "output_schema_version": 1,
+  "gate_schema_version": __GATE_SCHEMA_VERSION__,
+  "verdict": "warn",
+  "checks": [
+    {
+      "name": "lint",
+      "source": "shell",
+      "verdict": "pass",
+      "findings": []
+    },
+    {
+      "name": "security",
+      "source": "shell",
+      "verdict": "warn",
+      "findings": [
+        {
+          "severity": "warn",
+          "rule": "dep-outdated",
+          "file": null,
+          "line": null,
+          "message": "dependency is outdated"
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "total_checks": 2,
+    "pass": 1,
+    "warn": 1,
+    "fail": 0
+  }
+}
