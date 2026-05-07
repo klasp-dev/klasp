@@ -60,10 +60,7 @@ fn init_toml_parses_via_config_v1() {
     let config = ConfigV1::from_file(&dir.path().join("klasp.toml")).expect("parse failed");
     assert_eq!(config.version, 1);
     // v0.3 ships three surfaces; `klasp install --agent all` walks this list.
-    assert_eq!(
-        config.gate.agents,
-        vec!["claude_code", "codex", "aider"]
-    );
+    assert_eq!(config.gate.agents, vec!["claude_code", "codex", "aider"]);
     assert!(
         config.checks.is_empty(),
         "template ships with no active checks (only commented examples)"
