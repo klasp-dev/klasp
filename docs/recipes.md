@@ -18,19 +18,18 @@ project's own dogfood config at [`/klasp.toml`](../klasp.toml).
 
 Built-in klasp triggers fire when the agent runs `git commit` or `git push`.
 v0.3 adds user-configurable `[[trigger]]` blocks so you can extend this to
-custom workflows (`jj git push`, `gh pr create`, custom aliases):
+custom workflows the built-in regex doesn't catch:
 
 ```toml
-# Fire on any `jj git push` variant, but only for the claude_code agent.
-[[trigger]]
-name = "jj-push"
-pattern = "^jj git push"
-agents = ["claude_code"]
-
 # Fire on the exact command "gh pr create" for any agent.
 [[trigger]]
 name = "gh-pr"
 commands = ["gh pr create"]
+
+# Fire on any `make deploy` variant.
+[[trigger]]
+name = "make-deploy"
+pattern = "^make\\s+deploy"
 ```
 
 Rules:
@@ -42,7 +41,12 @@ Rules:
 - When both `pattern` and `commands` are set, a command fires if it matches
   *either* (the two are OR'd, not AND'd).
 - User triggers **extend** the built-in commit/push triggers; they do not
-  replace them.
+  replace them. The built-in classifier wins for any command containing
+  `git commit` or `git push` (including wrapped invocations like
+  `jj git push`). User triggers therefore cannot use the `agents` filter
+  to *restrict* built-in matches — only to *add* matches the built-in misses.
+  If you need agent-specific commit/push gating, use `[gate].agents` at the
+  config level instead.
 
 ### Commit vs push triggers
 
