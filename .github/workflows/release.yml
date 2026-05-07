@@ -150,10 +150,17 @@ jobs:
         shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.prepare-version.outputs.version }}
         run: |
           set -euo pipefail
           for pkg in darwin-arm64 linux-x64-gnu linux-arm64-gnu win32-x64; do
-            echo "::group::npm publish @klasp-dev/klasp-$pkg"
+            full="@klasp-dev/klasp-$pkg"
+            if [ "$(curl -sf -o /dev/null -w '%{http_code}' \
+                "https://registry.npmjs.org/${full}/${VERSION}" || echo 000)" = "200" ]; then
+              echo "${full}@${VERSION} already on npm; skipping publish."
+              continue
+            fi
+            echo "::group::npm publish $full"
             (cd "npm/$pkg" && npm publish --access public --provenance)
             echo "::endgroup::"
           done
@@ -162,9 +169,15 @@ jobs:
         shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.prepare-version.outputs.version }}
         run: |
           # Published last so the optionalDependencies above are resolvable
           # the moment a user runs `npm install @klasp-dev/klasp`.
+          if [ "$(curl -sf -o /dev/null -w '%{http_code}' \
+              "https://registry.npmjs.org/@klasp-dev/klasp/${VERSION}" || echo 000)" = "200" ]; then
+            echo "@klasp-dev/klasp@${VERSION} already on npm; skipping publish."
+            exit 0
+          fi
           (cd npm/klasp && npm publish --access public --provenance)
 
   # ---------------------------------------------------------------------------
