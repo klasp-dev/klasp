@@ -27,7 +27,7 @@ For a `CursorSurface` implementation to be viable, at least one of the following
 
 Cursor reads hooks from `.cursor/hooks.json` at the project level and `~/.cursor/hooks.json` globally. This is documented at https://cursor.com/docs/hooks (accessed 2026-05-07) and confirmed in multiple third-party sources (GitButler deep-dive, Skywork guide).
 
-**Verdict on criterion 1: FAILS.** The config file path exists and is documented. However, the hooks system is explicitly marked `"(beta)"` in Cursor's own 1.7 changelog ("It's still in beta and we'd love to hear your feedback"). No subsequent changelog entry — through version 3.3, the current release as of 2026-05-07 — has promoted hooks to stable or GA. The schema of `hooks.json`, the names of lifecycle events, and the JSON input/output contract are all subject to change without a documented backward-compatibility commitment. The 3.0 changelog (2026-04-02) contains a hooks bug-fix entry with no stability language. The 2.0 changelog adds enterprise hook distribution with no stability language. Absence of a documented stability promotion across seven major months of releases is itself a disqualifying signal.
+**Verdict on criterion 1: FAILS.** The config file path exists and is documented. The hooks system is marked `"(beta)"` in Cursor's own 1.7 changelog ("It's still in beta and we'd love to hear your feedback"). No subsequent changelog entry — through version 3.3, the current release as of 2026-05-07 — has promoted hooks to stable or GA. The schema of `hooks.json`, the names of lifecycle events, and the JSON input/output contract are all subject to change without a documented backward-compatibility commitment. The 3.0 changelog (2026-04-02) contains a hooks bug-fix entry with no stability language. The 2.0 changelog adds enterprise hook distribution with no stability language. Seven months of releases without a stability promotion is itself disqualifying.
 
 ### Criterion 2 — Documented stable git-hook integration
 
@@ -43,7 +43,7 @@ Community forum threads (e.g., the Documenso issue "feat: Add block-no-verify to
 
 **Evidence:**
 
-The `beforeShellExecution` and `preToolUse` hooks are the closest analogue to Claude Code's `PreToolUse` hook. A hook command registered in `.cursor/hooks.json` under `beforeShellExecution` receives the shell command being executed and can return `"permission": "deny"` to block it — precisely the mechanism klasp needs.
+The `beforeShellExecution` and `preToolUse` hooks are the closest analogue to Claude Code's `PreToolUse` hook. A hook command registered in `.cursor/hooks.json` under `beforeShellExecution` receives the shell command being executed and can return `"permission": "deny"` to block it — the mechanism klasp would target.
 
 Technically, this surface works: `CursorSurface::install` would write a `.cursor/hooks.json` entry for `beforeShellExecution` that runs `klasp gate`. However, the surface has active unresolved defects with security implications:
 
@@ -75,7 +75,7 @@ All four criteria fail. The closest candidate — `beforeShellExecution` in `.cu
 
 A `CursorSurface` built on this surface today would: (a) break on any Cursor version that changes the `hooks.json` schema; (b) silently fail to block commits when hook output is malformed (due to the open bug); (c) silently fail on Windows due to path-formatting bugs. That is a worse outcome than no support — it would give users a false sense of protection.
 
-The NO-GO criterion in the risk register is precisely this scenario: Cursor's hook surface is still moving, the APIs may change, and shipping against an unstable beta surface would be worse than deferral.
+The NO-GO criterion in the risk register is exactly this case: Cursor's hook surface is still moving, the APIs may change, and shipping against an unstable beta surface would be worse than deferral.
 
 **Decision: NO-GO. Ship v0.3 without `CursorSurface`. Defer to v0.3.x or v1.0.**
 
