@@ -94,19 +94,25 @@ fn severity_to_str(s: Severity) -> &'static str {
 }
 
 fn build_stats(results: &[CheckResult]) -> Value {
-    let total = results.len();
+    // Cast to u32: docs/output-schema.md commits to `integer` width and no
+    // klasp run will ever have >4 billion checks. Saturating cast guards
+    // against the impossible 64-bit overflow on serialisation.
+    let total = results.len().min(u32::MAX as usize) as u32;
     let pass = results
         .iter()
         .filter(|r| matches!(r.verdict, Verdict::Pass))
-        .count();
+        .count()
+        .min(u32::MAX as usize) as u32;
     let warn = results
         .iter()
         .filter(|r| matches!(r.verdict, Verdict::Warn { .. }))
-        .count();
+        .count()
+        .min(u32::MAX as usize) as u32;
     let fail = results
         .iter()
         .filter(|r| matches!(r.verdict, Verdict::Fail { .. }))
-        .count();
+        .count()
+        .min(u32::MAX as usize) as u32;
 
     // Field order matches docs/output-schema.md — keep stable.
     let mut obj = Map::new();

@@ -50,7 +50,9 @@ pub struct UserTriggerConfig {
 /// A compiled, validated user trigger ready for matching.
 ///
 /// Constructed from [`UserTriggerConfig`] via [`UserTrigger::validate`].
-#[derive(Debug)]
+/// `Regex` is `Clone` (cheap, internally `Arc`), so cloning a `UserTrigger`
+/// is cheap; the regex's compiled state is shared rather than re-compiled.
+#[derive(Debug, Clone)]
 pub struct UserTrigger {
     pub name: String,
     pub pattern: Option<Regex>,

@@ -39,6 +39,8 @@ Rules:
 - `commands` — exact strings; matched in full (no substring).
 - `agents` — restrict firing to listed agents; empty = all agents.
 - At least one of `pattern` or `commands` is required per block.
+- When both `pattern` and `commands` are set, a command fires if it matches
+  *either* (the two are OR'd, not AND'd).
 - User triggers **extend** the built-in commit/push triggers; they do not
   replace them.
 

@@ -4,7 +4,10 @@
 //! `tests/fixtures/output_json/`. A unified diff is printed on mismatch.
 
 use klasp::output::json;
-use klasp_core::{CheckResult, Finding, Severity, Verdict, VerdictPolicy, KLASP_OUTPUT_SCHEMA};
+use klasp_core::{
+    CheckResult, Finding, Severity, Verdict, VerdictPolicy, GATE_SCHEMA_VERSION,
+    KLASP_OUTPUT_SCHEMA,
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -18,7 +21,13 @@ fn make_check_result(name: &str, source: &str, verdict: Verdict) -> CheckResult 
     }
 }
 
-/// Load a golden fixture and return its contents (LF-normalised).
+/// Load a golden fixture and return its contents.
+///
+/// Goldens contain the placeholder `__GATE_SCHEMA_VERSION__` so the
+/// `--format json` output schema (v1) is decoupled from `GATE_SCHEMA_VERSION`
+/// bumps. The placeholder is substituted with the current `GATE_SCHEMA_VERSION`
+/// before comparison so a future bump (e.g. 2 → 3) doesn't require re-baking
+/// every golden file.
 fn load_golden(name: &str) -> String {
     let path = format!(
         "{}/tests/fixtures/output_json/{name}",
@@ -27,6 +36,7 @@ fn load_golden(name: &str) -> String {
     std::fs::read_to_string(&path)
         .unwrap_or_else(|_| panic!("golden fixture missing: {path}"))
         .replace("\r\n", "\n")
+        .replace("__GATE_SCHEMA_VERSION__", &GATE_SCHEMA_VERSION.to_string())
 }
 
 /// Assert `actual` matches the golden fixture, printing a diff on mismatch.

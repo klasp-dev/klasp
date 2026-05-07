@@ -7,6 +7,7 @@
 //! parse time.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +41,13 @@ pub struct ConfigV1 {
     /// [`UserTriggerConfig`] → [`UserTrigger`] compilation.
     #[serde(default, rename = "trigger")]
     pub triggers: Vec<UserTriggerConfig>,
+
+    /// Compiled-once cache of `triggers`. Populated by [`Self::parse`] so the
+    /// regex work happens once per config load (not once per gate run).
+    /// `OnceLock` is `Clone` (when `T: Clone`); a fresh clone of `ConfigV1`
+    /// retains the cached compiled vector.
+    #[serde(skip)]
+    compiled: OnceLock<Vec<UserTrigger>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -317,17 +325,22 @@ impl ConfigV1 {
                 supported: CONFIG_VERSION,
             });
         }
-        // Eagerly validate all user triggers — bad regexes are config errors.
-        validate_user_triggers(&config.triggers)?;
+        // Eagerly validate AND cache. Throwing the compiled result away here
+        // and re-compiling on every `compiled_triggers()` call would multiply
+        // regex work by N groups in monorepo dispatch.
+        let compiled = validate_user_triggers(&config.triggers)?;
+        let _ = config.compiled.set(compiled);
         Ok(config)
     }
 
-    /// Compile and return user triggers as validated [`UserTrigger`] objects.
-    ///
-    /// This is infallible post-parse because [`Self::parse`] already validated
-    /// them. Callers that hold a parsed `ConfigV1` may call this freely.
-    pub fn compiled_triggers(&self) -> Vec<UserTrigger> {
-        validate_user_triggers(&self.triggers).expect("triggers already validated at parse time")
+    /// Return the compiled user triggers. Populated by [`Self::parse`]; calling
+    /// this on a `ConfigV1` constructed by other means falls back to a fresh
+    /// compile (still infallible post-parse, but avoid the path).
+    pub fn compiled_triggers(&self) -> &[UserTrigger] {
+        self.compiled.get_or_init(|| {
+            validate_user_triggers(&self.triggers)
+                .expect("triggers already validated at parse time")
+        })
     }
 }
 

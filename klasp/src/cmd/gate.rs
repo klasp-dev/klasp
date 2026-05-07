@@ -151,7 +151,7 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
         };
         // Resolve effective git event: built-in OR user trigger.
         let compiled_triggers = config.compiled_triggers();
-        let event = match resolve_event(builtin_event, command, &compiled_triggers, &agent_id) {
+        let event = match resolve_event(builtin_event, command, compiled_triggers, &agent_id) {
             Some(e) => e,
             None => return Outcome::Pass,
         };
@@ -189,7 +189,7 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
                     }
                 };
                 let compiled_triggers = config.compiled_triggers();
-                let event = resolve_event(builtin_event, command, &compiled_triggers, &agent_id)?;
+                let event = resolve_event(builtin_event, command, compiled_triggers, &agent_id)?;
                 let group_policy = config.gate.policy;
                 let repo_state = RepoState {
                     root: repo_root.clone(),
