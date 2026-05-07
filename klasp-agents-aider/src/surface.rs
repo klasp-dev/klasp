@@ -54,10 +54,23 @@ impl AgentSurface for AiderSurface {
         repo_root.join(Self::CONF_FILENAME)
     }
 
-    /// The literal command string written into `commit-cmd-pre`. Aider has no
-    /// separate hook-script file; the command is the hook.
+    /// The canonical `.aider.conf.yml` content for a fresh install (empty doc,
+    /// only the `commit-cmd-pre` key set). Used by `klasp doctor` to verify
+    /// that the installed file's logical state matches the expected state via
+    /// byte-equality of the YAML the surface would write.
+    ///
+    /// When the user had an existing `.aider.conf.yml` before installing klasp,
+    /// the on-disk file will differ from this minimal form (it carries the user's
+    /// other keys). In that case, doctor's byte-equality check will differ — that
+    /// is expected and `check_hook` produces a `FAIL hook[aider]` line. A
+    /// future per-surface health-check trait method will replace this heuristic.
     fn render_hook_script(&self, _ctx: &InstallContext) -> String {
-        aider_conf::KLASP_CMD.to_string()
+        let mut doc = aider_conf::parse("").unwrap_or_default();
+        if aider_conf::install_into_doc(&mut doc).unwrap_or(false) {
+            aider_conf::serialize(&doc).unwrap_or_else(|_| aider_conf::KLASP_CMD.to_string())
+        } else {
+            aider_conf::KLASP_CMD.to_string()
+        }
     }
 
     fn install(&self, ctx: &InstallContext) -> Result<InstallReport, InstallError> {

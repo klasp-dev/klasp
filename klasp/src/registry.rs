@@ -5,11 +5,13 @@
 //! will register additional surfaces here at startup. See [docs/design.md §5].
 //!
 //! v0.2 W3 adds [`klasp_agents_codex::CodexSurface`] alongside Claude Code.
+//! v0.3 W1 adds [`klasp_agents_aider::AiderSurface`] as the third built-in surface.
 //! The order here is the order callers iterate (and the order
-//! `klasp install --agent all` walks): Claude first, Codex second. That
-//! matches the canonical `[gate].agents = ["claude_code", "codex"]` shape
-//! `klasp init` ships.
+//! `klasp install --agent all` walks): Claude first, Codex second, Aider third.
+//! That matches the canonical `[gate].agents = ["claude_code", "codex", "aider"]`
+//! shape `klasp init` ships for projects using all three agents.
 
+use klasp_agents_aider::AiderSurface;
 use klasp_agents_claude::ClaudeCodeSurface;
 use klasp_agents_codex::CodexSurface;
 use klasp_core::AgentSurface;
@@ -21,7 +23,11 @@ pub struct SurfaceRegistry {
 impl Default for SurfaceRegistry {
     fn default() -> Self {
         Self {
-            surfaces: vec![Box::new(ClaudeCodeSurface), Box::new(CodexSurface)],
+            surfaces: vec![
+                Box::new(ClaudeCodeSurface),
+                Box::new(CodexSurface),
+                Box::new(AiderSurface),
+            ],
         }
     }
 }

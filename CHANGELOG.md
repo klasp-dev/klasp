@@ -12,6 +12,60 @@ follow the migration notes attached to each minor release.
 
 Nothing pending.
 
+## [0.3.0]
+
+One `klasp.toml`, three surfaces, identical gate contract. Aider joins Claude Code
+and Codex as a fully-supported agent surface. Plugin protocol v0 ships for
+third-party extensibility. Cursor is documented as not supported in v0.3 (NO-GO
+assessment in W5/#44).
+
+### Added
+
+- **Aider agent surface ([#40], [#46])** — `klasp install --agent aider` edits
+  `.aider.conf.yml`'s `commit-cmd-pre` key to invoke the klasp gate before every
+  Aider commit. Uninstall removes only the klasp entry; existing commands are
+  chained (klasp first, user value second). The `aider` surface is now registered
+  in the CLI surface registry alongside `claude_code` and `codex`.
+  `klasp install --agent all` installs all three in one step.
+- **Aider captured-session integration test ([#46])** — `klasp/tests/aider_captured_session.rs`
+  verifies that a failing commit via Aider is blocked by klasp with a structured
+  verdict identical in shape to Claude Code and Codex (same `klasp-gate: blocked`
+  prefix, same `errors` count, same `policy=` tag, same findings array).
+  Covers: failing commit blocked, passing commit allowed, verdict shape parity,
+  install/uninstall round-trip, `doctor` reports surface as installed.
+- **Plugin protocol v0 smoke tests ([#46])** — `klasp/tests/plugin_smoke.rs`
+  exercises the full end-to-end path: plugin binary on PATH, `type = "plugin"`
+  check in `klasp.toml`, `klasp gate` dispatches correctly, pass/fail routing
+  works. Validates the `klasp-plugin-pre-commit` reference plugin's `--describe`
+  output reports `protocol_version = 0`.
+- **`docs/conformance-matrix.md` ([#46], [#68])** — public contract table listing
+  per-surface support across install / uninstall / doctor / commit-gate /
+  push-gate / structured-verdict / conflict / captured-session. Claude Code,
+  Codex, and Aider are all-green `✓`. Cursor documents the NO-GO verdict with a
+  pointer to `docs/cursor-assessment.md`.
+- **`docs/plugins.md` ([#46])** — plugin authoring guide stub. Covers:
+  `PLUGIN_PROTOCOL_VERSION = 0`, `--describe` / `--gate` wire format, naming
+  convention (`klasp-plugin-<name>`), `klasp.toml` configuration, and the
+  "fork this directory" mantra. Links to `docs/plugin-protocol.md` for the
+  full spec and `examples/klasp-plugin-pre-commit/` for the canonical example.
+
+### Changed
+
+- `SurfaceRegistry` now includes `AiderSurface` alongside `ClaudeCodeSurface`
+  and `CodexSurface`. `klasp install --agent aider`, `klasp uninstall --agent aider`,
+  and `klasp doctor` all dispatch to the aider surface correctly.
+- README "What works today" table updated: Aider row added with v0.3 status.
+  Install section documents `klasp install --agent aider`. Conformance matrix
+  linked from the README.
+- Version bumped: workspace `Cargo.toml` → `0.3.0`, `pypi/pyproject.toml` →
+  `0.3.0`. All path-dependency version specifiers updated across workspace members.
+
+### Deferred
+
+- Cursor surface — NO-GO. See `docs/cursor-assessment.md`.
+- Killer demo third agent recording (Aider) — video/recording task; tracked as
+  a follow-up to [#69].
+
 ## [0.2.5]
 
 The performance + CI-output release. Schema bumped to 2 — re-run `klasp install` after upgrade.
@@ -189,7 +243,8 @@ The MVP. Claude Code only. Shell-command checks. One-command install. See
 
 See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan.
 
-[Unreleased]: https://github.com/klasp-dev/klasp/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/klasp-dev/klasp/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/klasp-dev/klasp/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/klasp-dev/klasp/compare/v0.2.3...v0.2.5
 [0.2.3]: https://github.com/klasp-dev/klasp/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/klasp-dev/klasp/compare/v0.1.0...v0.2.2
@@ -199,3 +254,7 @@ See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan.
 [#36]: https://github.com/klasp-dev/klasp/pull/36
 [#37]: https://github.com/klasp-dev/klasp/pull/37
 [#38]: https://github.com/klasp-dev/klasp/pull/38
+[#40]: https://github.com/klasp-dev/klasp/pull/40
+[#46]: https://github.com/klasp-dev/klasp/issues/46
+[#68]: https://github.com/klasp-dev/klasp/issues/68
+[#69]: https://github.com/klasp-dev/klasp/issues/69
