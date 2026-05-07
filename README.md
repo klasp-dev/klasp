@@ -4,7 +4,7 @@
 
 [**klasp.dev**](https://klasp.dev) · [crates.io](https://crates.io/crates/klasp) · [npm](https://www.npmjs.com/package/@klasp-dev/klasp) · [PyPI](https://pypi.org/project/klasp/) · [GitHub](https://github.com/klasp-dev/klasp)
 
-> Block AI coding agents (Claude Code today; Codex, Cursor, Aider next) on the same quality gates your humans hit at `git commit`.
+> Block AI coding agents (Claude Code, Codex, and Aider) on the same quality gates your humans hit at `git commit`.
 
 ## What klasp does
 
@@ -131,13 +131,16 @@ klasp init                                 # writes klasp.toml at repo root
 $EDITOR klasp.toml                         # add your checks (see below)
 
 # For Claude Code
-klasp install --agent claude               # writes .claude/hooks/klasp-gate.sh + merges .claude/settings.json
+klasp install --agent claude_code          # writes .claude/hooks/klasp-gate.sh + merges .claude/settings.json
 
 # For Codex
 klasp install --agent codex               # writes .codex/git-hooks/<gate>.sh
 
-# Or both at once
-klasp install --agent all                 # installs Claude Code + Codex in one step
+# For Aider
+klasp install --agent aider               # edits .aider.conf.yml commit-cmd-pre
+
+# Or all three at once
+klasp install --agent all                 # installs Claude Code + Codex + Aider in one step
 
 klasp doctor                               # verify the install is healthy
 ```
@@ -146,6 +149,7 @@ klasp doctor                               # verify the install is healthy
 
 ```bash
 klasp uninstall --agent claude_code        # removes the hook + settings entry, preserves siblings
+klasp uninstall --agent aider              # removes commit-cmd-pre entry from .aider.conf.yml
 ```
 
 ### Migration from v0.2.x
@@ -169,19 +173,18 @@ klasp install --agent all                  # regenerates the shim(s) with KLASP_
 | Named recipe: `type = "pre_commit"` | Shipped in v0.2 W4 |
 | Named recipe: `type = "fallow"` | Shipped in v0.2 W5 |
 | Named recipes: `type = "pytest"` / `"cargo"` | Shipped in v0.2 W6 |
-| Per-surface contract (`install_with_warnings` + `doctor_check`) | [v0.2.5][m1] (#55) |
-| Gate noop when cwd is outside the project root | [v0.2.5][m1] (#65) |
-| Monorepo config discovery (nearest `klasp.toml` wins) | [v0.2.5][m1] (#38) |
-| [Public agent-surface conformance matrix](https://github.com/klasp-dev/klasp/issues/68) | [v0.2.5][m1] |
-| [Demo repo: same failing commit, three agents, three identical fix paths](https://github.com/klasp-dev/klasp/issues/69) | [v0.2.5][m1] |
-| Aider as the third agent surface alongside Claude + Codex | v0.3 (#46) |
-| Plugin protocol for third-party `klasp-plugin-*` binaries (experimental) | v0.3 → v1.0 stable |
-| Cursor surface (go/no-go decision in v0.3) | v0.3 (#44) |
-| Parallel check execution | v0.3+ (see roadmap) |
+| Per-surface contract (`install_with_warnings` + `doctor_check`) | v0.2.5 (#55) |
+| Gate noop when cwd is outside the project root | v0.2.5 (#65) |
+| Monorepo config discovery (nearest `klasp.toml` wins) | v0.2.5 (#38) |
+| Aider as the third agent surface alongside Claude + Codex | **v0.3** (#46) — `klasp install --agent aider` |
+| Plugin protocol for third-party `klasp-plugin-*` binaries (experimental) | **v0.3** (#41, #43) — see [`docs/plugins.md`](./docs/plugins.md) |
+| [Agent surface conformance matrix](./docs/conformance-matrix.md) | **v0.3** (#46, #68) — Claude, Codex, Aider all-green; Cursor documented NO-GO |
+| Cursor surface | NO-GO for v0.3 (#44) — see [`docs/cursor-assessment.md`](./docs/cursor-assessment.md) |
+| Parallel check execution | v0.2.5+ (#34) |
 
-[m1]: https://github.com/klasp-dev/klasp/milestone/1 "v0.2.5 — surface reliability + repo correctness"
-
-v0.2.5 lands the per-surface contract, fixes the cross-repo gate bug, and publishes a conformance matrix so "klasp supports agent X" means the same thing for every X. See [`docs/roadmap.md`](./docs/roadmap.md) for the full milestone plan.
+v0.3 ships the third agent surface (Aider), the plugin extensibility protocol, and a
+[public conformance matrix](./docs/conformance-matrix.md) so "klasp supports agent X"
+means the same thing for every X. See [`docs/roadmap.md`](./docs/roadmap.md) for the full milestone plan.
 
 ## Example `klasp.toml`
 
@@ -258,6 +261,9 @@ See [`docs/recipes.md`](./docs/recipes.md#verdict-policies) for selection guidan
 
 - [`docs/design.md`](./docs/design.md) — v0.1 architecture, abstractions, and rationale
 - [`docs/recipes.md`](./docs/recipes.md) — worked `klasp.toml` examples for pre-commit, fallow, pytest, cargo, ESLint/Biome, ruff; verdict policy guidance
+- [`docs/plugins.md`](./docs/plugins.md) — plugin authoring guide; fork `examples/klasp-plugin-pre-commit/`
+- [`docs/plugin-protocol.md`](./docs/plugin-protocol.md) — plugin wire-format specification
+- [`docs/conformance-matrix.md`](./docs/conformance-matrix.md) — per-surface support matrix (Claude, Codex, Aider all-green; Cursor NO-GO)
 - [`docs/roadmap.md`](./docs/roadmap.md) — milestones from v0.1 → v1.0
 - [`CHANGELOG.md`](./CHANGELOG.md) — release notes
 
@@ -267,11 +273,14 @@ See [`docs/recipes.md`](./docs/recipes.md#verdict-policies) for selection guidan
 |---|---|
 | `klasp-core/` | Library crate — public traits, types, gate protocol |
 | `klasp-agents-claude/` | `AgentSurface` impl for Claude Code |
+| `klasp-agents-codex/` | `AgentSurface` impl for Codex CLI |
+| `klasp-agents-aider/` | `AgentSurface` impl for Aider (v0.3) |
 | `klasp/` | Binary crate — the CLI |
+| `examples/klasp-plugin-pre-commit/` | Reference plugin — fork this to build your own |
 | `npm/` | Biome-style npm distribution shim |
 | `pypi/` | maturin-based PyPI distribution wrapper |
-| `docs/` | Architecture docs, recipes, roadmap |
-| `klasp.toml` | klasp's own dogfood config (the canonical v0.1 example) |
+| `docs/` | Architecture docs, recipes, roadmap, conformance matrix, plugin guide |
+| `klasp.toml` | klasp's own dogfood config (the canonical example) |
 
 ## License
 

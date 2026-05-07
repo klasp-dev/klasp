@@ -1,0 +1,6 @@
+{"type":"message","role":"user","content":"Stage all changes and commit them with message 'wip: add feature'"}
+{"type":"tool_call","id":"tc_001","name":"shell","input":{"command":"git add -A"}}
+{"type":"tool_result","tool_call_id":"tc_001","output":"","exit_code":0}
+{"type":"tool_call","id":"tc_002","name":"shell","input":{"command":"git commit -m 'wip: add feature'"}}
+{"type":"tool_result","tool_call_id":"tc_002","output":"klasp-gate: blocked (1 errors, 1 findings total, policy=AnyFail):\nThe staged changes failed the lint check.\n  - [error][always-fail] shell check exited with code 7\n","exit_code":1}
+{"type":"message","role":"assistant","content":"The commit was blocked by the klasp gate. The lint check failed — I'll fix the issues before retrying."}

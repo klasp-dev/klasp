@@ -17,7 +17,7 @@ keywords = ["ai", "agents", "claude-code", "klasp"]
 categories = ["development-tools", "command-line-utilities"]
 
 [dependencies]
-klasp-core = { path = "../klasp-core", version = "0.2.5" }
+klasp-core = { path = "../klasp-core", version = "0.3.0" }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
