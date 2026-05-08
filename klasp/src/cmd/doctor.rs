@@ -330,16 +330,14 @@ fn check_paths(config: &ConfigV1, c: &mut Counters) {
             },
             // Adopted `type = "pre_commit"` checks from `klasp init --adopt --mode mirror`
             // surface a detailed WARN with install guidance so users know exactly what to fix.
-            CheckSourceConfig::PreCommit { .. } => {
-                match which::which("pre-commit") {
-                    Ok(_) => c.ok(&format!("path[{}]: `pre-commit` found in PATH", check.name)),
-                    Err(_) => c.warn(&format!(
-                        "path[{}]: `pre-commit` not on PATH; check `{}` will fail to run \
+            CheckSourceConfig::PreCommit { .. } => match which::which("pre-commit") {
+                Ok(_) => c.ok(&format!("path[{}]: `pre-commit` found in PATH", check.name)),
+                Err(_) => c.warn(&format!(
+                    "path[{}]: `pre-commit` not on PATH; check `{}` will fail to run \
                          — install with `pip install pre-commit` or via your package manager",
-                        check.name, check.name
-                    )),
-                }
-            }
+                    check.name, check.name
+                )),
+            },
             CheckSourceConfig::Fallow { .. } => check_recipe_argv0(c, &check.name, "fallow"),
             CheckSourceConfig::Pytest { .. } => check_recipe_argv0(c, &check.name, "pytest"),
             CheckSourceConfig::Cargo { .. } => check_recipe_argv0(c, &check.name, "cargo"),

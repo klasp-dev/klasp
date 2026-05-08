@@ -128,7 +128,9 @@ fn parse_lefthook(body: &str) -> ParseResult {
         if indent == 0 {
             if let Some(stage) = hook_stage(trimmed) {
                 has_recognised_stanza = true;
-                state = State::InHook { trigger: hook_to_trigger(stage) };
+                state = State::InHook {
+                    trigger: hook_to_trigger(stage),
+                };
                 continue;
             }
             if KNOWN_META_KEYS
@@ -267,13 +269,21 @@ mod tests {
         let gate = &result[0];
         assert_eq!(gate.proposed_checks.len(), 2);
 
-        let lint = gate.proposed_checks.iter().find(|c| c.name == "lint").unwrap();
+        let lint = gate
+            .proposed_checks
+            .iter()
+            .find(|c| c.name == "lint")
+            .unwrap();
         assert_eq!(lint.triggers, vec![TriggerKind::Commit]);
         assert!(
             matches!(&lint.source, ProposedCheckSource::Shell { command } if command == "pnpm lint")
         );
 
-        let test = gate.proposed_checks.iter().find(|c| c.name == "test").unwrap();
+        let test = gate
+            .proposed_checks
+            .iter()
+            .find(|c| c.name == "test")
+            .unwrap();
         assert_eq!(test.triggers, vec![TriggerKind::Commit]);
         assert!(
             matches!(&test.source, ProposedCheckSource::Shell { command } if command == "pnpm test")

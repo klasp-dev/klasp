@@ -68,15 +68,14 @@ pub fn run(args: &InitArgs) -> ExitCode {
 
 /// Adoption dispatch: detect gates, then inspect / mirror / chain.
 fn run_adopt(args: &InitArgs) -> ExitCode {
-    let repo_root = match crate::cmd::install::resolve_repo_root(None)
-        .context("resolving repo root")
-    {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("klasp init: {e:#}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let repo_root =
+        match crate::cmd::install::resolve_repo_root(None).context("resolving repo root") {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("klasp init: {e:#}");
+                return ExitCode::FAILURE;
+            }
+        };
 
     let plan = match crate::adopt::detect::detect_all(&repo_root) {
         Ok(p) => p,

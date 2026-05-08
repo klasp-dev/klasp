@@ -23,8 +23,10 @@ use std::path::Path;
 use crate::adopt::plan::{self, HookStage};
 
 /// Hooks this detector examines, in order.
-const PLAIN_HOOKS: &[(HookStage, &str)] =
-    &[(HookStage::PreCommit, "pre-commit"), (HookStage::PrePush, "pre-push")];
+const PLAIN_HOOKS: &[(HookStage, &str)] = &[
+    (HookStage::PreCommit, "pre-commit"),
+    (HookStage::PrePush, "pre-push"),
+];
 
 /// Generator-line patterns that identify a hook as being managed by another
 /// hook manager. These are the actual strings the tools write into generated
@@ -259,18 +261,8 @@ mod tests {
     #[test]
     fn both_pre_commit_and_pre_push_user_owned_yield_two_findings() {
         let dir = TempDir::new().unwrap();
-        write_hook(
-            dir.path(),
-            "pre-commit",
-            "#!/bin/sh\npnpm lint\n",
-            true,
-        );
-        write_hook(
-            dir.path(),
-            "pre-push",
-            "#!/bin/sh\npnpm test\n",
-            true,
-        );
+        write_hook(dir.path(), "pre-commit", "#!/bin/sh\npnpm lint\n", true);
+        write_hook(dir.path(), "pre-push", "#!/bin/sh\npnpm test\n", true);
         let result = detect(dir.path()).unwrap();
         assert_eq!(result.len(), 2);
         let hooks: Vec<_> = result

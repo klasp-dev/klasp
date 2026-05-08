@@ -3,9 +3,7 @@
 //!
 //! See klasp-dev/klasp#97.
 
-use crate::adopt::plan::{
-    AdoptionPlan, ChainSupport, DetectedGate, GateType, ProposedCheckSource,
-};
+use crate::adopt::plan::{AdoptionPlan, ChainSupport, DetectedGate, GateType, ProposedCheckSource};
 
 /// Render `plan` to a human-readable string.
 ///
@@ -68,9 +66,7 @@ fn summarise_checks(gate: &DetectedGate) -> String {
         return "mirror: (no checks proposed; inspect only)".to_string();
     };
     match &first.source {
-        ProposedCheckSource::PreCommit { .. } => {
-            "mirror: type = \"pre_commit\"".to_string()
-        }
+        ProposedCheckSource::PreCommit { .. } => "mirror: type = \"pre_commit\"".to_string(),
         ProposedCheckSource::Shell { command } => {
             format!("mirror: command = \"{command}\"")
         }

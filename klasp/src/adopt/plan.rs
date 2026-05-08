@@ -101,7 +101,9 @@ pub enum GateType {
     /// `.lintstagedrc*` file).
     LintStaged,
     /// Catch-all for tool-specific config hints (e.g. `pyproject.toml` with
-    /// ruff config, `Makefile` with a `lint` target).
+    /// ruff config, `Makefile` with a `lint` target). Reserved for future
+    /// stack-detection work; no detector emits this variant in v1.
+    #[allow(dead_code)]
     Tooling(String),
 }
 

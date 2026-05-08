@@ -22,11 +22,7 @@ use crate::adopt::plan::{AdoptionPlan, ProposedCheckSource};
 /// - `AlreadyExists` — `klasp.toml` already exists and `force` is `false`.
 /// - `InvalidData`  — the generated TOML fails `ConfigV1::parse` (generator bug).
 /// - Other `io::Error` variants propagated from filesystem operations.
-pub fn write_klasp_toml(
-    repo_root: &Path,
-    plan: &AdoptionPlan,
-    force: bool,
-) -> io::Result<PathBuf> {
+pub fn write_klasp_toml(repo_root: &Path, plan: &AdoptionPlan, force: bool) -> io::Result<PathBuf> {
     let target = repo_root.join("klasp.toml");
 
     if target.exists() && !force {
@@ -97,10 +93,7 @@ fn generate_toml(plan: &AdoptionPlan) -> String {
                 } => {
                     out.push_str("type = \"pre_commit\"\n");
                     if let Some(stage) = hook_stage {
-                        out.push_str(&format!(
-                            "hook_stage = \"{}\"\n",
-                            escape_toml_string(stage)
-                        ));
+                        out.push_str(&format!("hook_stage = \"{}\"\n", escape_toml_string(stage)));
                     }
                     if let Some(path) = config_path {
                         out.push_str(&format!(
@@ -111,10 +104,7 @@ fn generate_toml(plan: &AdoptionPlan) -> String {
                 }
                 ProposedCheckSource::Shell { command } => {
                     out.push_str("type = \"shell\"\n");
-                    out.push_str(&format!(
-                        "command = \"{}\"\n",
-                        escape_toml_string(command)
-                    ));
+                    out.push_str(&format!("command = \"{}\"\n", escape_toml_string(command)));
                 }
             }
         }
@@ -135,8 +125,8 @@ mod tests {
 
     use super::*;
     use crate::adopt::plan::{
-        AdoptionPlan, ChainSupport, DetectedGate, GateType, ProposedCheck,
-        ProposedCheckSource, TriggerKind,
+        AdoptionPlan, ChainSupport, DetectedGate, GateType, ProposedCheck, ProposedCheckSource,
+        TriggerKind,
     };
 
     fn pre_commit_plan() -> AdoptionPlan {
@@ -188,8 +178,8 @@ mod tests {
         assert_eq!(written, tmp.path().join("klasp.toml"));
 
         let content = std::fs::read_to_string(&written).unwrap();
-        let config = klasp_core::ConfigV1::parse(&content)
-            .expect("generated TOML should parse cleanly");
+        let config =
+            klasp_core::ConfigV1::parse(&content).expect("generated TOML should parse cleanly");
         assert_eq!(config.checks.len(), 1);
         assert_eq!(config.checks[0].name, "pre-commit");
         assert!(matches!(

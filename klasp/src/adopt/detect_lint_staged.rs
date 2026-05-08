@@ -224,11 +224,7 @@ mod tests {
     #[test]
     fn command_defaults_to_npx_when_no_lockfile() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(
-            dir.path().join("package.json"),
-            r#"{ "lint-staged": {} }"#,
-        )
-        .unwrap();
+        fs::write(dir.path().join("package.json"), r#"{ "lint-staged": {} }"#).unwrap();
 
         let findings = detect(dir.path()).unwrap();
         let check = &findings[0].proposed_checks[0];
@@ -242,11 +238,7 @@ mod tests {
     #[test]
     fn command_uses_pnpm_when_pnpm_lockfile_present() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(
-            dir.path().join("package.json"),
-            r#"{ "lint-staged": {} }"#,
-        )
-        .unwrap();
+        fs::write(dir.path().join("package.json"), r#"{ "lint-staged": {} }"#).unwrap();
         fs::write(dir.path().join("pnpm-lock.yaml"), "").unwrap();
 
         let findings = detect(dir.path()).unwrap();
@@ -261,11 +253,7 @@ mod tests {
     #[test]
     fn command_uses_yarn_when_yarn_lock_present() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(
-            dir.path().join("package.json"),
-            r#"{ "lint-staged": {} }"#,
-        )
-        .unwrap();
+        fs::write(dir.path().join("package.json"), r#"{ "lint-staged": {} }"#).unwrap();
         fs::write(dir.path().join("yarn.lock"), "").unwrap();
 
         let findings = detect(dir.path()).unwrap();
@@ -280,7 +268,11 @@ mod tests {
     #[test]
     fn standalone_lintstagedrc_json_detected() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join(".lintstagedrc.json"), r#"{"*.ts": "eslint"}"#).unwrap();
+        fs::write(
+            dir.path().join(".lintstagedrc.json"),
+            r#"{"*.ts": "eslint"}"#,
+        )
+        .unwrap();
 
         let findings = detect(dir.path()).unwrap();
         assert_eq!(findings.len(), 1);
@@ -304,12 +296,12 @@ mod tests {
     fn standalone_takes_priority_over_package_json() {
         let dir = tempfile::tempdir().unwrap();
         // Both a standalone file and package.json present.
-        fs::write(dir.path().join(".lintstagedrc.json"), r#"{"*.ts": "eslint"}"#).unwrap();
         fs::write(
-            dir.path().join("package.json"),
-            r#"{ "lint-staged": {} }"#,
+            dir.path().join(".lintstagedrc.json"),
+            r#"{"*.ts": "eslint"}"#,
         )
         .unwrap();
+        fs::write(dir.path().join("package.json"), r#"{ "lint-staged": {} }"#).unwrap();
 
         let findings = detect(dir.path()).unwrap();
         assert_eq!(findings.len(), 1, "must not produce two findings");
@@ -323,24 +315,20 @@ mod tests {
     #[test]
     fn duplicate_warning_fires_when_husky_hook_references_lint_staged() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(
-            dir.path().join("package.json"),
-            r#"{ "lint-staged": {} }"#,
-        )
-        .unwrap();
+        fs::write(dir.path().join("package.json"), r#"{ "lint-staged": {} }"#).unwrap();
 
         let husky_dir = dir.path().join(".husky");
         fs::create_dir_all(&husky_dir).unwrap();
-        fs::write(
-            husky_dir.join("pre-commit"),
-            "#!/bin/sh\nnpx lint-staged\n",
-        )
-        .unwrap();
+        fs::write(husky_dir.join("pre-commit"), "#!/bin/sh\nnpx lint-staged\n").unwrap();
 
         let findings = detect(dir.path()).unwrap();
-        assert!(!findings[0].warnings.is_empty(), "should warn about duplicate execution");
         assert!(
-            findings[0].warnings[0].contains("twice") || findings[0].warnings[0].contains("duplicate"),
+            !findings[0].warnings.is_empty(),
+            "should warn about duplicate execution"
+        );
+        assert!(
+            findings[0].warnings[0].contains("twice")
+                || findings[0].warnings[0].contains("duplicate"),
             "warning should mention duplicate execution: {}",
             findings[0].warnings[0]
         );
@@ -349,11 +337,7 @@ mod tests {
     #[test]
     fn no_duplicate_warning_when_husky_hook_does_not_reference_lint_staged() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(
-            dir.path().join("package.json"),
-            r#"{ "lint-staged": {} }"#,
-        )
-        .unwrap();
+        fs::write(dir.path().join("package.json"), r#"{ "lint-staged": {} }"#).unwrap();
 
         let husky_dir = dir.path().join(".husky");
         fs::create_dir_all(&husky_dir).unwrap();
@@ -369,11 +353,7 @@ mod tests {
     #[test]
     fn no_duplicate_warning_when_husky_hook_absent() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(
-            dir.path().join("package.json"),
-            r#"{ "lint-staged": {} }"#,
-        )
-        .unwrap();
+        fs::write(dir.path().join("package.json"), r#"{ "lint-staged": {} }"#).unwrap();
         // No .husky directory.
 
         let findings = detect(dir.path()).unwrap();
@@ -414,11 +394,7 @@ mod tests {
     #[test]
     fn proposed_check_name_and_triggers() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(
-            dir.path().join("package.json"),
-            r#"{ "lint-staged": {} }"#,
-        )
-        .unwrap();
+        fs::write(dir.path().join("package.json"), r#"{ "lint-staged": {} }"#).unwrap();
 
         let findings = detect(dir.path()).unwrap();
         let check = &findings[0].proposed_checks[0];

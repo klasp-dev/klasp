@@ -36,7 +36,10 @@ pub fn detect_all(repo_root: &Path) -> io::Result<AdoptionPlan> {
 
 /// Return the first path in `candidates` (relative to `root`) that is a file.
 pub(super) fn first_existing_file(root: &Path, candidates: &[&str]) -> Option<PathBuf> {
-    candidates.iter().map(|name| root.join(name)).find(|p| p.is_file())
+    candidates
+        .iter()
+        .map(|name| root.join(name))
+        .find(|p| p.is_file())
 }
 
 /// Map a [`HookStage`] to its corresponding [`TriggerKind`].

@@ -93,11 +93,7 @@ fn inspect_no_gates_prints_no_existing_gates_message() {
 fn inspect_pre_commit_only_prints_finding() {
     let Some(dir) = fixture_repo() else { return };
 
-    fs::write(
-        dir.path().join(".pre-commit-config.yaml"),
-        "repos: []\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join(".pre-commit-config.yaml"), "repos: []\n").unwrap();
 
     let out = run_init_adopt(dir.path(), &["--mode", "inspect"]);
 
@@ -135,11 +131,7 @@ fn inspect_does_not_modify_filesystem() {
     let Some(dir) = fixture_repo() else { return };
 
     // Seed all three fixture types.
-    fs::write(
-        dir.path().join(".pre-commit-config.yaml"),
-        "repos: []\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join(".pre-commit-config.yaml"), "repos: []\n").unwrap();
     fs::create_dir_all(dir.path().join(".husky")).unwrap();
     fs::write(
         dir.path().join(".husky/pre-commit"),
@@ -206,11 +198,7 @@ fn mirror_pre_commit_writes_klasp_toml() {
     let Some(dir) = fixture_repo() else { return };
 
     let pre_commit_yaml = "repos: []\n";
-    fs::write(
-        dir.path().join(".pre-commit-config.yaml"),
-        pre_commit_yaml,
-    )
-    .unwrap();
+    fs::write(dir.path().join(".pre-commit-config.yaml"), pre_commit_yaml).unwrap();
 
     let out = run_init_adopt(dir.path(), &["--mode", "mirror"]);
 
@@ -234,9 +222,7 @@ fn mirror_pre_commit_writes_klasp_toml() {
     let pre_commit_checks: Vec<_> = config
         .checks
         .iter()
-        .filter(|ch| {
-            matches!(ch.source, klasp_core::CheckSourceConfig::PreCommit { .. })
-        })
+        .filter(|ch| matches!(ch.source, klasp_core::CheckSourceConfig::PreCommit { .. }))
         .collect();
     assert_eq!(
         pre_commit_checks.len(),
@@ -276,7 +262,11 @@ fn mirror_husky_lint_staged_uses_pkg_manager_command() {
     .unwrap();
 
     // pnpm lockfile — should make the detector pick pnpm exec lint-staged.
-    fs::write(dir.path().join("pnpm-lock.yaml"), "lockfileVersion: '6.0'\n").unwrap();
+    fs::write(
+        dir.path().join("pnpm-lock.yaml"),
+        "lockfileVersion: '6.0'\n",
+    )
+    .unwrap();
 
     let out = run_init_adopt(dir.path(), &["--mode", "mirror"]);
 
@@ -368,16 +358,8 @@ fn mirror_plain_git_hook_does_not_overwrite_hook() {
 fn mirror_existing_klasp_toml_without_force_errors() {
     let Some(dir) = fixture_repo() else { return };
 
-    fs::write(
-        dir.path().join(".pre-commit-config.yaml"),
-        "repos: []\n",
-    )
-    .unwrap();
-    fs::write(
-        dir.path().join("klasp.toml"),
-        "# existing content\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join(".pre-commit-config.yaml"), "repos: []\n").unwrap();
+    fs::write(dir.path().join("klasp.toml"), "# existing content\n").unwrap();
 
     let out = run_init_adopt(dir.path(), &["--mode", "mirror"]);
 
@@ -405,16 +387,8 @@ fn mirror_existing_klasp_toml_without_force_errors() {
 fn mirror_existing_klasp_toml_with_force_overwrites() {
     let Some(dir) = fixture_repo() else { return };
 
-    fs::write(
-        dir.path().join(".pre-commit-config.yaml"),
-        "repos: []\n",
-    )
-    .unwrap();
-    fs::write(
-        dir.path().join("klasp.toml"),
-        "# existing content\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join(".pre-commit-config.yaml"), "repos: []\n").unwrap();
+    fs::write(dir.path().join("klasp.toml"), "# existing content\n").unwrap();
 
     let out = run_init_adopt(dir.path(), &["--mode", "mirror", "--force"]);
 
@@ -500,11 +474,7 @@ fn mirror_husky_multi_command_emits_multiple_checks() {
 fn chain_mode_rejects_with_explanatory_message() {
     let Some(dir) = fixture_repo() else { return };
 
-    fs::write(
-        dir.path().join(".pre-commit-config.yaml"),
-        "repos: []\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join(".pre-commit-config.yaml"), "repos: []\n").unwrap();
 
     let out = run_init_adopt(dir.path(), &["--mode", "chain"]);
 

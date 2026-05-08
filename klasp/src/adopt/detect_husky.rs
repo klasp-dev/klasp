@@ -19,8 +19,10 @@ use super::plan::{
 };
 
 /// Hooks this detector examines, in order.
-const HUSKY_HOOKS: &[(HookStage, &str)] =
-    &[(HookStage::PreCommit, "pre-commit"), (HookStage::PrePush, "pre-push")];
+const HUSKY_HOOKS: &[(HookStage, &str)] = &[
+    (HookStage::PreCommit, "pre-commit"),
+    (HookStage::PrePush, "pre-push"),
+];
 
 /// Patterns that indicate Husky internal bookkeeping — these lines are skipped
 /// when extracting the first substantive command from a hook script.
@@ -131,8 +133,10 @@ fn classify_command(cmd: &str) -> Option<(&'static str, u64)> {
         return Some(("lint-staged", 120));
     }
     // test
-    if matches!(cmd, "npm test" | "pnpm test" | "yarn test" | "pnpm run test")
-        || cmd.starts_with("npm test ")
+    if matches!(
+        cmd,
+        "npm test" | "pnpm test" | "yarn test" | "pnpm run test"
+    ) || cmd.starts_with("npm test ")
         || cmd.starts_with("pnpm test ")
         || cmd.starts_with("yarn test ")
     {
@@ -170,7 +174,13 @@ fn derive_name_from_command(cmd: &str, hook: &str) -> String {
     // Sanitise: keep only alphanumeric, `-`, `_`.
     let sanitised: String = segment
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
     if sanitised.trim_matches('-').is_empty() {
         format!("husky-{hook}")
@@ -195,17 +205,15 @@ fn build_proposed_checks(
     let mut warnings = Vec::new();
 
     if cmds.is_empty() {
-        warnings.push(format!(
-            "Husky {hook} hook is empty; no checks proposed"
-        ));
+        warnings.push(format!("Husky {hook} hook is empty; no checks proposed"));
         return (vec![], warnings);
     }
 
     // Duplicate-execution warning: lint-staged in hook body AND in package.json.
     let references_lint_staged = body.contains("lint-staged");
     if references_lint_staged {
-        let pkg_contents = std::fs::read_to_string(repo_root.join("package.json"))
-            .unwrap_or_default();
+        let pkg_contents =
+            std::fs::read_to_string(repo_root.join("package.json")).unwrap_or_default();
         if package_json_has_lint_staged(&pkg_contents) {
             warnings.push(
                 "klasp's lint-staged check will overlap with Husky's pre-commit hook; \
@@ -263,12 +271,19 @@ mod tests {
         let result = detect(dir.path()).unwrap();
         assert_eq!(result.len(), 1);
         let gate = &result[0];
-        assert!(matches!(&gate.gate_type, GateType::Husky { hook } if *hook == HookStage::PreCommit));
+        assert!(
+            matches!(&gate.gate_type, GateType::Husky { hook } if *hook == HookStage::PreCommit)
+        );
         assert_eq!(gate.proposed_checks.len(), 1);
         let check = &gate.proposed_checks[0];
         assert_eq!(check.name, "lint-staged");
-        assert_eq!(check.triggers, vec![super::super::plan::TriggerKind::Commit]);
-        assert!(matches!(&check.source, ProposedCheckSource::Shell { command } if command == "npx lint-staged"));
+        assert_eq!(
+            check.triggers,
+            vec![super::super::plan::TriggerKind::Commit]
+        );
+        assert!(
+            matches!(&check.source, ProposedCheckSource::Shell { command } if command == "npx lint-staged")
+        );
     }
 
     #[test]
@@ -325,13 +340,19 @@ mod tests {
     #[test]
     fn unrecognised_command_yields_one_check_with_shell_source() {
         let dir = TempDir::new().unwrap();
-        write_hook(dir.path(), "pre-commit", "#!/bin/sh\nmycustomlinter --fix\n");
+        write_hook(
+            dir.path(),
+            "pre-commit",
+            "#!/bin/sh\nmycustomlinter --fix\n",
+        );
         let result = detect(dir.path()).unwrap();
         let gate = &result[0];
         assert_eq!(gate.proposed_checks.len(), 1);
         let check = &gate.proposed_checks[0];
         assert_eq!(check.name, "mycustomlinter");
-        assert!(matches!(&check.source, ProposedCheckSource::Shell { command } if command == "mycustomlinter --fix"));
+        assert!(
+            matches!(&check.source, ProposedCheckSource::Shell { command } if command == "mycustomlinter --fix")
+        );
     }
 
     #[test]
@@ -365,7 +386,10 @@ mod tests {
             gate.proposed_checks.len(),
             2,
             "expected 2 checks for 2-line body, got: {:?}",
-            gate.proposed_checks.iter().map(|c| &c.name).collect::<Vec<_>>()
+            gate.proposed_checks
+                .iter()
+                .map(|c| &c.name)
+                .collect::<Vec<_>>()
         );
         assert_eq!(gate.proposed_checks[0].name, "lint");
         assert_eq!(gate.proposed_checks[1].name, "test");
@@ -395,7 +419,10 @@ mod tests {
             gate.proposed_checks.len(),
             2,
             "expected 2 checks, got: {:?}",
-            gate.proposed_checks.iter().map(|c| &c.name).collect::<Vec<_>>()
+            gate.proposed_checks
+                .iter()
+                .map(|c| &c.name)
+                .collect::<Vec<_>>()
         );
         assert_eq!(gate.proposed_checks[0].name, "lint-staged");
         assert_eq!(gate.proposed_checks[1].name, "test");
