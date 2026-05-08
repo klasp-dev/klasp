@@ -12,19 +12,18 @@
 //!
 //! The three individual commands (`init`, `install`, `doctor`) remain fully
 //! supported and unchanged for scriptable/CI use. `setup` is additive sugar.
-//!
-//! See klasp-dev/klasp#103.
 
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
-use klasp_core::{AgentSurface, ConfigV1, InstallContext, KlaspError, GATE_SCHEMA_VERSION};
-use serde_json::Value;
+use klasp_core::{ConfigV1, InstallContext, GATE_SCHEMA_VERSION};
 
 use crate::adopt::detect_agents::detect_installed_agents;
 use crate::cli::SetupArgs;
+use crate::cmd::doctor::{check_paths, check_surfaces, Counters};
+use crate::cmd::install::{install_one_surface, print_hook_warning};
 use crate::registry::SurfaceRegistry;
 
 /// Entry point for `klasp setup`.
@@ -61,11 +60,7 @@ fn try_run(args: &SetupArgs) -> Result<ExitCode> {
         }
     );
 
-    // Step 3: compute intersection — [gate].agents = detected agents only.
-    // (detect_installed_agents already returns only what is installed.)
-    let agents_to_write = &detected_agents;
-
-    // Step 4: print the gate detection plan.
+    // Step 3: print the gate detection plan.
     print!("{}", crate::adopt::render::render_plan(&plan));
 
     // Interactive: gate selection prompt.
@@ -88,7 +83,7 @@ fn try_run(args: &SetupArgs) -> Result<ExitCode> {
     // Dry-run: show plan and exit.
     if args.dry_run {
         println!("\n--- dry-run plan ---");
-        println!("[gate].agents would be: {}", agents_to_write.join(", "));
+        println!("[gate].agents would be: {}", detected_agents.join(", "));
         println!(
             "checks: {}",
             gates_to_use
@@ -117,7 +112,7 @@ fn try_run(args: &SetupArgs) -> Result<ExitCode> {
         &repo_root,
         &gates_to_use,
         true, // force: setup is idempotent by design
-        Some(agents_to_write),
+        Some(&detected_agents),
     )
     .context("writing klasp.toml")?;
     println!("wrote {}", toml_path.display());
@@ -131,6 +126,10 @@ fn try_run(args: &SetupArgs) -> Result<ExitCode> {
         }
     }
 
+    // Load config once after write; reuse for both install and doctor so
+    // ConfigV1::load is called exactly once despite two downstream consumers.
+    let config = ConfigV1::load(&repo_root).context("loading config after write")?;
+
     // Step 5: install all declared surfaces.
     let install_exit = run_install_all(&repo_root, &detected_agents)?;
     if install_exit != ExitCode::SUCCESS {
@@ -138,9 +137,9 @@ fn try_run(args: &SetupArgs) -> Result<ExitCode> {
         return Ok(install_exit);
     }
 
-    // Step 6: run doctor and report.
+    // Step 6: run doctor and report, reusing the already-loaded config.
     println!("\n--- klasp doctor ---");
-    let doctor_exit = run_doctor_inline(&repo_root);
+    let doctor_exit = run_doctor_with_config(&repo_root, config);
 
     if doctor_exit == ExitCode::SUCCESS {
         println!("\nsetup complete — `klasp doctor` passed with no FAILs.");
@@ -151,12 +150,10 @@ fn try_run(args: &SetupArgs) -> Result<ExitCode> {
     Ok(doctor_exit)
 }
 
-/// Run install for each agent in `agents`. Logs each install and continues
-/// even if individual surfaces produce warnings (matching `klasp install`
-/// behaviour). Returns `ExitCode::SUCCESS` unless a hard error occurs.
+/// Run install for each agent in `agents`. Loops once, collecting reports and
+/// warnings via the shared `install_one_surface` helper (no duplicated Codex
+/// dispatch). Returns `ExitCode::SUCCESS` unless a hard error occurs.
 fn run_install_all(repo_root: &Path, agents: &[String]) -> Result<ExitCode> {
-    use klasp_agents_codex::CodexSurface;
-
     let registry = SurfaceRegistry::default();
     let ctx = InstallContext {
         repo_root: repo_root.to_path_buf(),
@@ -174,20 +171,12 @@ fn run_install_all(repo_root: &Path, agents: &[String]) -> Result<ExitCode> {
             }
         };
 
-        if surface.agent_id() == CodexSurface::AGENT_ID {
-            let detailed = CodexSurface
-                .install_detailed(&ctx)
-                .with_context(|| format!("installing {agent_id}"))?;
-            for warning in &detailed.warnings {
-                print_hook_warning(warning);
-            }
-            println!("{}: {}", agent_id, install_result_label(&detailed.report));
-        } else {
-            let report = surface
-                .install(&ctx)
-                .with_context(|| format!("installing {agent_id}"))?;
-            println!("{}: {}", agent_id, install_result_label(&report));
+        let (report, warnings) =
+            install_one_surface(surface, &ctx).with_context(|| format!("installing {agent_id}"))?;
+        for warning in &warnings {
+            print_hook_warning(warning);
         }
+        println!("{}: {}", agent_id, install_result_label(&report));
     }
 
     Ok(ExitCode::SUCCESS)
@@ -201,193 +190,27 @@ fn install_result_label(report: &klasp_core::InstallReport) -> &'static str {
     }
 }
 
-fn print_hook_warning(warning: &HookWarning) {
-    use klasp_agents_codex::HookKind;
-    match warning {
-        HookWarning::Skipped {
-            path,
-            kind,
-            conflict,
-        } => {
-            let hook_label = match kind {
-                HookKind::Commit => "pre-commit",
-                HookKind::Push => "pre-push",
-            };
-            eprintln!(
-                "warning: skipping {hook_label} hook ({}) — owned by {}.",
-                path.display(),
-                conflict.tool()
-            );
-        }
-    }
-}
+/// Run the doctor checks using an already-parsed `ConfigV1`, avoiding a second
+/// `ConfigV1::load` call. The config check step (`check_config`) is bypassed
+/// because setup just wrote and validated the file; we print its OK line here.
+fn run_doctor_with_config(repo_root: &Path, config: ConfigV1) -> ExitCode {
+    let mut c = Counters::new();
+    // Config was just written and validated by setup — emit the OK line directly.
+    c.ok("config: klasp.toml loaded OK");
+    check_surfaces(repo_root, Some(&config), &mut c);
+    check_paths(&config, &mut c);
 
-/// Run doctor checks inline and return exit code. This mirrors the logic in
-/// `cmd/doctor.rs` but prints its own section header so the output is clearly
-/// scoped to setup.
-fn run_doctor_inline(repo_root: &Path) -> ExitCode {
-    use klasp_core::{CheckSourceConfig, GATE_SCHEMA_VERSION};
-
-    let registry = SurfaceRegistry::default();
-    let mut fails = 0usize;
-    let mut warns = 0usize;
-
-    // Config check.
-    let config = match ConfigV1::load(repo_root) {
-        Ok(cfg) => {
-            println!("OK    config: klasp.toml loaded OK");
-            Some(cfg)
-        }
-        Err(KlaspError::ConfigNotFound { searched }) => {
-            let paths: Vec<_> = searched.iter().map(|p| p.display().to_string()).collect();
-            println!(
-                "FAIL  config: klasp.toml not found (searched: {})",
-                paths.join(", ")
-            );
-            fails += 1;
-            None
-        }
-        Err(e) => {
-            println!("FAIL  config: {e}");
-            fails += 1;
-            None
-        }
-    };
-
-    // Surface checks.
-    if let Some(ref cfg) = config {
-        let declared = &cfg.gate.agents;
-        for surface in registry.iter() {
-            let agent_id = surface.agent_id();
-            if !declared.iter().any(|a| a == agent_id) {
-                println!("INFO  {agent_id}: not in [gate].agents, skipping");
-                continue;
-            }
-
-            let hook_path = surface.hook_path(repo_root);
-            match std::fs::read_to_string(&hook_path) {
-                Ok(actual) => {
-                    let ctx = InstallContext {
-                        repo_root: repo_root.to_path_buf(),
-                        dry_run: false,
-                        force: false,
-                        schema_version: GATE_SCHEMA_VERSION,
-                    };
-                    if actual == surface.render_hook_script(&ctx) {
-                        println!("OK    hook[{agent_id}]: current (schema v{GATE_SCHEMA_VERSION})");
-                    } else {
-                        println!("FAIL  hook[{agent_id}]: schema drift (re-run `klasp install`)");
-                        fails += 1;
-                    }
-                }
-                Err(_) => {
-                    println!(
-                        "FAIL  hook[{agent_id}]: {} not found; re-run `klasp install`",
-                        hook_path.display()
-                    );
-                    fails += 1;
-                }
-            }
-
-            // Settings check (Claude Code only).
-            if agent_id == klasp_agents_claude::ClaudeCodeSurface::AGENT_ID {
-                check_claude_settings(repo_root, surface, agent_id, &mut fails);
-            }
-        }
-    }
-
-    // PATH checks.
-    if let Some(ref cfg) = config {
-        for check in &cfg.checks {
-            if let CheckSourceConfig::Shell { command } = &check.source {
-                if let Some(argv0) = extract_argv0(command) {
-                    match which::which(argv0) {
-                        Ok(_) => {
-                            println!("OK    path[{}]: `{argv0}` found in PATH", check.name)
-                        }
-                        Err(_) => {
-                            println!("WARN  path[{}]: `{argv0}` not found in PATH", check.name);
-                            warns += 1;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if fails > 0 || warns > 0 {
-        eprintln!("doctor: {fails} FAIL, {warns} WARN");
+    if c.fails > 0 || c.warns > 0 {
+        eprintln!("doctor: {} FAIL, {} WARN", c.fails, c.warns);
     } else {
         eprintln!("doctor: all checks passed");
     }
 
-    if fails > 0 {
+    if c.fails > 0 {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
     }
-}
-
-fn check_claude_settings(
-    repo_root: &Path,
-    surface: &dyn AgentSurface,
-    agent_id: &str,
-    fails: &mut usize,
-) {
-    let settings_path = surface.settings_path(repo_root);
-    let raw = match std::fs::read_to_string(&settings_path) {
-        Ok(s) => s,
-        Err(_) => {
-            println!(
-                "FAIL  settings[{agent_id}]: {} not found; re-run `klasp install`",
-                settings_path.display()
-            );
-            *fails += 1;
-            return;
-        }
-    };
-
-    let root: Value = match serde_json::from_str(&raw) {
-        Ok(v) => v,
-        Err(e) => {
-            println!("FAIL  settings[{agent_id}]: parse error: {e}");
-            *fails += 1;
-            return;
-        }
-    };
-
-    let hook_command = klasp_agents_claude::ClaudeCodeSurface::HOOK_COMMAND;
-    let has_entry = root
-        .get("hooks")
-        .and_then(|h| h.get("PreToolUse"))
-        .and_then(Value::as_array)
-        .is_some_and(|arr| {
-            arr.iter().any(|entry| {
-                entry.get("matcher").and_then(Value::as_str) == Some("Bash")
-                    && entry
-                        .get("hooks")
-                        .and_then(Value::as_array)
-                        .is_some_and(|inner| {
-                            inner.iter().any(|h| {
-                                h.get("command").and_then(Value::as_str) == Some(hook_command)
-                            })
-                        })
-            })
-        });
-
-    if has_entry {
-        println!("OK    settings[{agent_id}]: hook entry present");
-    } else {
-        println!("FAIL  settings[{agent_id}]: hook entry missing; re-run `klasp install`");
-        *fails += 1;
-    }
-}
-
-/// Extract the first non-`KEY=VALUE` token from a shell command.
-fn extract_argv0(command: &str) -> Option<&str> {
-    command
-        .split_ascii_whitespace()
-        .find(|token| !token.contains('='))
 }
 
 /// Prompt the user with a yes/no question. Returns `true` for "y"/"yes",
@@ -425,6 +248,3 @@ impl IfEmpty for String {
         }
     }
 }
-
-// Re-export HookWarning for the print helper above.
-use klasp_agents_codex::HookWarning;

@@ -5,8 +5,6 @@
 //! After writing, the generated TOML is validated by round-tripping it through
 //! `klasp_core::ConfigV1::parse` — any generator bug is caught before the
 //! file reaches the user's repo.
-//!
-//! See klasp-dev/klasp#97, klasp-dev/klasp#103.
 
 use std::collections::HashMap;
 use std::io;

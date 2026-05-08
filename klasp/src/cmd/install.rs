@@ -99,21 +99,11 @@ fn try_run(args: &InstallArgs) -> Result<ExitCode> {
 
     let mut reports = Vec::with_capacity(surfaces.len());
     for s in &surfaces {
-        if s.agent_id() == CodexSurface::AGENT_ID {
-            // Detailed entry-point so we can surface hook-conflict warnings.
-            let detailed = CodexSurface
-                .install_detailed(&ctx)
-                .with_context(|| format!("installing {}", s.agent_id()))?;
-            for warning in &detailed.warnings {
-                print_hook_warning(warning);
-            }
-            reports.push(detailed.report);
-        } else {
-            let report = s
-                .install(&ctx)
-                .with_context(|| format!("installing {}", s.agent_id()))?;
-            reports.push(report);
+        let (report, warnings) = install_one_surface(*s, &ctx)?;
+        for warning in &warnings {
+            print_hook_warning(warning);
         }
+        reports.push(report);
     }
 
     print_reports(&reports, args.dry_run);
@@ -266,10 +256,29 @@ fn print_reports(reports: &[InstallReport], dry_run: bool) {
     }
 }
 
+/// Install a single surface. For Codex, uses the detailed entry-point that
+/// returns hook-conflict warnings. Returns `(report, warnings)`.
+pub(crate) fn install_one_surface(
+    surface: &dyn AgentSurface,
+    ctx: &InstallContext,
+) -> Result<(InstallReport, Vec<HookWarning>)> {
+    if surface.agent_id() == CodexSurface::AGENT_ID {
+        let detailed = CodexSurface
+            .install_detailed(ctx)
+            .with_context(|| format!("installing {}", surface.agent_id()))?;
+        Ok((detailed.report, detailed.warnings))
+    } else {
+        let report = surface
+            .install(ctx)
+            .with_context(|| format!("installing {}", surface.agent_id()))?;
+        Ok((report, vec![]))
+    }
+}
+
 /// Render a non-fatal hook conflict to stderr. The format matches the
 /// "actionable suggestion is mandatory" requirement from issue #29: tell
 /// the user *exactly* what to do next.
-fn print_hook_warning(warning: &HookWarning) {
+pub(crate) fn print_hook_warning(warning: &HookWarning) {
     match warning {
         HookWarning::Skipped {
             path,

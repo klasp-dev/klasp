@@ -11,13 +11,19 @@
 //! Called from `klasp init --adopt --mode mirror` to narrow the default
 //! agents list from the three-agent fallback to just what the user has
 //! installed. Also called by `klasp setup` for the same purpose.
-//!
-//! See klasp-dev/klasp#103.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use klasp_agents_aider::AiderSurface;
+use klasp_agents_claude::ClaudeCodeSurface;
+use klasp_agents_codex::CodexSurface;
 
 /// The agents that klasp's surface registry supports, in canonical order.
-pub const ALL_AGENTS: &[&str] = &["claude_code", "codex", "aider"];
+pub const ALL_AGENTS: &[&str] = &[
+    ClaudeCodeSurface::AGENT_ID,
+    CodexSurface::AGENT_ID,
+    AiderSurface::AGENT_ID,
+];
 
 /// Probe the machine to determine which agent surfaces are installed.
 ///
@@ -36,13 +42,13 @@ pub fn detect_installed_agents(home_dir: Option<&Path>) -> Vec<String> {
     let mut found = Vec::new();
 
     if probe_claude_code(home) {
-        found.push("claude_code".to_string());
+        found.push(ClaudeCodeSurface::AGENT_ID.to_string());
     }
     if probe_codex(home) {
-        found.push("codex".to_string());
+        found.push(CodexSurface::AGENT_ID.to_string());
     }
     if probe_aider(home) {
-        found.push("aider".to_string());
+        found.push(AiderSurface::AGENT_ID.to_string());
     }
 
     if found.is_empty() {
@@ -65,15 +71,9 @@ fn probe_codex(home: &Path) -> bool {
 /// Detect Aider: any of `~/.aider`, `~/.aider.conf.yml`, `~/.aiderignore`.
 /// Aider's global config can land in several places.
 fn probe_aider(home: &Path) -> bool {
-    aider_probe_paths(home).into_iter().any(|p| p.exists())
-}
-
-fn aider_probe_paths(home: &Path) -> Vec<PathBuf> {
-    vec![
-        home.join(".aider"),
-        home.join(".aider.conf.yml"),
-        home.join(".aiderignore"),
-    ]
+    [".aider", ".aider.conf.yml", ".aiderignore"]
+        .iter()
+        .any(|name| home.join(name).exists())
 }
 
 /// Fall back to today's three-agent default when we can't determine which

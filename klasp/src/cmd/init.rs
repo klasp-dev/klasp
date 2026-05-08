@@ -129,19 +129,19 @@ fn run_adopt(args: &InitArgs) -> ExitCode {
 }
 
 /// Convert a detected agents list to the `Option<&[String]>` expected by
-/// `write_klasp_toml`. Returns `None` (= three-agent fallback) only when the
-/// detected list is exactly the all-three fallback AND was produced because
-/// no agent dirs were found (empty home, i.e. the user has nothing installed).
+/// `write_klasp_toml`.
 ///
-/// In practice: if we got back all three, treat it as a narrowed list anyway —
-/// the difference is whether we show the "edit me" comment. When detection
-/// finds all three genuinely, show the narrowed form (no comment); when
-/// detection falls through (empty home dir), caller passes `None`.
-///
-/// For simplicity here we always use the detected list (Some). If the list
-/// equals the fallback it just means everything was found.
+/// Returns `None` when detection found nothing (empty `detected`), so the
+/// writer falls back to the three-agent default with the "edit me" comment
+/// (AC #6: empty home → 3-agent default + comment).
+/// Returns `Some(detected)` when at least one agent was found, so the
+/// writer uses the narrowed list without the fallback comment.
 fn narrowed_agents_arg(detected: &[String]) -> Option<&[String]> {
-    Some(detected)
+    if detected.is_empty() {
+        None
+    } else {
+        Some(detected)
+    }
 }
 
 fn try_run(args: &InitArgs) -> Result<PathBuf> {
@@ -159,4 +159,23 @@ fn try_run(args: &InitArgs) -> Result<PathBuf> {
         .with_context(|| format!("writing klasp.toml to {}", target.display()))?;
 
     Ok(target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AC #6: empty detected list → None so the writer uses the 3-agent fallback
+    /// with the "edit me" comment.
+    #[test]
+    fn narrowed_agents_arg_empty_returns_none() {
+        assert!(narrowed_agents_arg(&[]).is_none());
+    }
+
+    /// AC #6: non-empty detected list → Some so the writer uses the narrowed list.
+    #[test]
+    fn narrowed_agents_arg_nonempty_returns_some() {
+        let agents = vec!["claude_code".to_string()];
+        assert_eq!(narrowed_agents_arg(&agents), Some(agents.as_slice()));
+    }
 }
