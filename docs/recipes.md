@@ -12,6 +12,14 @@ project's own dogfood config at [`/klasp.toml`](../klasp.toml).
 > unchanged for any tool a recipe doesn't cover yet — see
 > [roadmap.md §v0.2](./roadmap.md#v02--codex--named-recipes-target-3-months-from-v01).
 
+> See also: [`docs/audits/`](./audits/README.md) — per-stack audit recipes
+> (Python, TypeScript, Rust, Go, polyglot, monorepo) with tiered
+> `klasp.toml` configurations. This file is the per-tool reference and
+> verdict-policy wiring guide; `docs/audits/` is the copy-pasteable
+> starter for "I have a Python (or TypeScript, or …) repo and want a
+> sensible gate today." The audit recipes use the typed recipes
+> documented here.
+
 ## Patterns
 
 ### Custom `[[trigger]]` blocks (v0.3+)

@@ -109,7 +109,14 @@ type = "shell"
 command = "cd ml && uv run pytest && uv run ruff check"
 ```
 
-Worked configs for pre-commit, fallow, pytest, cargo, ESLint/Biome, and ruff live in [`docs/recipes.md`](./docs/recipes.md).
+Worked configs for pre-commit, fallow, pytest, cargo, ESLint/Biome, and ruff live in [`docs/recipes.md`](./docs/recipes.md). For copy-pasteable per-stack audit postures (Python, TypeScript, Rust, Go, polyglot, monorepo) see [`docs/audits/`](./docs/audits/README.md):
+
+- [Python](./docs/audits/python.md) — ruff, pytest, mypy/pyright, deptry, vulture, bandit, pip-audit, radon
+- [TypeScript](./docs/audits/typescript.md) — tsc, biome / eslint+prettier, vitest, knip, fallow
+- [Rust](./docs/audits/rust.md) — cargo fmt/check/clippy/test, cargo-deny, machete, hack, msrv
+- [Go](./docs/audits/go.md) — gofmt, go vet, staticcheck, golangci-lint, govulncheck, nilaway
+- [Polyglot](./docs/audits/polyglot.md) — multiple languages in one repo
+- [Monorepo](./docs/audits/monorepo.md) — many packages in one stack
 
 ## Install
 
@@ -261,6 +268,7 @@ See [`docs/recipes.md`](./docs/recipes.md#verdict-policies) for selection guidan
 
 - [`docs/design.md`](./docs/design.md) — v0.1 architecture, abstractions, and rationale
 - [`docs/recipes.md`](./docs/recipes.md) — worked `klasp.toml` examples for pre-commit, fallow, pytest, cargo, ESLint/Biome, ruff; verdict policy guidance
+- [`docs/audits/`](./docs/audits/README.md) — per-stack audit recipes (Python, TypeScript, Rust, Go, polyglot, monorepo) with tiered configurations
 - [`docs/plugins.md`](./docs/plugins.md) — plugin authoring guide; fork `examples/klasp-plugin-pre-commit/`
 - [`docs/plugin-protocol.md`](./docs/plugin-protocol.md) — plugin wire-format specification
 - [`docs/conformance-matrix.md`](./docs/conformance-matrix.md) — per-surface support matrix (Claude, Codex, Aider all-green; Cursor NO-GO)
