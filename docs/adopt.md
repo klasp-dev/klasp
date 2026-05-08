@@ -21,7 +21,7 @@ Default when `--adopt` is passed without `--mode` is `inspect`.
 ## Detectors
 
 - **pre-commit framework** — looks for `.pre-commit-config.yaml` or
-  `.pre-commit-config.yaml`. Proposes a `type = "pre_commit"` check that
+  `.pre-commit-config.yml`. Proposes a `type = "pre_commit"` check that
   delegates to the pre-commit binary. Never touches the config file or any
   `.git/hooks/pre-commit` that pre-commit itself manages.
 
@@ -92,7 +92,7 @@ Next:
 
 Run `klasp init --adopt --mode mirror` to write the `klasp.toml`, then
 `klasp install --agent all` to install the gate hook, and `klasp doctor` to
-verify everything is healthy.
+verify each adopted binary is on PATH.
 
 ## Future work
 
