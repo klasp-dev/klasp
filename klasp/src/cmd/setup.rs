@@ -50,11 +50,11 @@ fn try_run(args: &SetupArgs) -> Result<ExitCode> {
 
     // Step 2: detect installed agents on this machine.
     let home = crate::fs_util::home_dir();
-    let detected_agents = detect_installed_agents(home.as_deref());
+    let (detected_agents, fell_back) = detect_installed_agents(home.as_deref());
     println!(
         "detected agents: {}",
-        if detected_agents.is_empty() {
-            "(none)".to_string()
+        if fell_back {
+            format!("(none — falling back to {})", detected_agents.join(", "))
         } else {
             detected_agents.join(", ")
         }
@@ -108,11 +108,18 @@ fn try_run(args: &SetupArgs) -> Result<ExitCode> {
     }
 
     // Step 4: write klasp.toml (force=true so setup is re-runnable).
+    // When detection fell back, pass None so the writer emits the
+    // "Comment out any you don't use" hint per AC #6.
+    let agents_arg = if fell_back {
+        None
+    } else {
+        Some(detected_agents.as_slice())
+    };
     let toml_path = crate::adopt::writer::write_klasp_toml(
         &repo_root,
         &gates_to_use,
         true, // force: setup is idempotent by design
-        Some(&detected_agents),
+        agents_arg,
     )
     .context("writing klasp.toml")?;
     println!("wrote {}", toml_path.display());

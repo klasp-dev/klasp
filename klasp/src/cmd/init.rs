@@ -103,10 +103,12 @@ fn run_adopt(args: &InitArgs) -> ExitCode {
             // Detect which agents are installed on this machine and narrow
             // the agents list so doctor exits clean on a fresh install.
             let home = crate::fs_util::home_dir();
-            let detected_agents =
+            let (detected_agents, fell_back) =
                 crate::adopt::detect_agents::detect_installed_agents(home.as_deref());
-            // Use None only when detection falls back to all-three (no narrowing).
-            let agents_arg = narrowed_agents_arg(&detected_agents);
+            // None signals the writer to emit the three-agent default with the
+            // "edit me" comment (AC #6); only set when detection actually fell
+            // back, not when the user genuinely has all three agents installed.
+            let agents_arg = narrowed_agents_arg(&detected_agents, fell_back);
 
             match crate::adopt::writer::write_klasp_toml(&repo_root, &plan, args.force, agents_arg)
             {
@@ -128,16 +130,16 @@ fn run_adopt(args: &InitArgs) -> ExitCode {
     }
 }
 
-/// Convert a detected agents list to the `Option<&[String]>` expected by
-/// `write_klasp_toml`.
+/// Convert a detected agents list + fallback flag into the
+/// `Option<&[String]>` expected by `write_klasp_toml`.
 ///
-/// Returns `None` when detection found nothing (empty `detected`), so the
-/// writer falls back to the three-agent default with the "edit me" comment
-/// (AC #6: empty home → 3-agent default + comment).
-/// Returns `Some(detected)` when at least one agent was found, so the
-/// writer uses the narrowed list without the fallback comment.
-fn narrowed_agents_arg(detected: &[String]) -> Option<&[String]> {
-    if detected.is_empty() {
+/// Returns `None` when detection fell back (no agents found on the machine),
+/// so the writer emits today's three-agent default with the "edit me"
+/// comment (AC #6: nothing detected → default + comment).
+/// Returns `Some(detected)` when at least one agent was actually detected,
+/// so the writer uses the narrowed list without the fallback comment.
+fn narrowed_agents_arg(detected: &[String], fell_back: bool) -> Option<&[String]> {
+    if fell_back {
         None
     } else {
         Some(detected)
@@ -165,17 +167,35 @@ fn try_run(args: &InitArgs) -> Result<PathBuf> {
 mod tests {
     use super::*;
 
-    /// AC #6: empty detected list → None so the writer uses the 3-agent fallback
-    /// with the "edit me" comment.
+    /// AC #6: when detection fell back, return None so the writer emits the
+    /// 3-agent default with the "edit me" comment.
     #[test]
-    fn narrowed_agents_arg_empty_returns_none() {
-        assert!(narrowed_agents_arg(&[]).is_none());
+    fn narrowed_agents_arg_fallback_returns_none() {
+        let fallback = vec![
+            "claude_code".to_string(),
+            "codex".to_string(),
+            "aider".to_string(),
+        ];
+        assert!(narrowed_agents_arg(&fallback, true).is_none());
     }
 
-    /// AC #6: non-empty detected list → Some so the writer uses the narrowed list.
+    /// AC #6: when detection genuinely found agents, return Some(detected)
+    /// so the writer narrows without the fallback comment.
     #[test]
-    fn narrowed_agents_arg_nonempty_returns_some() {
+    fn narrowed_agents_arg_detected_returns_some() {
         let agents = vec!["claude_code".to_string()];
-        assert_eq!(narrowed_agents_arg(&agents), Some(agents.as_slice()));
+        assert_eq!(narrowed_agents_arg(&agents, false), Some(agents.as_slice()));
+    }
+
+    /// User with all three agents present is NOT a fallback — narrow with the
+    /// real list, no edit-me comment.
+    #[test]
+    fn narrowed_agents_arg_user_with_all_three_is_some() {
+        let agents = vec![
+            "claude_code".to_string(),
+            "codex".to_string(),
+            "aider".to_string(),
+        ];
+        assert_eq!(narrowed_agents_arg(&agents, false), Some(agents.as_slice()));
     }
 }

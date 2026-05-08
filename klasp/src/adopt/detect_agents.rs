@@ -27,16 +27,19 @@ pub const ALL_AGENTS: &[&str] = &[
 
 /// Probe the machine to determine which agent surfaces are installed.
 ///
-/// Returns a non-empty `Vec<String>` of agent IDs. If no known agent is found,
-/// falls back to [`ALL_AGENTS`] with a note that the user should edit the
-/// config — this matches today's existing default behaviour so no user is
-/// left with an invalid empty agents list.
+/// Returns `(agent_list, fell_back)`:
+/// - `agent_list` is always a non-empty `Vec<String>` so callers can install /
+///   doctor against a valid set; on no-detection it equals [`ALL_AGENTS`].
+/// - `fell_back` is `true` when no agent was detected (or `home_dir` was
+///   `None`) and the list is the all-three default. Callers pass this through
+///   to the TOML writer so the writer's `None`-arm fires and the
+///   `# Comment out any you don't use` hint is emitted (issue #103 AC #6).
 ///
 /// `home_dir` is the user's home directory (pass `dirs::home_dir()` in
 /// production; supply a tempdir in tests).
-pub fn detect_installed_agents(home_dir: Option<&Path>) -> Vec<String> {
+pub fn detect_installed_agents(home_dir: Option<&Path>) -> (Vec<String>, bool) {
     let Some(home) = home_dir else {
-        return all_agents_fallback();
+        return (all_agents_fallback(), true);
     };
 
     let mut found = Vec::new();
@@ -52,9 +55,9 @@ pub fn detect_installed_agents(home_dir: Option<&Path>) -> Vec<String> {
     }
 
     if found.is_empty() {
-        all_agents_fallback()
+        (all_agents_fallback(), true)
     } else {
-        found
+        (found, false)
     }
 }
 
@@ -87,51 +90,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn no_home_dir_returns_all_three() {
-        let agents = detect_installed_agents(None);
+    fn no_home_dir_returns_all_three_with_fallback_flag() {
+        let (agents, fell_back) = detect_installed_agents(None);
         assert_eq!(agents, vec!["claude_code", "codex", "aider"]);
+        assert!(fell_back);
     }
 
     #[test]
     fn empty_home_returns_all_three_fallback() {
         let tmp = tempfile::tempdir().unwrap();
         // No agent dirs created — should fall through to all-three fallback.
-        let agents = detect_installed_agents(Some(tmp.path()));
+        let (agents, fell_back) = detect_installed_agents(Some(tmp.path()));
         assert_eq!(agents, vec!["claude_code", "codex", "aider"]);
+        assert!(fell_back);
     }
 
     #[test]
     fn claude_only_home_returns_claude_code() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir(tmp.path().join(".claude")).unwrap();
-        let agents = detect_installed_agents(Some(tmp.path()));
+        let (agents, fell_back) = detect_installed_agents(Some(tmp.path()));
         assert_eq!(agents, vec!["claude_code"]);
+        assert!(!fell_back);
     }
 
     #[test]
     fn codex_only_home_returns_codex() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir(tmp.path().join(".codex")).unwrap();
-        let agents = detect_installed_agents(Some(tmp.path()));
+        let (agents, fell_back) = detect_installed_agents(Some(tmp.path()));
         assert_eq!(agents, vec!["codex"]);
+        assert!(!fell_back);
     }
 
     #[test]
     fn aider_conf_yml_detected() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join(".aider.conf.yml"), "commit: true\n").unwrap();
-        let agents = detect_installed_agents(Some(tmp.path()));
+        let (agents, fell_back) = detect_installed_agents(Some(tmp.path()));
         assert_eq!(agents, vec!["aider"]);
+        assert!(!fell_back);
     }
 
     #[test]
-    fn all_three_detected() {
+    fn all_three_detected_is_not_fallback() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir(tmp.path().join(".claude")).unwrap();
         std::fs::create_dir(tmp.path().join(".codex")).unwrap();
         std::fs::write(tmp.path().join(".aider.conf.yml"), "commit: true\n").unwrap();
-        let agents = detect_installed_agents(Some(tmp.path()));
+        let (agents, fell_back) = detect_installed_agents(Some(tmp.path()));
         assert_eq!(agents, vec!["claude_code", "codex", "aider"]);
+        assert!(
+            !fell_back,
+            "user with all 3 agents present should NOT trigger fallback"
+        );
     }
 
     #[test]
@@ -139,7 +151,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir(tmp.path().join(".claude")).unwrap();
         std::fs::create_dir(tmp.path().join(".codex")).unwrap();
-        let agents = detect_installed_agents(Some(tmp.path()));
+        let (agents, fell_back) = detect_installed_agents(Some(tmp.path()));
         assert_eq!(agents, vec!["claude_code", "codex"]);
+        assert!(!fell_back);
     }
 }
