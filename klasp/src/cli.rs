@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+use crate::adopt::plan::AdoptMode;
 use crate::cmd;
 
 #[derive(Debug, Parser)]
@@ -38,6 +39,44 @@ pub struct InitArgs {
     /// Overwrite an existing klasp.toml without prompting.
     #[arg(long)]
     pub force: bool,
+
+    /// Detect existing quality gates (pre-commit, Husky, Lefthook,
+    /// lint-staged, plain `.git/hooks`) and propose a `klasp.toml`
+    /// that mirrors them. Combine with `--mode` to control the
+    /// destructiveness. See klasp-dev/klasp#97.
+    #[arg(long)]
+    pub adopt: bool,
+
+    /// Adoption destructiveness. `inspect` prints the plan only.
+    /// `mirror` writes a klasp.toml that mirrors detected gates.
+    /// `chain` integrates klasp into existing hook managers (v1: not
+    /// supported; rejected with an explanatory message). Implies `--adopt`.
+    #[arg(long, value_enum, default_value_t = AdoptModeArg::Inspect)]
+    pub mode: AdoptModeArg,
+}
+
+/// Clap-visible adoption mode. Controls how destructive `--adopt` is.
+///
+/// Maps to [`crate::adopt::plan::AdoptMode`] at dispatch time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum AdoptModeArg {
+    /// Print the detected plan only; never touch the filesystem.
+    Inspect,
+    /// Write or update `klasp.toml` to mirror detected gates.
+    /// Never modifies existing hook files.
+    Mirror,
+    /// Integrate klasp into existing hook managers (v1: not yet supported).
+    Chain,
+}
+
+impl From<AdoptModeArg> for AdoptMode {
+    fn from(arg: AdoptModeArg) -> Self {
+        match arg {
+            AdoptModeArg::Inspect => AdoptMode::Inspect,
+            AdoptModeArg::Mirror => AdoptMode::Mirror,
+            AdoptModeArg::Chain => AdoptMode::Chain,
+        }
+    }
 }
 
 #[derive(Debug, Args)]

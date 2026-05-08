@@ -303,7 +303,16 @@ fn check_settings(repo_root: &Path, surface: &dyn AgentSurface, c: &mut Counters
 /// Recipe sources (v0.2 W4: `pre_commit`, W5: `fallow`) advertise a known
 /// argv0 directly — the recipe knows which binary it shells out to even
 /// before the gate renders the full command.
+///
+/// Covers issue #97 acceptance criterion #9: adopted `type = "pre_commit"`
+/// checks surface a helpful WARN when `pre-commit` is missing from PATH,
+/// including install guidance.
 fn check_paths(config: &ConfigV1, c: &mut Counters) {
+    if config.checks.is_empty() {
+        Counters::info("no checks declared in klasp.toml — add [[checks]] blocks to gate agents");
+        return;
+    }
+
     for check in &config.checks {
         match &check.source {
             CheckSourceConfig::Shell { command } => match extract_argv0(command) {
@@ -319,7 +328,16 @@ fn check_paths(config: &ConfigV1, c: &mut Counters) {
                     check.name
                 )),
             },
-            CheckSourceConfig::PreCommit { .. } => check_recipe_argv0(c, &check.name, "pre-commit"),
+            // Adopted `type = "pre_commit"` checks from `klasp init --adopt --mode mirror`
+            // surface a detailed WARN with install guidance so users know exactly what to fix.
+            CheckSourceConfig::PreCommit { .. } => match which::which("pre-commit") {
+                Ok(_) => c.ok(&format!("path[{}]: `pre-commit` found in PATH", check.name)),
+                Err(_) => c.warn(&format!(
+                    "path[{}]: `pre-commit` not on PATH; check `{}` will fail to run \
+                         — install with `pip install pre-commit` or via your package manager",
+                    check.name, check.name
+                )),
+            },
             CheckSourceConfig::Fallow { .. } => check_recipe_argv0(c, &check.name, "fallow"),
             CheckSourceConfig::Pytest { .. } => check_recipe_argv0(c, &check.name, "pytest"),
             CheckSourceConfig::Cargo { .. } => check_recipe_argv0(c, &check.name, "cargo"),

@@ -6,13 +6,17 @@
 //! grows. See [docs/design.md §5].
 //!
 //! Pass `--force` to overwrite an existing file without prompting.
+//! Pass `--adopt` to detect existing gates and propose a mirrored config.
+//! Combine `--adopt` with `--mode mirror` to write the config, or use
+//! `--mode inspect` (default) to only print the plan without writing.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::cli::InitArgs;
+use crate::adopt::plan::AdoptMode;
+use crate::cli::{AdoptModeArg, InitArgs};
 
 /// Example `klasp.toml` written by `klasp init`. Every uncommented line
 /// must parse cleanly via `klasp_core::ConfigV1::parse`.
@@ -46,14 +50,65 @@ policy = "any_fail"
 "#;
 
 pub fn run(args: &InitArgs) -> ExitCode {
-    match try_run(args) {
-        Ok(path) => {
-            println!("wrote {}", path.display());
+    if args.adopt || args.mode != AdoptModeArg::Inspect {
+        run_adopt(args)
+    } else {
+        match try_run(args) {
+            Ok(path) => {
+                println!("wrote {}", path.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("klasp init: {e:#}");
+                ExitCode::FAILURE
+            }
+        }
+    }
+}
+
+/// Adoption dispatch: detect gates, then inspect / mirror / chain.
+fn run_adopt(args: &InitArgs) -> ExitCode {
+    let repo_root =
+        match crate::cmd::install::resolve_repo_root(None).context("resolving repo root") {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("klasp init: {e:#}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+    let plan = match crate::adopt::detect::detect_all(&repo_root) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("klasp init: detecting gates: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mode: AdoptMode = args.mode.into();
+
+    match mode {
+        AdoptMode::Inspect => {
+            print!("{}", crate::adopt::render::render_plan(&plan));
             ExitCode::SUCCESS
         }
-        Err(e) => {
-            eprintln!("klasp init: {e:#}");
-            ExitCode::FAILURE
+        AdoptMode::Mirror => {
+            print!("{}", crate::adopt::render::render_plan(&plan));
+            match crate::adopt::writer::write_klasp_toml(&repo_root, &plan, args.force) {
+                Ok(path) => {
+                    println!("wrote klasp.toml at {}", path.display());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("klasp init: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        AdoptMode::Chain => {
+            let msg = crate::adopt::mode::chain_unsupported_message(&plan);
+            eprint!("{msg}");
+            ExitCode::from(2)
         }
     }
 }
@@ -69,20 +124,8 @@ fn try_run(args: &InitArgs) -> Result<PathBuf> {
         ));
     }
 
-    atomic_write_text(&target, EXAMPLE_TOML)
+    crate::fs_util::atomic_write_text(&target, EXAMPLE_TOML)
         .with_context(|| format!("writing klasp.toml to {}", target.display()))?;
 
     Ok(target)
-}
-
-/// Atomic write via tempfile + rename. No chmod — config files don't need
-/// an execute bit.
-fn atomic_write_text(path: &Path, contents: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut tf = tempfile::NamedTempFile::new_in(dir)?;
-    tf.write_all(contents.as_bytes())?;
-    tf.flush()?;
-    tf.persist(path).map_err(|e| e.error)?;
-    Ok(())
 }

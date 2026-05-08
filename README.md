@@ -132,6 +132,8 @@ Prebuilt binaries cover `darwin-arm64`, `linux-x64-gnu`, `linux-arm64-gnu`, and 
 
 ### Set up a repo
 
+Already have pre-commit, Husky, or Lefthook? Run `klasp init --adopt --mode inspect` to see what klasp will mirror — see [docs/adopt.md](docs/adopt.md).
+
 ```bash
 cd your-project
 klasp init                                 # writes klasp.toml at repo root

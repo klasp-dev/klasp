@@ -5,8 +5,10 @@
 //! `uninstall`, `doctor`) still return their W1 placeholder — those land in
 //! W2 / W4 per [docs/roadmap.md §"Timeline"].
 
+mod adopt;
 mod cli;
 mod cmd;
+mod fs_util;
 mod git;
 mod output;
 mod registry;

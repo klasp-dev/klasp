@@ -4,4 +4,6 @@
 //! output formatters so the `tests/output_formats.rs` integration tests can
 //! call them directly without spawning a subprocess.
 
+pub mod adopt;
+pub(crate) mod fs_util;
 pub mod output;
