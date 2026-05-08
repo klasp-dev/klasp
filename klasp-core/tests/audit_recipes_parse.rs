@@ -31,7 +31,8 @@ use klasp_core::ConfigV1;
 /// Minimal valid prelude prepended to fragment-shaped TOML blocks
 /// before parsing. Keep this in sync with the smallest config that
 /// satisfies `ConfigV1`'s required fields (`version`, `[gate]`).
-const FRAGMENT_PRELUDE: &str = "version = 1\n[gate]\nagents = [\"claude_code\"]\npolicy = \"any_fail\"\n";
+const FRAGMENT_PRELUDE: &str =
+    "version = 1\n[gate]\nagents = [\"claude_code\"]\npolicy = \"any_fail\"\n";
 
 /// `[gate]`-only fragments (recipe docs use these to illustrate a
 /// single policy switch like `policy = "majority_fail"`) need to
@@ -388,7 +389,12 @@ command = \"true\"\n\
 end\n";
 
         let blocks = extract_toml_blocks(md);
-        assert_eq!(blocks.len(), 2, "expected 2 toml blocks, got {}", blocks.len());
+        assert_eq!(
+            blocks.len(),
+            2,
+            "expected 2 toml blocks, got {}",
+            blocks.len()
+        );
         assert!(blocks[0].body.contains("version = 1"));
         assert!(blocks[1].body.contains("[[checks]]"));
         assert!(!blocks[1].body.contains("echo skip me"));
@@ -408,7 +414,9 @@ end\n";
         );
         // `[[checks]]` fragment — needs the full prelude.
         assert_eq!(
-            classify("[[checks]]\nname = \"x\"\n[checks.source]\ntype = \"shell\"\ncommand = \"true\"\n"),
+            classify(
+                "[[checks]]\nname = \"x\"\n[checks.source]\ntype = \"shell\"\ncommand = \"true\"\n"
+            ),
             BlockKind::StructuredFragment
         );
         // `[[trigger]]` fragment.
