@@ -1,9 +1,37 @@
-# klasp recipes (v0.1, v0.2, v0.3)
+# klasp recipes (v0.1, v0.2, v0.3, v0.4)
 
 Worked `klasp.toml` snippets for the most common check tools. Every snippet is
 copy-pasteable into the `[[checks]]` section of your config; for the surrounding
 shape, see [`design.md` §3.5](./design.md#35-configv1-versioned-config) or the
 project's own dogfood config at [`/klasp.toml`](../klasp.toml).
+
+## First run
+
+The fastest path to a working gate is `klasp setup` (v0.4.0+):
+
+```bash
+cd your-project
+klasp setup
+```
+
+`klasp setup` runs the full detect → write → install → doctor sequence in one
+command. It detects existing gates (pre-commit, Husky, Lefthook, lint-staged,
+plain `.git/hooks`) and the AI agents installed on your machine, then writes a
+`klasp.toml` with `[gate].agents` narrowed to what you actually have. See
+[`docs/setup.md`](./setup.md) for `--dry-run`, `--interactive`, and the full
+orchestrator behavior.
+
+For a scriptable or CI-friendly alternative, use the three underlying primitives
+directly (see the per-language recipes below for the `klasp init --adopt`
+invocation pattern):
+
+```bash
+klasp init --adopt --mode mirror   # detect existing gates + write klasp.toml
+klasp install --agent all
+klasp doctor
+```
+
+---
 
 > v0.1 shipped exactly one check source: `type = "shell"`. v0.2 W4 added the
 > first typed recipe — `type = "pre_commit"` — alongside it; W5 adds

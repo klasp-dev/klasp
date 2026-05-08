@@ -6,6 +6,10 @@
 
 > Block AI coding agents (Claude Code, Codex, and Aider) on the same quality gates your humans hit at `git commit`.
 
+**v0.4.0 — just shipped:**
+[#97 / PR #101](https://github.com/klasp-dev/klasp/pull/101) `klasp init --adopt` — detects Husky, Lefthook, pre-commit, lint-staged, and plain git hooks; mirrors them into `klasp.toml` via `--mode mirror` (or preview with `--mode inspect`).
+[#103 / PR #104](https://github.com/klasp-dev/klasp/pull/104) `klasp setup` — one-command first-run orchestrator; auto-narrows `[gate].agents` to agents actually installed on the machine.
+
 ## What klasp does
 
 You write one `klasp.toml`. You run `klasp install`. Every AI agent on the repo (Claude Code today, more coming) is now blocked on the same `pre-commit`, `cargo clippy`, `pytest`, or any-shell-command gate your humans see at `git commit`. The agent gets a structured "blocked, here's why" reply at its tool-call surface (Claude Code's `PreToolUse` hook) so it self-corrects rather than retrying with `--no-verify`. That retry path is the failure mode burning every team running agents at scale.
@@ -132,26 +136,34 @@ Prebuilt binaries cover `darwin-arm64`, `linux-x64-gnu`, `linux-arm64-gnu`, and 
 
 ### Set up a repo
 
-Already have pre-commit, Husky, or Lefthook? Run `klasp init --adopt --mode inspect` to see what klasp will mirror — see [docs/adopt.md](docs/adopt.md).
+#### One command (recommended)
 
 ```bash
 cd your-project
-klasp init                                 # writes klasp.toml at repo root
-$EDITOR klasp.toml                         # add your checks (see below)
+klasp setup                                # detect → write → install → doctor in one step
+```
 
-# For Claude Code
-klasp install --agent claude_code          # writes .claude/hooks/klasp-gate.sh + merges .claude/settings.json
+`klasp setup` detects your existing gates (pre-commit, Husky, Lefthook, lint-staged) and the AI agents installed on your machine, writes a `klasp.toml` with `[gate].agents` narrowed to what you actually have, installs the hook surfaces, and runs `klasp doctor`. See [`docs/setup.md`](docs/setup.md) for `--dry-run`, `--interactive`, and detailed orchestrator behavior.
 
-# For Codex
-klasp install --agent codex               # writes .codex/git-hooks/<gate>.sh
+#### Scriptable / CI flow (3 commands)
 
-# For Aider
-klasp install --agent aider               # edits .aider.conf.yml commit-cmd-pre
+The three underlying primitives are unchanged and remain the right choice for scripts and CI:
 
-# Or all three at once
-klasp install --agent all                 # installs Claude Code + Codex + Aider in one step
-
+```bash
+cd your-project
+klasp init --adopt --mode mirror           # detect existing gates + write klasp.toml
+klasp install --agent all                  # installs Claude Code + Codex + Aider
 klasp doctor                               # verify the install is healthy
+```
+
+Already have pre-commit, Husky, or Lefthook? `klasp init --adopt --mode inspect` previews the mirror plan before writing anything — see [docs/adopt.md](docs/adopt.md).
+
+You can also install individual surfaces:
+
+```bash
+klasp install --agent claude_code          # writes .claude/hooks/klasp-gate.sh + merges .claude/settings.json
+klasp install --agent codex               # writes .codex/git-hooks/<gate>.sh
+klasp install --agent aider               # edits .aider.conf.yml commit-cmd-pre
 ```
 
 ### Uninstall
@@ -190,10 +202,12 @@ klasp install --agent all                  # regenerates the shim(s) with KLASP_
 | [Agent surface conformance matrix](./docs/conformance-matrix.md) | **v0.3** (#46, #68) — Claude, Codex, Aider all-green; Cursor documented NO-GO |
 | Cursor surface | NO-GO for v0.3 (#44) — see [`docs/cursor-assessment.md`](./docs/cursor-assessment.md) |
 | Parallel check execution | v0.2.5+ (#34) |
+| `klasp init --adopt` (detect + mirror existing gates) | **v0.4.0** ([#97](https://github.com/klasp-dev/klasp/issues/97), [PR #101](https://github.com/klasp-dev/klasp/pull/101)) — see [docs/adopt.md](./docs/adopt.md) |
+| `klasp setup` (one-command first-run orchestrator) | **v0.4.0** ([#103](https://github.com/klasp-dev/klasp/issues/103), [PR #104](https://github.com/klasp-dev/klasp/pull/104)) — see [docs/setup.md](./docs/setup.md) |
 
 v0.3 ships the third agent surface (Aider), the plugin extensibility protocol, and a
 [public conformance matrix](./docs/conformance-matrix.md) so "klasp supports agent X"
-means the same thing for every X. See [`docs/roadmap.md`](./docs/roadmap.md) for the full milestone plan.
+means the same thing for every X. v0.4.0 adds gate adoption and the one-command setup flow. See [`docs/roadmap.md`](./docs/roadmap.md) for the full milestone plan.
 
 ## Example `klasp.toml`
 
@@ -268,6 +282,8 @@ See [`docs/recipes.md`](./docs/recipes.md#verdict-policies) for selection guidan
 
 ## Documentation
 
+- [`docs/setup.md`](./docs/setup.md) — `klasp setup` orchestrator: flags, agent detection logic, duplicate check-name handling
+- [`docs/adopt.md`](./docs/adopt.md) — `klasp init --adopt`: gate detectors, mirror vs chain modes, example session
 - [`docs/design.md`](./docs/design.md) — v0.1 architecture, abstractions, and rationale
 - [`docs/recipes.md`](./docs/recipes.md) — worked `klasp.toml` examples for pre-commit, fallow, pytest, cargo, ESLint/Biome, ruff; verdict policy guidance
 - [`docs/audits/`](./docs/audits/README.md) — per-stack audit recipes (Python, TypeScript, Rust, Go, polyglot, monorepo) with tiered configurations
