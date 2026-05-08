@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "klasp"
-version = "0.3.0"
+version = "0.4.0"
 description = "Block AI coding agents (Claude Code, Codex, Aider) on the same quality gates your humans hit at git commit."
 readme = "README.md"
 requires-python = ">=3.9"

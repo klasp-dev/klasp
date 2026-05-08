@@ -64,6 +64,35 @@ After adopting, run `klasp doctor` to verify that the binaries referenced by
 adopted checks are available on PATH. Doctor surfaces adopted `type = "pre_commit"`
 checks whose `pre-commit` binary is missing and prints an install hint.
 
+## Agent narrowing
+
+When `--mode mirror` writes `klasp.toml`, the `[gate].agents` field is
+populated from the agents detected on your machine (the same detection logic
+`klasp setup` uses):
+
+| Agent         | Detected when                                               |
+|---------------|-------------------------------------------------------------|
+| `claude_code` | `~/.claude/` directory exists                               |
+| `codex`       | `~/.codex/` directory exists                               |
+| `aider`       | `~/.aider`, `~/.aider.conf.yml`, or `~/.aiderignore` exists |
+
+If none are detected, the written config falls back to the three-agent default
+(`["claude_code", "codex", "aider"]`) with an inline comment explaining how to
+narrow the list manually.
+
+This means a machine with only Claude Code installed gets:
+
+```toml
+[gate]
+agents = ["claude_code"]
+```
+
+rather than a three-agent list that would produce spurious `klasp doctor` FAILs
+for Codex and Aider.
+
+If you run `klasp install --agent X` for an agent not listed in `[gate].agents`,
+klasp warns that the install is narrower than the declared agent list.
+
 ## Example session
 
 ```text
@@ -84,15 +113,20 @@ WARN plain git hook
     klasp will not overwrite it
     run with --mode chain to append a managed block, or mirror the command manually
 
+Detected agents: claude_code
+
 Next:
   klasp init --adopt --mode mirror
-  klasp install --agent all
+  klasp install --agent claude_code
   klasp doctor
 ```
 
 Run `klasp init --adopt --mode mirror` to write the `klasp.toml`, then
-`klasp install --agent all` to install the gate hook, and `klasp doctor` to
+`klasp install --agent <detected>` to install the gate hook, and `klasp doctor` to
 verify each adopted binary is on PATH.
+
+For a single-command alternative that runs all of the above automatically, use
+`klasp setup` — see [`docs/setup.md`](./setup.md).
 
 ## Future work
 
