@@ -7,6 +7,7 @@
 //! they read fixture files and propose `klasp.toml` checks; they never
 //! modify hook infrastructure.
 pub mod detect;
+pub mod detect_agents;
 pub mod detect_husky;
 pub mod detect_lefthook;
 pub mod detect_lint_staged;

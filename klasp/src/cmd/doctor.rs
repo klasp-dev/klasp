@@ -37,31 +37,31 @@ use crate::cmd::install::resolve_repo_root;
 use crate::registry::SurfaceRegistry;
 
 /// FAIL/WARN counters for the aggregate summary. `INFO` lines do not count.
-struct Counters {
-    fails: usize,
-    warns: usize,
+pub(crate) struct Counters {
+    pub(crate) fails: usize,
+    pub(crate) warns: usize,
 }
 
 impl Counters {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { fails: 0, warns: 0 }
     }
 
-    fn ok(&self, msg: &str) {
+    pub(crate) fn ok(&self, msg: &str) {
         println!("OK    {msg}");
     }
 
-    fn warn(&mut self, msg: &str) {
+    pub(crate) fn warn(&mut self, msg: &str) {
         self.warns += 1;
         println!("WARN  {msg}");
     }
 
-    fn fail(&mut self, msg: &str) {
+    pub(crate) fn fail(&mut self, msg: &str) {
         self.fails += 1;
         println!("FAIL  {msg}");
     }
 
-    fn info(msg: &str) {
+    pub(crate) fn info(msg: &str) {
         println!("INFO  {msg}");
     }
 }
@@ -99,7 +99,7 @@ pub fn run(_args: &DoctorArgs) -> ExitCode {
 /// Check 1 — load `klasp.toml`. Returns the parsed config so check 4 can
 /// iterate `config.checks`. `None` on any load failure (the corresponding
 /// FAIL line has already been emitted).
-fn check_config(repo_root: &Path, c: &mut Counters) -> Option<ConfigV1> {
+pub(crate) fn check_config(repo_root: &Path, c: &mut Counters) -> Option<ConfigV1> {
     match ConfigV1::load(repo_root) {
         Ok(cfg) => {
             c.ok("config: klasp.toml loaded OK");
@@ -147,7 +147,7 @@ fn check_config(repo_root: &Path, c: &mut Counters) -> Option<ConfigV1> {
 /// Additionally, if `AGENTS.md` is present but `"codex"` is not declared in
 /// `[gate].agents`, emit an INFO suggestion (non-fatal) so users learn they
 /// can enable codex gate coverage.
-fn check_surfaces(repo_root: &Path, config: Option<&ConfigV1>, c: &mut Counters) {
+pub(crate) fn check_surfaces(repo_root: &Path, config: Option<&ConfigV1>, c: &mut Counters) {
     let registry = SurfaceRegistry::default();
     let mut active = 0usize;
 
@@ -307,7 +307,7 @@ fn check_settings(repo_root: &Path, surface: &dyn AgentSurface, c: &mut Counters
 /// Covers issue #97 acceptance criterion #9: adopted `type = "pre_commit"`
 /// checks surface a helpful WARN when `pre-commit` is missing from PATH,
 /// including install guidance.
-fn check_paths(config: &ConfigV1, c: &mut Counters) {
+pub(crate) fn check_paths(config: &ConfigV1, c: &mut Counters) {
     if config.checks.is_empty() {
         Counters::info("no checks declared in klasp.toml — add [[checks]] blocks to gate agents");
         return;
@@ -371,7 +371,7 @@ fn check_recipe_argv0(c: &mut Counters, check_name: &str, argv0: &str) {
 /// Return the first non-`KEY=VALUE` whitespace-separated token from
 /// `command`. Shell prefixes like `PYTHONPATH=. pytest` should resolve
 /// `pytest`, not `PYTHONPATH=.`.
-fn extract_argv0(command: &str) -> Option<&str> {
+pub(crate) fn extract_argv0(command: &str) -> Option<&str> {
     command
         .split_ascii_whitespace()
         .find(|token| !token.contains('='))

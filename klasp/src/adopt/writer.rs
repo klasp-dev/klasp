@@ -5,15 +5,18 @@
 //! After writing, the generated TOML is validated by round-tripping it through
 //! `klasp_core::ConfigV1::parse` — any generator bug is caught before the
 //! file reaches the user's repo.
-//!
-//! See klasp-dev/klasp#97.
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::adopt::plan::{AdoptionPlan, ProposedCheckSource};
+use crate::adopt::plan::{AdoptionPlan, GateType, ProposedCheckSource};
 
 /// Write (or overwrite) `<repo_root>/klasp.toml` from the adoption plan.
+///
+/// `agents` — when `Some`, the `[gate].agents` array is set to exactly those
+/// values (narrowed to what the machine has installed). When `None`, the
+/// three-agent fallback with an "edit me" comment is used.
 ///
 /// Returns the absolute path of the written file on success.
 ///
@@ -22,7 +25,12 @@ use crate::adopt::plan::{AdoptionPlan, ProposedCheckSource};
 /// - `AlreadyExists` — `klasp.toml` already exists and `force` is `false`.
 /// - `InvalidData`  — the generated TOML fails `ConfigV1::parse` (generator bug).
 /// - Other `io::Error` variants propagated from filesystem operations.
-pub fn write_klasp_toml(repo_root: &Path, plan: &AdoptionPlan, force: bool) -> io::Result<PathBuf> {
+pub fn write_klasp_toml(
+    repo_root: &Path,
+    plan: &AdoptionPlan,
+    force: bool,
+    agents: Option<&[String]>,
+) -> io::Result<PathBuf> {
     let target = repo_root.join("klasp.toml");
 
     if target.exists() && !force {
@@ -32,7 +40,7 @@ pub fn write_klasp_toml(repo_root: &Path, plan: &AdoptionPlan, force: bool) -> i
         ));
     }
 
-    let toml_content = generate_toml(plan);
+    let toml_content = generate_toml(plan, agents);
 
     // Safety-net: validate the generated TOML before touching the filesystem.
     klasp_core::ConfigV1::parse(&toml_content).map_err(|e| {
@@ -47,11 +55,30 @@ pub fn write_klasp_toml(repo_root: &Path, plan: &AdoptionPlan, force: bool) -> i
 }
 
 /// Generate the TOML content for the given plan.
-fn generate_toml(plan: &AdoptionPlan) -> String {
+///
+/// `agents` — when `Some`, use exactly that list. When `None`, use the
+/// three-agent fallback with an "edit me" comment.
+fn generate_toml(plan: &AdoptionPlan, agents: Option<&[String]>) -> String {
     let adopted_note = if plan.findings.is_empty() {
         "# adopted: no existing gates detected\n"
     } else {
         "# adopted: mirroring existing gates detected by `klasp init --adopt`\n"
+    };
+
+    let agents_line = match agents {
+        Some(list) => {
+            let items: Vec<String> = list
+                .iter()
+                .map(|a| format!("\"{}\"", escape_toml_string(a)))
+                .collect();
+            format!("agents = [{}]\n", items.join(", "))
+        }
+        None => {
+            // Three-agent fallback — keep today's default with an "edit me" hint.
+            "# Agent surfaces that klasp intercepts. Comment out any you don't use.\n\
+             agents = [\"claude_code\", \"codex\", \"aider\"]\n"
+                .to_string()
+        }
     };
 
     let mut out = format!(
@@ -63,15 +90,32 @@ fn generate_toml(plan: &AdoptionPlan) -> String {
          version = 1\n\
          \n\
          [gate]\n\
-         agents = [\"claude_code\", \"codex\", \"aider\"]\n\
+         {agents_line}\
          policy = \"any_fail\"\n"
     );
 
+    // Track seen names so duplicate checks get a gate-type suffix.
+    let mut seen_names: HashMap<String, usize> = HashMap::new();
+
     for finding in &plan.findings {
         for check in &finding.proposed_checks {
+            // Determine the effective name: first occurrence keeps the bare
+            // name; subsequent collisions get `<name>-<gate_suffix>`.
+            let base = &check.name;
+            let count = seen_names.entry(base.clone()).or_insert(0);
+            let effective_name = if *count == 0 {
+                base.clone()
+            } else {
+                format!("{}-{}", base, gate_suffix(&finding.gate_type))
+            };
+            *count += 1;
+
             out.push('\n');
             out.push_str("[[checks]]\n");
-            out.push_str(&format!("name = \"{}\"\n", escape_toml_string(&check.name)));
+            out.push_str(&format!(
+                "name = \"{}\"\n",
+                escape_toml_string(&effective_name)
+            ));
 
             let trigger_items: Vec<String> = check
                 .triggers
@@ -113,6 +157,22 @@ fn generate_toml(plan: &AdoptionPlan) -> String {
     out
 }
 
+/// Return a short suffix string for a gate type, used when two checks from
+/// different detectors collide on the same base name (e.g. both Husky and
+/// Lefthook emit a check named "lint").
+///
+/// The suffix is appended with a hyphen: `lint` → `lint-husky`.
+fn gate_suffix(gate_type: &GateType) -> &'static str {
+    match gate_type {
+        GateType::PreCommitFramework => "pre-commit",
+        GateType::Husky { .. } => "husky",
+        GateType::Lefthook => "lefthook",
+        GateType::PlainGitHook { .. } => "git-hook",
+        GateType::LintStaged => "lint-staged",
+        GateType::Tooling(_) => "tooling",
+    }
+}
+
 /// Minimal TOML string escaping: backslash and double-quote characters only.
 /// TOML basic strings require `"` → `\"` and `\` → `\\`.
 fn escape_toml_string(s: &str) -> String {
@@ -125,8 +185,8 @@ mod tests {
 
     use super::*;
     use crate::adopt::plan::{
-        AdoptionPlan, ChainSupport, DetectedGate, GateType, ProposedCheck, ProposedCheckSource,
-        TriggerKind,
+        AdoptionPlan, ChainSupport, DetectedGate, GateType, HookStage, ProposedCheck,
+        ProposedCheckSource, TriggerKind,
     };
 
     fn pre_commit_plan() -> AdoptionPlan {
@@ -174,7 +234,7 @@ mod tests {
     fn writes_and_parses_pre_commit_check() {
         let tmp = tempfile::TempDir::new().unwrap();
         let plan = pre_commit_plan();
-        let written = write_klasp_toml(tmp.path(), &plan, false).unwrap();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
         assert_eq!(written, tmp.path().join("klasp.toml"));
 
         let content = std::fs::read_to_string(&written).unwrap();
@@ -193,7 +253,7 @@ mod tests {
     fn writes_and_parses_shell_check() {
         let tmp = tempfile::TempDir::new().unwrap();
         let plan = shell_plan("pnpm exec lint-staged");
-        let written = write_klasp_toml(tmp.path(), &plan, false).unwrap();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
         let content = std::fs::read_to_string(&written).unwrap();
         let config = klasp_core::ConfigV1::parse(&content).unwrap();
         assert_eq!(config.checks.len(), 1);
@@ -208,8 +268,8 @@ mod tests {
     fn errors_if_file_exists_without_force() {
         let tmp = tempfile::TempDir::new().unwrap();
         let plan = pre_commit_plan();
-        write_klasp_toml(tmp.path(), &plan, false).unwrap();
-        let err = write_klasp_toml(tmp.path(), &plan, false).unwrap_err();
+        write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
+        let err = write_klasp_toml(tmp.path(), &plan, false, None).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
     }
 
@@ -217,8 +277,8 @@ mod tests {
     fn overwrites_with_force() {
         let tmp = tempfile::TempDir::new().unwrap();
         let plan = pre_commit_plan();
-        write_klasp_toml(tmp.path(), &plan, false).unwrap();
-        let result = write_klasp_toml(tmp.path(), &plan, true);
+        write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
+        let result = write_klasp_toml(tmp.path(), &plan, true, None);
         assert!(result.is_ok(), "force should allow overwrite");
     }
 
@@ -226,7 +286,7 @@ mod tests {
     fn empty_plan_writes_minimal_scaffold() {
         let tmp = tempfile::TempDir::new().unwrap();
         let plan = AdoptionPlan::default();
-        let written = write_klasp_toml(tmp.path(), &plan, false).unwrap();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
         let content = std::fs::read_to_string(&written).unwrap();
         let config = klasp_core::ConfigV1::parse(&content).unwrap();
         assert!(config.checks.is_empty());
@@ -254,7 +314,7 @@ mod tests {
                 warnings: vec![],
             }],
         };
-        let written = write_klasp_toml(tmp.path(), &plan, false).unwrap();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
         let content = std::fs::read_to_string(&written).unwrap();
         let config = klasp_core::ConfigV1::parse(&content).unwrap();
         assert_eq!(config.checks.len(), 1);
@@ -284,11 +344,144 @@ mod tests {
     fn header_does_not_mention_mode_mirror() {
         let tmp = tempfile::TempDir::new().unwrap();
         let plan = AdoptionPlan::default();
-        let written = write_klasp_toml(tmp.path(), &plan, false).unwrap();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
         let content = std::fs::read_to_string(&written).unwrap();
         assert!(
             !content.contains("--mode mirror"),
             "header should not hardcode --mode mirror"
+        );
+    }
+
+    /// AC: when `agents` is `Some(["claude_code"])`, the generated TOML uses
+    /// exactly `agents = ["claude_code"]`.
+    #[test]
+    fn agents_some_uses_narrowed_list() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let plan = AdoptionPlan::default();
+        let agents = vec!["claude_code".to_string()];
+        let written = write_klasp_toml(tmp.path(), &plan, false, Some(&agents)).unwrap();
+        let content = std::fs::read_to_string(&written).unwrap();
+        let config = klasp_core::ConfigV1::parse(&content).unwrap();
+        assert_eq!(config.gate.agents, vec!["claude_code"]);
+        // The "edit me" fallback comment must NOT appear.
+        assert!(
+            !content.contains("Comment out any you don't use"),
+            "narrowed list should not include fallback comment"
+        );
+    }
+
+    /// AC: when `agents` is `None`, the three-agent fallback with the
+    /// "edit me" comment is used.
+    #[test]
+    fn agents_none_uses_three_agent_fallback_with_comment() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let plan = AdoptionPlan::default();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
+        let content = std::fs::read_to_string(&written).unwrap();
+        let config = klasp_core::ConfigV1::parse(&content).unwrap();
+        assert_eq!(config.gate.agents, vec!["claude_code", "codex", "aider"]);
+        assert!(
+            content.contains("Comment out any you don't use"),
+            "fallback should include edit-me comment"
+        );
+    }
+
+    /// AC: duplicate check names across gate types get a suffix on the second.
+    /// First "lint" stays "lint"; second "lint" (from a different gate) becomes
+    /// "lint-<gate_suffix>".
+    #[test]
+    fn duplicate_name_suffix_on_collision() {
+        let plan = AdoptionPlan {
+            findings: vec![
+                DetectedGate {
+                    gate_type: GateType::Husky {
+                        hook: HookStage::PreCommit,
+                    },
+                    source_path: PathBuf::from(".husky/pre-commit"),
+                    proposed_checks: vec![ProposedCheck {
+                        name: "lint".to_string(),
+                        triggers: vec![TriggerKind::Commit],
+                        timeout_secs: 60,
+                        source: ProposedCheckSource::Shell {
+                            command: "pnpm lint".to_string(),
+                        },
+                    }],
+                    chain_support: ChainSupport::ManualOnly,
+                    manual_chain_instructions: None,
+                    warnings: vec![],
+                },
+                DetectedGate {
+                    gate_type: GateType::Lefthook,
+                    source_path: PathBuf::from("lefthook.yml"),
+                    proposed_checks: vec![ProposedCheck {
+                        name: "lint".to_string(), // same name — should get suffix
+                        triggers: vec![TriggerKind::Commit],
+                        timeout_secs: 60,
+                        source: ProposedCheckSource::Shell {
+                            command: "pnpm lint".to_string(),
+                        },
+                    }],
+                    chain_support: ChainSupport::ManualOnly,
+                    manual_chain_instructions: None,
+                    warnings: vec![],
+                },
+            ],
+        };
+
+        let toml_str = generate_toml(&plan, None);
+
+        // First occurrence: bare name.
+        assert!(
+            toml_str.contains("name = \"lint\"\n"),
+            "first 'lint' should keep bare name:\n{toml_str}"
+        );
+        // Second occurrence: suffixed.
+        assert!(
+            toml_str.contains("name = \"lint-lefthook\"\n"),
+            "second 'lint' (from Lefthook) should be 'lint-lefthook':\n{toml_str}"
+        );
+
+        // Verify round-trip parse.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
+        let config = klasp_core::ConfigV1::parse(&std::fs::read_to_string(&written).unwrap())
+            .expect("collision-resolved TOML should parse cleanly");
+        let names: Vec<&str> = config.checks.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["lint", "lint-lefthook"]);
+    }
+
+    /// AC: first occurrence of a name is always kept bare — suffix only kicks
+    /// in on collision, never preemptively.
+    #[test]
+    fn first_occurrence_keeps_bare_name() {
+        let plan = AdoptionPlan {
+            findings: vec![DetectedGate {
+                gate_type: GateType::Husky {
+                    hook: HookStage::PreCommit,
+                },
+                source_path: PathBuf::from(".husky/pre-commit"),
+                proposed_checks: vec![ProposedCheck {
+                    name: "lint".to_string(),
+                    triggers: vec![TriggerKind::Commit],
+                    timeout_secs: 60,
+                    source: ProposedCheckSource::Shell {
+                        command: "pnpm lint".to_string(),
+                    },
+                }],
+                chain_support: ChainSupport::ManualOnly,
+                manual_chain_instructions: None,
+                warnings: vec![],
+            }],
+        };
+
+        let toml_str = generate_toml(&plan, None);
+        assert!(
+            toml_str.contains("name = \"lint\"\n"),
+            "single 'lint' must stay bare:\n{toml_str}"
+        );
+        assert!(
+            !toml_str.contains("lint-husky"),
+            "no suffix unless collision:\n{toml_str}"
         );
     }
 }
