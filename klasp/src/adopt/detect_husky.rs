@@ -2,7 +2,8 @@
 //!
 //! Each present file produces one [`DetectedGate`] with:
 //! - `gate_type`: [`GateType::Husky`] carrying the hook stage
-//! - `proposed_checks`: derived from the first substantive command in the script
+//! - `proposed_checks`: one [`ProposedCheck`] per substantive command found in
+//!   the script body (multi-line hook bodies produce multiple checks)
 //! - `chain_support`: always [`ChainSupport::ManualOnly`] (v1 never auto-edits
 //!   `.husky/*`)
 //!
@@ -64,10 +65,10 @@ fn build_gate(
     repo_root: &Path,
 ) -> DetectedGate {
     let trigger = hook_to_trigger(stage);
-    let first_cmd = first_substantive_command(body);
+    let cmds = substantive_commands(body);
 
     let (proposed_checks, warnings) =
-        build_proposed_checks(hook_name, first_cmd.as_deref(), trigger, body, repo_root);
+        build_proposed_checks(hook_name, &cmds, trigger, body, repo_root);
 
     let instructions = format!(
         "Add `klasp install` to your CI pipeline and wire klasp manually into \
@@ -85,9 +86,12 @@ fn build_gate(
     }
 }
 
-/// Extract the first non-comment, non-empty, non-bookkeeping line from the
-/// hook script body. Returns `None` if no such line is found.
-fn first_substantive_command(body: &str) -> Option<String> {
+/// Extract all non-comment, non-empty, non-bookkeeping lines from the hook
+/// script body. Returns every substantive line in order so that multi-line
+/// hook bodies (e.g. `pnpm lint\npnpm test`) produce one check per command.
+/// Returns an empty `Vec` when no substantive lines are found.
+fn substantive_commands(body: &str) -> Vec<String> {
+    let mut cmds = Vec::new();
     for line in body.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -96,9 +100,9 @@ fn first_substantive_command(body: &str) -> Option<String> {
         if is_bookkeeping(trimmed) {
             continue;
         }
-        return Some(trimmed.to_string());
+        cmds.push(trimmed.to_string());
     }
-    None
+    cmds
 }
 
 /// True when the line is Husky-internal scaffolding that should be ignored
@@ -176,41 +180,26 @@ fn derive_name_from_command(cmd: &str, hook: &str) -> String {
 }
 
 /// Build the `proposed_checks` and `warnings` for a Husky gate finding.
+///
+/// Emits one [`ProposedCheck`] per entry in `cmds` so that multi-line hook
+/// bodies (e.g. `pnpm lint\npnpm test`) produce one check per command.
+/// Each check inherits the same `trigger` and uses `timeout_secs = 120` unless
+/// the command is a recognised pattern with its own timeout.
 fn build_proposed_checks(
     hook: &str,
-    first_cmd: Option<&str>,
+    cmds: &[String],
     trigger: super::plan::TriggerKind,
     body: &str,
     repo_root: &Path,
 ) -> (Vec<ProposedCheck>, Vec<String>) {
     let mut warnings = Vec::new();
 
-    let Some(cmd) = first_cmd else {
+    if cmds.is_empty() {
         warnings.push(format!(
             "Husky {hook} hook is empty; no checks proposed"
         ));
         return (vec![], warnings);
-    };
-
-    let (name, timeout_secs, source) =
-        if let Some((n, t)) = classify_command(cmd) {
-            (
-                n.to_string(),
-                t,
-                ProposedCheckSource::Shell {
-                    command: cmd.to_string(),
-                },
-            )
-        } else {
-            let n = derive_name_from_command(cmd, hook);
-            (
-                n,
-                120,
-                ProposedCheckSource::Shell {
-                    command: cmd.to_string(),
-                },
-            )
-        };
+    }
 
     // Duplicate-execution warning: lint-staged in hook body AND in package.json.
     let references_lint_staged = body.contains("lint-staged");
@@ -226,14 +215,24 @@ fn build_proposed_checks(
         }
     }
 
-    let check = ProposedCheck {
-        name,
-        triggers: vec![trigger],
-        timeout_secs,
-        source,
-    };
+    let mut checks = Vec::new();
+    for cmd in cmds {
+        let (name, timeout_secs) = if let Some((n, t)) = classify_command(cmd) {
+            (n.to_string(), t)
+        } else {
+            (derive_name_from_command(cmd, hook), 120)
+        };
+        checks.push(ProposedCheck {
+            name,
+            triggers: vec![trigger],
+            timeout_secs,
+            source: ProposedCheckSource::Shell {
+                command: cmd.clone(),
+            },
+        });
+    }
 
-    (vec![check], warnings)
+    (checks, warnings)
 }
 
 #[cfg(test)]
@@ -349,5 +348,56 @@ mod tests {
         write_hook(dir.path(), "pre-commit", "#!/bin/sh\npnpm test\n");
         let result = detect(dir.path()).unwrap();
         assert!(matches!(result[0].chain_support, ChainSupport::ManualOnly));
+    }
+
+    #[test]
+    fn multi_line_pnpm_lint_and_pnpm_test_produces_two_checks() {
+        let dir = TempDir::new().unwrap();
+        write_hook(
+            dir.path(),
+            "pre-commit",
+            "#!/bin/sh\npnpm lint\npnpm test\n",
+        );
+        let result = detect(dir.path()).unwrap();
+        assert_eq!(result.len(), 1);
+        let gate = &result[0];
+        assert_eq!(
+            gate.proposed_checks.len(),
+            2,
+            "expected 2 checks for 2-line body, got: {:?}",
+            gate.proposed_checks.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
+        assert_eq!(gate.proposed_checks[0].name, "lint");
+        assert_eq!(gate.proposed_checks[1].name, "test");
+        // Both checks share the same trigger.
+        assert_eq!(
+            gate.proposed_checks[0].triggers,
+            vec![super::super::plan::TriggerKind::Commit]
+        );
+        assert_eq!(
+            gate.proposed_checks[1].triggers,
+            vec![super::super::plan::TriggerKind::Commit]
+        );
+    }
+
+    #[test]
+    fn multi_line_lint_staged_and_pnpm_test_produces_two_named_checks() {
+        let dir = TempDir::new().unwrap();
+        write_hook(
+            dir.path(),
+            "pre-commit",
+            "#!/bin/sh\nnpx lint-staged\npnpm test\n",
+        );
+        let result = detect(dir.path()).unwrap();
+        assert_eq!(result.len(), 1);
+        let gate = &result[0];
+        assert_eq!(
+            gate.proposed_checks.len(),
+            2,
+            "expected 2 checks, got: {:?}",
+            gate.proposed_checks.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
+        assert_eq!(gate.proposed_checks[0].name, "lint-staged");
+        assert_eq!(gate.proposed_checks[1].name, "test");
     }
 }

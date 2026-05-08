@@ -439,6 +439,59 @@ fn mirror_existing_klasp_toml_with_force_overwrites() {
     );
 }
 
+/// AC: a Husky hook with two substantive commands (e.g. `pnpm lint\npnpm test`)
+/// must produce two `[[checks]]` entries in klasp.toml — one per command.
+#[test]
+fn mirror_husky_multi_command_emits_multiple_checks() {
+    let Some(dir) = fixture_repo() else { return };
+
+    fs::create_dir_all(dir.path().join(".husky")).unwrap();
+    fs::write(
+        dir.path().join(".husky/pre-commit"),
+        "#!/bin/sh\n. \"$(dirname -- \"$0\")/_/husky.sh\"\npnpm lint\npnpm test\n",
+    )
+    .unwrap();
+
+    let out = run_init_adopt(dir.path(), &["--mode", "mirror"]);
+
+    assert!(
+        out.status.success(),
+        "expected exit 0\nstdout: {}\nstderr: {}",
+        stdout(&out),
+        stderr(&out)
+    );
+
+    let toml_path = dir.path().join("klasp.toml");
+    assert!(toml_path.exists(), "mirror mode must write klasp.toml");
+
+    let config = klasp_core::ConfigV1::from_file(&toml_path)
+        .expect("written klasp.toml must parse via ConfigV1");
+
+    let shell_checks: Vec<_> = config
+        .checks
+        .iter()
+        .filter(|ch| matches!(ch.source, klasp_core::CheckSourceConfig::Shell { .. }))
+        .collect();
+
+    assert_eq!(
+        shell_checks.len(),
+        2,
+        "expected 2 shell checks for 2-command hook body, got {}:\n{}",
+        shell_checks.len(),
+        fs::read_to_string(&toml_path).unwrap()
+    );
+
+    let names: Vec<&str> = shell_checks.iter().map(|c| c.name.as_str()).collect();
+    assert!(
+        names.contains(&"lint"),
+        "expected a 'lint' check; got: {names:?}"
+    );
+    assert!(
+        names.contains(&"test"),
+        "expected a 'test' check; got: {names:?}"
+    );
+}
+
 // ─── chain mode ─────────────────────────────────────────────────────────────
 
 /// AC: chain mode is rejected with exit code 2 and an explanatory message that
