@@ -1,6 +1,6 @@
 {
   "name": "@klasp-dev/klasp-darwin-arm64",
-  "version": "0.0.0",
+  "version": "0.4.0",
   "description": "Per-platform binary for klasp on macOS arm64. Installed automatically as an optional dependency of @klasp-dev/klasp.",
   "homepage": "https://klasp.dev",
   "repository": {

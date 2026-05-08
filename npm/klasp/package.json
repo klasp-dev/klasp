@@ -1,6 +1,6 @@
 {
   "name": "@klasp-dev/klasp",
-  "version": "0.0.0",
+  "version": "0.4.0",
   "description": "Block AI coding agents (Claude Code, Codex, Aider) on the same quality gates your humans hit at git commit.",
   "homepage": "https://klasp.dev",
   "repository": {
@@ -31,9 +31,9 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@klasp-dev/klasp-darwin-arm64": "0.0.0",
-    "@klasp-dev/klasp-linux-x64-gnu": "0.0.0",
-    "@klasp-dev/klasp-linux-arm64-gnu": "0.0.0",
-    "@klasp-dev/klasp-win32-x64": "0.0.0"
+    "@klasp-dev/klasp-darwin-arm64": "0.4.0",
+    "@klasp-dev/klasp-linux-x64-gnu": "0.4.0",
+    "@klasp-dev/klasp-linux-arm64-gnu": "0.4.0",
+    "@klasp-dev/klasp-win32-x64": "0.4.0"
   }
 }

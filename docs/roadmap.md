@@ -1,6 +1,6 @@
 # klasp roadmap
 
-> **Status (2026-05-04).** v0.1 shipped on `main` at [`234908e`](https://github.com/klasp-dev/klasp/commit/234908e) (PR [#17](https://github.com/klasp-dev/klasp/pull/17), W6-7). The `v0.1.0` tag push to publish to registries is the next step and the maintainer's responsibility. **v0.2 (Codex + named recipes) is the active milestone** — checklist below is unchanged from the original commitments and work has not started.
+> **Status (2026-05-08).** v0.1 shipped on `main` at [`234908e`](https://github.com/klasp-dev/klasp/commit/234908e) (PR [#17](https://github.com/klasp-dev/klasp/pull/17), W6-7). v0.4.0 shipped `klasp init --adopt` ([#97](https://github.com/klasp-dev/klasp/issues/97), [PR #101](https://github.com/klasp-dev/klasp/pull/101)) and `klasp setup` ([#103](https://github.com/klasp-dev/klasp/issues/103), [PR #104](https://github.com/klasp-dev/klasp/pull/104)) on `main` at [`fb61d78`](https://github.com/klasp-dev/klasp/commit/fb61d78). **v0.2 (Codex + named recipes) is the active milestone** — checklist below is unchanged from the original commitments and work has not started.
 
 > **Reading this in 30 seconds:** v0.1 is a Claude Code-only gate (now shipped). v0.2 adds Codex three months later. v0.2.5 adds parallel execution and monorepo discovery. v0.3 adds Cursor + Aider plus an experimental plugin model. v1.0 commits to a stable schema 9-12 months from v0.1. Nothing here is contractual — dates slip when the design slips. The shape is what matters.
 
@@ -212,6 +212,21 @@ Parallel check execution, configurable verdict policies, and JUnit/SARIF output 
 - Hosted runtime, team rollups → v1.0+
 - Auto-fix mode → never; klasp gates, it doesn't write code
 - Parallel check execution → v0.3.x at earliest (deprioritised during the v0.2.5 reframe; surface work took the queue position)
+
+---
+
+## v0.4.0 — Gate adoption + one-command setup (Shipped)
+
+**Headline:** `klasp init --adopt` mirrors existing gates into `klasp.toml` without touching the original configs. `klasp setup` collapses the first-run workflow into one command and auto-narrows `[gate].agents` to agents actually on the machine.
+
+### Deliverables
+
+- [x] **`klasp init --adopt`** ([#97](https://github.com/klasp-dev/klasp/issues/97), [PR #101](https://github.com/klasp-dev/klasp/pull/101)): detects pre-commit, Husky, Lefthook, lint-staged, and plain `.git/hooks`; mirrors them into a fresh `klasp.toml` via `--mode mirror`. `--mode inspect` previews without writing. See [`docs/adopt.md`](./adopt.md).
+- [x] **`klasp setup`** ([#103](https://github.com/klasp-dev/klasp/issues/103), [PR #104](https://github.com/klasp-dev/klasp/pull/104)): one-command first-run orchestrator running detect-agents → detect-gates → narrow → write → install → doctor in sequence. Defaults `[gate].agents` to agents detected on the machine. Auto-suffixes duplicate check names on collision (`lint-husky` / `lint-lefthook`). Warns when `klasp install --agent X` is narrower than `[gate].agents`. See [`docs/setup.md`](./setup.md).
+
+### Non-goals (per #103)
+
+The current three-command flow (`klasp init --adopt --mode mirror` + `klasp install --agent all` + `klasp doctor`) stays fully supported and unchanged. `klasp setup` is additive sugar — it does not deprecate or replace the primitives.
 
 ---
 
