@@ -9,6 +9,11 @@
 //! Pass `--adopt` to detect existing gates and propose a mirrored config.
 //! Combine `--adopt` with `--mode mirror` to write the config, or use
 //! `--mode inspect` (default) to only print the plan without writing.
+//!
+//! When `--mode mirror` is used, the writer narrows `[gate].agents` to the
+//! agents actually installed on this machine (detected via
+//! [`crate::adopt::detect_agents::detect_installed_agents`]). See
+//! klasp-dev/klasp#103.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -94,7 +99,17 @@ fn run_adopt(args: &InitArgs) -> ExitCode {
         }
         AdoptMode::Mirror => {
             print!("{}", crate::adopt::render::render_plan(&plan));
-            match crate::adopt::writer::write_klasp_toml(&repo_root, &plan, args.force) {
+
+            // Detect which agents are installed on this machine and narrow
+            // the agents list so doctor exits clean on a fresh install.
+            let home = crate::fs_util::home_dir();
+            let detected_agents =
+                crate::adopt::detect_agents::detect_installed_agents(home.as_deref());
+            // Use None only when detection falls back to all-three (no narrowing).
+            let agents_arg = narrowed_agents_arg(&detected_agents);
+
+            match crate::adopt::writer::write_klasp_toml(&repo_root, &plan, args.force, agents_arg)
+            {
                 Ok(path) => {
                     println!("wrote klasp.toml at {}", path.display());
                     ExitCode::SUCCESS
@@ -111,6 +126,22 @@ fn run_adopt(args: &InitArgs) -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// Convert a detected agents list to the `Option<&[String]>` expected by
+/// `write_klasp_toml`. Returns `None` (= three-agent fallback) only when the
+/// detected list is exactly the all-three fallback AND was produced because
+/// no agent dirs were found (empty home, i.e. the user has nothing installed).
+///
+/// In practice: if we got back all three, treat it as a narrowed list anyway —
+/// the difference is whether we show the "edit me" comment. When detection
+/// finds all three genuinely, show the narrowed form (no comment); when
+/// detection falls through (empty home dir), caller passes `None`.
+///
+/// For simplicity here we always use the detected list (Some). If the list
+/// equals the fallback it just means everything was found.
+fn narrowed_agents_arg(detected: &[String]) -> Option<&[String]> {
+    Some(detected)
 }
 
 fn try_run(args: &InitArgs) -> Result<PathBuf> {

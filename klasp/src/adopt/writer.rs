@@ -6,7 +6,7 @@
 //! `klasp_core::ConfigV1::parse` — any generator bug is caught before the
 //! file reaches the user's repo.
 //!
-//! See klasp-dev/klasp#97.
+//! See klasp-dev/klasp#97, klasp-dev/klasp#103.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -15,6 +15,10 @@ use crate::adopt::plan::{AdoptionPlan, ProposedCheckSource};
 
 /// Write (or overwrite) `<repo_root>/klasp.toml` from the adoption plan.
 ///
+/// `agents` — when `Some`, the `[gate].agents` array is set to exactly those
+/// values (narrowed to what the machine has installed). When `None`, the
+/// three-agent fallback with an "edit me" comment is used.
+///
 /// Returns the absolute path of the written file on success.
 ///
 /// # Errors
@@ -22,7 +26,12 @@ use crate::adopt::plan::{AdoptionPlan, ProposedCheckSource};
 /// - `AlreadyExists` — `klasp.toml` already exists and `force` is `false`.
 /// - `InvalidData`  — the generated TOML fails `ConfigV1::parse` (generator bug).
 /// - Other `io::Error` variants propagated from filesystem operations.
-pub fn write_klasp_toml(repo_root: &Path, plan: &AdoptionPlan, force: bool) -> io::Result<PathBuf> {
+pub fn write_klasp_toml(
+    repo_root: &Path,
+    plan: &AdoptionPlan,
+    force: bool,
+    agents: Option<&[String]>,
+) -> io::Result<PathBuf> {
     let target = repo_root.join("klasp.toml");
 
     if target.exists() && !force {
@@ -32,7 +41,7 @@ pub fn write_klasp_toml(repo_root: &Path, plan: &AdoptionPlan, force: bool) -> i
         ));
     }
 
-    let toml_content = generate_toml(plan);
+    let toml_content = generate_toml(plan, agents);
 
     // Safety-net: validate the generated TOML before touching the filesystem.
     klasp_core::ConfigV1::parse(&toml_content).map_err(|e| {
@@ -47,11 +56,30 @@ pub fn write_klasp_toml(repo_root: &Path, plan: &AdoptionPlan, force: bool) -> i
 }
 
 /// Generate the TOML content for the given plan.
-fn generate_toml(plan: &AdoptionPlan) -> String {
+///
+/// `agents` — when `Some`, use exactly that list. When `None`, use the
+/// three-agent fallback with an "edit me" comment.
+fn generate_toml(plan: &AdoptionPlan, agents: Option<&[String]>) -> String {
     let adopted_note = if plan.findings.is_empty() {
         "# adopted: no existing gates detected\n"
     } else {
         "# adopted: mirroring existing gates detected by `klasp init --adopt`\n"
+    };
+
+    let agents_line = match agents {
+        Some(list) => {
+            let items: Vec<String> = list
+                .iter()
+                .map(|a| format!("\"{}\"", escape_toml_string(a)))
+                .collect();
+            format!("agents = [{}]\n", items.join(", "))
+        }
+        None => {
+            // Three-agent fallback — keep today's default with an "edit me" hint.
+            "# Agent surfaces that klasp intercepts. Comment out any you don't use.\n\
+             agents = [\"claude_code\", \"codex\", \"aider\"]\n"
+                .to_string()
+        }
     };
 
     let mut out = format!(
@@ -63,7 +91,7 @@ fn generate_toml(plan: &AdoptionPlan) -> String {
          version = 1\n\
          \n\
          [gate]\n\
-         agents = [\"claude_code\", \"codex\", \"aider\"]\n\
+         {agents_line}\
          policy = \"any_fail\"\n"
     );
 
@@ -174,7 +202,7 @@ mod tests {
     fn writes_and_parses_pre_commit_check() {
         let tmp = tempfile::TempDir::new().unwrap();
         let plan = pre_commit_plan();
-        let written = write_klasp_toml(tmp.path(), &plan, false).unwrap();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
         assert_eq!(written, tmp.path().join("klasp.toml"));
 
         let content = std::fs::read_to_string(&written).unwrap();
@@ -193,7 +221,7 @@ mod tests {
     fn writes_and_parses_shell_check() {
         let tmp = tempfile::TempDir::new().unwrap();
         let plan = shell_plan("pnpm exec lint-staged");
-        let written = write_klasp_toml(tmp.path(), &plan, false).unwrap();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
         let content = std::fs::read_to_string(&written).unwrap();
         let config = klasp_core::ConfigV1::parse(&content).unwrap();
         assert_eq!(config.checks.len(), 1);
@@ -208,8 +236,8 @@ mod tests {
     fn errors_if_file_exists_without_force() {
         let tmp = tempfile::TempDir::new().unwrap();
         let plan = pre_commit_plan();
-        write_klasp_toml(tmp.path(), &plan, false).unwrap();
-        let err = write_klasp_toml(tmp.path(), &plan, false).unwrap_err();
+        write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
+        let err = write_klasp_toml(tmp.path(), &plan, false, None).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
     }
 
@@ -217,8 +245,8 @@ mod tests {
     fn overwrites_with_force() {
         let tmp = tempfile::TempDir::new().unwrap();
         let plan = pre_commit_plan();
-        write_klasp_toml(tmp.path(), &plan, false).unwrap();
-        let result = write_klasp_toml(tmp.path(), &plan, true);
+        write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
+        let result = write_klasp_toml(tmp.path(), &plan, true, None);
         assert!(result.is_ok(), "force should allow overwrite");
     }
 
@@ -226,7 +254,7 @@ mod tests {
     fn empty_plan_writes_minimal_scaffold() {
         let tmp = tempfile::TempDir::new().unwrap();
         let plan = AdoptionPlan::default();
-        let written = write_klasp_toml(tmp.path(), &plan, false).unwrap();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
         let content = std::fs::read_to_string(&written).unwrap();
         let config = klasp_core::ConfigV1::parse(&content).unwrap();
         assert!(config.checks.is_empty());
@@ -254,7 +282,7 @@ mod tests {
                 warnings: vec![],
             }],
         };
-        let written = write_klasp_toml(tmp.path(), &plan, false).unwrap();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
         let content = std::fs::read_to_string(&written).unwrap();
         let config = klasp_core::ConfigV1::parse(&content).unwrap();
         assert_eq!(config.checks.len(), 1);
@@ -284,11 +312,48 @@ mod tests {
     fn header_does_not_mention_mode_mirror() {
         let tmp = tempfile::TempDir::new().unwrap();
         let plan = AdoptionPlan::default();
-        let written = write_klasp_toml(tmp.path(), &plan, false).unwrap();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
         let content = std::fs::read_to_string(&written).unwrap();
         assert!(
             !content.contains("--mode mirror"),
             "header should not hardcode --mode mirror"
+        );
+    }
+
+    /// AC: when `agents` is `Some(["claude_code"])`, the generated TOML uses
+    /// exactly `agents = ["claude_code"]`.
+    #[test]
+    fn agents_some_uses_narrowed_list() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let plan = AdoptionPlan::default();
+        let agents = vec!["claude_code".to_string()];
+        let written = write_klasp_toml(tmp.path(), &plan, false, Some(&agents)).unwrap();
+        let content = std::fs::read_to_string(&written).unwrap();
+        let config = klasp_core::ConfigV1::parse(&content).unwrap();
+        assert_eq!(config.gate.agents, vec!["claude_code"]);
+        // The "edit me" fallback comment must NOT appear.
+        assert!(
+            !content.contains("Comment out any you don't use"),
+            "narrowed list should not include fallback comment"
+        );
+    }
+
+    /// AC: when `agents` is `None`, the three-agent fallback with the
+    /// "edit me" comment is used.
+    #[test]
+    fn agents_none_uses_three_agent_fallback_with_comment() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let plan = AdoptionPlan::default();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
+        let content = std::fs::read_to_string(&written).unwrap();
+        let config = klasp_core::ConfigV1::parse(&content).unwrap();
+        assert_eq!(
+            config.gate.agents,
+            vec!["claude_code", "codex", "aider"]
+        );
+        assert!(
+            content.contains("Comment out any you don't use"),
+            "fallback should include edit-me comment"
         );
     }
 }
