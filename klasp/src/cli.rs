@@ -32,6 +32,8 @@ pub enum Cmd {
     Doctor(DoctorArgs),
     /// Manage klasp plugins.
     Plugins(PluginsArgs),
+    /// One-command first-run setup: detect gates, narrow agents, write config, install, doctor.
+    Setup(SetupArgs),
 }
 
 #[derive(Debug, Args)]
@@ -157,6 +159,18 @@ pub struct GateArgs {
 pub struct DoctorArgs {}
 
 #[derive(Debug, Args)]
+pub struct SetupArgs {
+    /// Walk through detected gates and agents with y/n prompts before
+    /// writing klasp.toml and running install.
+    #[arg(long)]
+    pub interactive: bool,
+
+    /// Print the detection plan and computed config without writing any files.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct PluginsArgs {
     #[command(subcommand)]
     pub action: PluginsAction,
@@ -191,5 +205,6 @@ pub fn run() -> ExitCode {
         Cmd::Gate(args) => cmd::gate::run(args),
         Cmd::Doctor(args) => cmd::doctor::run(args),
         Cmd::Plugins(args) => cmd::plugins::run(&args.action),
+        Cmd::Setup(args) => cmd::setup::run(args),
     }
 }
