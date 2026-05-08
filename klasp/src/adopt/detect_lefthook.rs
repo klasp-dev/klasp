@@ -12,8 +12,10 @@
 
 use std::path::Path;
 
+use super::detect::{first_existing_file, hook_to_trigger};
 use super::plan::{
-    ChainSupport, Confidence, DetectedGate, GateType, ProposedCheck, ProposedCheckSource,
+    ChainSupport, DetectedGate, GateType, HookStage, ProposedCheck, ProposedCheckSource,
+    TriggerKind,
 };
 
 /// Candidate filenames, in preference order.
@@ -34,18 +36,16 @@ const KNOWN_META_KEYS: &[&str] = &[
 ///
 /// # Errors
 ///
-/// Returns `Err` only for unexpected I/O failures (e.g. file removed between
-/// the `is_file` check and the read).
+/// Returns `Err` only for unexpected I/O failures.
 pub fn detect(repo_root: &Path) -> std::io::Result<Vec<DetectedGate>> {
-    for filename in LEFTHOOK_FILES {
-        let candidate = repo_root.join(filename);
-        if candidate.is_file() {
-            let body = std::fs::read_to_string(&candidate)?;
-            let gate = build_gate(candidate, &body);
-            return Ok(vec![gate]);
-        }
-    }
-    Ok(vec![])
+    let candidate = match first_existing_file(repo_root, LEFTHOOK_FILES) {
+        Some(p) => p,
+        None => return Ok(vec![]),
+    };
+
+    let body = std::fs::read_to_string(&candidate)?;
+    let gate = build_gate(candidate, &body);
+    Ok(vec![gate])
 }
 
 /// Build a [`DetectedGate`] from the Lefthook file at `source_path` with the
@@ -59,11 +59,7 @@ fn build_gate(source_path: std::path::PathBuf, body: &str) -> DetectedGate {
 
     // High only when we found at least one stanza AND parsed at least one
     // check from it. Templated-only files degrade to Medium via their warning.
-    let confidence = if has_recognised_stanza && !checks.is_empty() {
-        Confidence::High
-    } else {
-        Confidence::Medium
-    };
+    // (confidence removed; gate_type + warnings convey the same signal)
 
     let instructions =
         "Add `klasp install` to your CI pipeline. To chain klasp into Lefthook, append \
@@ -83,7 +79,6 @@ fn build_gate(source_path: std::path::PathBuf, body: &str) -> DetectedGate {
     DetectedGate {
         gate_type: GateType::Lefthook,
         source_path,
-        confidence,
         proposed_checks: checks,
         chain_support: ChainSupport::ManualOnly,
         manual_chain_instructions: Some(instructions),
@@ -111,9 +106,9 @@ struct ParseResult {
 fn parse_lefthook(body: &str) -> ParseResult {
     enum State {
         Idle,
-        InHook { trigger: &'static str },
-        InCommands { trigger: &'static str },
-        InEntry { trigger: &'static str, name: String },
+        InHook { trigger: TriggerKind },
+        InCommands { trigger: TriggerKind },
+        InEntry { trigger: TriggerKind, name: String },
     }
 
     let mut state = State::Idle;
@@ -131,9 +126,9 @@ fn parse_lefthook(body: &str) -> ParseResult {
 
         // A key at column 0 always resets the state machine.
         if indent == 0 {
-            if let Some(trigger) = hook_trigger(trimmed) {
+            if let Some(stage) = hook_stage(trimmed) {
                 has_recognised_stanza = true;
-                state = State::InHook { trigger };
+                state = State::InHook { trigger: hook_to_trigger(stage) };
                 continue;
             }
             if KNOWN_META_KEYS
@@ -185,8 +180,8 @@ fn parse_lefthook(body: &str) -> ParseResult {
                     }
                     checks.push(ProposedCheck {
                         name: name.clone(),
-                        triggers: vec![trigger.to_string()],
-                        timeout_secs: Some(120),
+                        triggers: vec![trigger],
+                        timeout_secs: 120,
                         source: ProposedCheckSource::Shell {
                             command: run_val.to_string(),
                         },
@@ -217,13 +212,12 @@ fn parse_lefthook(body: &str) -> ParseResult {
     }
 }
 
-/// Return `"commit"` for `pre-commit:`, `"push"` for `pre-push:`, `None`
-/// for anything else.
-fn hook_trigger(trimmed: &str) -> Option<&'static str> {
+/// Return the [`HookStage`] for `pre-commit:` / `pre-push:` lines, or `None`.
+fn hook_stage(trimmed: &str) -> Option<HookStage> {
     if trimmed == "pre-commit:" {
-        Some("commit")
+        Some(HookStage::PreCommit)
     } else if trimmed == "pre-push:" {
-        Some("push")
+        Some(HookStage::PrePush)
     } else {
         None
     }
@@ -274,13 +268,13 @@ mod tests {
         assert_eq!(gate.proposed_checks.len(), 2);
 
         let lint = gate.proposed_checks.iter().find(|c| c.name == "lint").unwrap();
-        assert_eq!(lint.triggers, vec!["commit"]);
+        assert_eq!(lint.triggers, vec![TriggerKind::Commit]);
         assert!(
             matches!(&lint.source, ProposedCheckSource::Shell { command } if command == "pnpm lint")
         );
 
         let test = gate.proposed_checks.iter().find(|c| c.name == "test").unwrap();
-        assert_eq!(test.triggers, vec!["commit"]);
+        assert_eq!(test.triggers, vec![TriggerKind::Commit]);
         assert!(
             matches!(&test.source, ProposedCheckSource::Shell { command } if command == "pnpm test")
         );
@@ -298,7 +292,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         let gate = &result[0];
         assert_eq!(gate.proposed_checks.len(), 1);
-        assert_eq!(gate.proposed_checks[0].triggers, vec!["push"]);
+        assert_eq!(gate.proposed_checks[0].triggers, vec![TriggerKind::Push]);
     }
 
     #[test]
@@ -316,10 +310,6 @@ mod tests {
         assert!(
             matches!(&gate.proposed_checks[0].source, ProposedCheckSource::Shell { command } if command.contains("{{ .somevar }}"))
         );
-        // Confidence is Medium when the only check is templated (warnings present
-        // means something unknown was encountered; still High because we *did*
-        // recognise the stanza and emit a check — see spec "confidence: High when
-        // file actually contains recognisable hook stanzas").
     }
 
     #[test]

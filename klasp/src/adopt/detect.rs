@@ -8,22 +8,9 @@
 //! See klasp-dev/klasp#97.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::adopt::plan::{AdoptionPlan, DetectedGate};
-
-/// Trait for gate detectors. Each per-gate module implements this for future
-/// ergonomic extension (e.g. dynamic dispatch, test doubles). The aggregator
-/// uses the free-function form for simplicity; the trait enables flexible
-/// composition in tests.
-pub trait GateDetector {
-    /// Inspect `repo_root` and return any detected gates.
-    ///
-    /// Returns an empty `Vec` when the gate infrastructure is absent.
-    /// Returns `Err` only for I/O failures; absence of config files is
-    /// not an error.
-    fn detect(&self, repo_root: &Path) -> io::Result<Vec<DetectedGate>>;
-}
+use crate::adopt::plan::{AdoptionPlan, DetectedGate, HookStage, TriggerKind};
 
 /// Run every detector against `repo_root` and aggregate the findings.
 ///
@@ -45,4 +32,17 @@ pub fn detect_all(repo_root: &Path) -> io::Result<AdoptionPlan> {
     findings.extend(super::detect_lint_staged::detect(repo_root)?);
 
     Ok(AdoptionPlan { findings })
+}
+
+/// Return the first path in `candidates` (relative to `root`) that is a file.
+pub(super) fn first_existing_file(root: &Path, candidates: &[&str]) -> Option<PathBuf> {
+    candidates.iter().map(|name| root.join(name)).find(|p| p.is_file())
+}
+
+/// Map a [`HookStage`] to its corresponding [`TriggerKind`].
+pub(super) fn hook_to_trigger(hook: HookStage) -> TriggerKind {
+    match hook {
+        HookStage::PreCommit => TriggerKind::Commit,
+        HookStage::PrePush => TriggerKind::Push,
+    }
 }

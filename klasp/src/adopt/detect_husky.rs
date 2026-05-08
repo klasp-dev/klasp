@@ -1,22 +1,25 @@
 //! Husky detector — scans `.husky/pre-commit` and `.husky/pre-push`.
 //!
 //! Each present file produces one [`DetectedGate`] with:
-//! - `gate_type`: [`GateType::Husky`] carrying the hook name
-//! - `confidence`: High for recognised invocation patterns, Medium otherwise
+//! - `gate_type`: [`GateType::Husky`] carrying the hook stage
 //! - `proposed_checks`: derived from the first substantive command in the script
 //! - `chain_support`: always [`ChainSupport::ManualOnly`] (v1 never auto-edits
 //!   `.husky/*`)
 //!
 //! See klasp-dev/klasp#97.
 
+use std::io;
 use std::path::Path;
 
+use super::detect::hook_to_trigger;
+use super::detect_lint_staged::package_json_has_lint_staged;
 use super::plan::{
-    ChainSupport, Confidence, DetectedGate, GateType, ProposedCheck, ProposedCheckSource,
+    ChainSupport, DetectedGate, GateType, HookStage, ProposedCheck, ProposedCheckSource,
 };
 
 /// Hooks this detector examines, in order.
-const HUSKY_HOOKS: &[&str] = &["pre-commit", "pre-push"];
+const HUSKY_HOOKS: &[(HookStage, &str)] =
+    &[(HookStage::PreCommit, "pre-commit"), (HookStage::PrePush, "pre-push")];
 
 /// Patterns that indicate Husky internal bookkeeping — these lines are skipped
 /// when extracting the first substantive command from a hook script.
@@ -33,61 +36,52 @@ const HUSKY_BOOKKEEPING_PREFIXES: &[&str] = &[
 
 /// Run detection against `repo_root`, returning one [`DetectedGate`] per
 /// `.husky/<hook>` file that is present, regardless of content.
-pub fn detect(repo_root: &Path) -> std::io::Result<Vec<DetectedGate>> {
+pub fn detect(repo_root: &Path) -> io::Result<Vec<DetectedGate>> {
     let husky_dir = repo_root.join(".husky");
     if !husky_dir.is_dir() {
         return Ok(vec![]);
     }
 
     let mut findings = Vec::new();
-    for hook in HUSKY_HOOKS {
-        let hook_path = husky_dir.join(hook);
-        if hook_path.is_file() {
-            let body = std::fs::read_to_string(&hook_path)?;
-            findings.push(build_gate(hook, hook_path, &body, repo_root));
-        }
+    for (stage, name) in HUSKY_HOOKS {
+        let hook_path = husky_dir.join(name);
+        let body = match std::fs::read_to_string(&hook_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
+        findings.push(build_gate(*stage, name, hook_path, &body, repo_root));
     }
     Ok(findings)
 }
 
 /// Build a [`DetectedGate`] for a single Husky hook file.
 fn build_gate(
-    hook: &str,
+    stage: HookStage,
+    hook_name: &str,
     source_path: std::path::PathBuf,
     body: &str,
     repo_root: &Path,
 ) -> DetectedGate {
-    let trigger = hook_to_trigger(hook);
+    let trigger = hook_to_trigger(stage);
     let first_cmd = first_substantive_command(body);
 
-    let (proposed_checks, confidence, warnings) =
-        build_proposed_checks(hook, first_cmd.as_deref(), trigger, body, repo_root);
+    let (proposed_checks, warnings) =
+        build_proposed_checks(hook_name, first_cmd.as_deref(), trigger, body, repo_root);
 
     let instructions = format!(
         "Add `klasp install` to your CI pipeline and wire klasp manually into \
-         `.husky/{hook}` by appending `klasp gate` after your existing commands. \
+         `.husky/{hook_name}` by appending `klasp gate` after your existing commands. \
          See https://github.com/klasp-dev/klasp for details."
     );
 
     DetectedGate {
-        gate_type: GateType::Husky {
-            hook: hook.to_string(),
-        },
+        gate_type: GateType::Husky { hook: stage },
         source_path,
-        confidence,
         proposed_checks,
         chain_support: ChainSupport::ManualOnly,
         manual_chain_instructions: Some(instructions),
         warnings,
-    }
-}
-
-/// Return `"commit"` for `pre-commit`, `"push"` for `pre-push`.
-fn hook_to_trigger(hook: &str) -> &'static str {
-    if hook.contains("push") {
-        "push"
-    } else {
-        "commit"
     }
 }
 
@@ -115,9 +109,9 @@ fn is_bookkeeping(line: &str) -> bool {
         .any(|prefix| line.starts_with(prefix))
 }
 
-/// Recognised patterns → `(name, timeout_secs, confidence)`.
+/// Recognised patterns → `(name, timeout_secs)`.
 /// Returns `None` when the command is not in the recognised set.
-fn classify_command(cmd: &str) -> Option<(&'static str, u64, Confidence)> {
+fn classify_command(cmd: &str) -> Option<(&'static str, u64)> {
     // lint-staged
     if matches!(
         cmd,
@@ -130,7 +124,7 @@ fn classify_command(cmd: &str) -> Option<(&'static str, u64, Confidence)> {
         || cmd.starts_with("pnpm exec lint-staged ")
         || cmd.starts_with("yarn lint-staged ")
     {
-        return Some(("lint-staged", 120, Confidence::High));
+        return Some(("lint-staged", 120));
     }
     // test
     if matches!(cmd, "npm test" | "pnpm test" | "yarn test" | "pnpm run test")
@@ -138,7 +132,7 @@ fn classify_command(cmd: &str) -> Option<(&'static str, u64, Confidence)> {
         || cmd.starts_with("pnpm test ")
         || cmd.starts_with("yarn test ")
     {
-        return Some(("test", 180, Confidence::High));
+        return Some(("test", 180));
     }
     // lint
     if matches!(
@@ -148,15 +142,15 @@ fn classify_command(cmd: &str) -> Option<(&'static str, u64, Confidence)> {
         || cmd.starts_with("npm run lint ")
         || cmd.starts_with("yarn lint ")
     {
-        return Some(("lint", 120, Confidence::High));
+        return Some(("lint", 120));
     }
     // cargo
     if cmd.starts_with("cargo ") {
-        return Some(("cargo", 300, Confidence::High));
+        return Some(("cargo", 300));
     }
     // pytest
     if cmd.starts_with("pytest") || cmd.starts_with("python -m pytest") {
-        return Some(("pytest", 180, Confidence::High));
+        return Some(("pytest", 180));
     }
     None
 }
@@ -181,38 +175,28 @@ fn derive_name_from_command(cmd: &str, hook: &str) -> String {
     }
 }
 
-/// Check whether `package.json` at `repo_root` contains a `"lint-staged"` key.
-fn package_json_has_lint_staged(repo_root: &Path) -> bool {
-    let pkg_path = repo_root.join("package.json");
-    std::fs::read_to_string(pkg_path)
-        .map(|s| s.contains("\"lint-staged\""))
-        .unwrap_or(false)
-}
-
-/// Build the `proposed_checks`, inferred `confidence`, and `warnings` for a
-/// Husky gate finding.
+/// Build the `proposed_checks` and `warnings` for a Husky gate finding.
 fn build_proposed_checks(
     hook: &str,
     first_cmd: Option<&str>,
-    trigger: &str,
+    trigger: super::plan::TriggerKind,
     body: &str,
     repo_root: &Path,
-) -> (Vec<ProposedCheck>, Confidence, Vec<String>) {
+) -> (Vec<ProposedCheck>, Vec<String>) {
     let mut warnings = Vec::new();
 
     let Some(cmd) = first_cmd else {
         warnings.push(format!(
             "Husky {hook} hook is empty; no checks proposed"
         ));
-        return (vec![], Confidence::Medium, warnings);
+        return (vec![], warnings);
     };
 
-    let (name, timeout_secs, confidence, source) =
-        if let Some((n, t, conf)) = classify_command(cmd) {
+    let (name, timeout_secs, source) =
+        if let Some((n, t)) = classify_command(cmd) {
             (
                 n.to_string(),
                 t,
-                conf,
                 ProposedCheckSource::Shell {
                     command: cmd.to_string(),
                 },
@@ -222,7 +206,6 @@ fn build_proposed_checks(
             (
                 n,
                 120,
-                Confidence::Medium,
                 ProposedCheckSource::Shell {
                     command: cmd.to_string(),
                 },
@@ -231,22 +214,26 @@ fn build_proposed_checks(
 
     // Duplicate-execution warning: lint-staged in hook body AND in package.json.
     let references_lint_staged = body.contains("lint-staged");
-    if references_lint_staged && package_json_has_lint_staged(repo_root) {
-        warnings.push(
-            "klasp's lint-staged check will overlap with Husky's pre-commit hook; \
-             both run lint-staged at commit time — consider removing one"
-                .to_string(),
-        );
+    if references_lint_staged {
+        let pkg_contents = std::fs::read_to_string(repo_root.join("package.json"))
+            .unwrap_or_default();
+        if package_json_has_lint_staged(&pkg_contents) {
+            warnings.push(
+                "klasp's lint-staged check will overlap with Husky's pre-commit hook; \
+                 both run lint-staged at commit time — consider removing one"
+                    .to_string(),
+            );
+        }
     }
 
     let check = ProposedCheck {
         name,
-        triggers: vec![trigger.to_string()],
-        timeout_secs: Some(timeout_secs),
+        triggers: vec![trigger],
+        timeout_secs,
         source,
     };
 
-    (vec![check], confidence, warnings)
+    (vec![check], warnings)
 }
 
 #[cfg(test)]
@@ -277,13 +264,12 @@ mod tests {
         let result = detect(dir.path()).unwrap();
         assert_eq!(result.len(), 1);
         let gate = &result[0];
-        assert!(matches!(&gate.gate_type, GateType::Husky { hook } if hook == "pre-commit"));
+        assert!(matches!(&gate.gate_type, GateType::Husky { hook } if *hook == HookStage::PreCommit));
         assert_eq!(gate.proposed_checks.len(), 1);
         let check = &gate.proposed_checks[0];
         assert_eq!(check.name, "lint-staged");
-        assert_eq!(check.triggers, vec!["commit"]);
+        assert_eq!(check.triggers, vec![super::super::plan::TriggerKind::Commit]);
         assert!(matches!(&check.source, ProposedCheckSource::Shell { command } if command == "npx lint-staged"));
-        assert_eq!(gate.confidence, Confidence::High);
     }
 
     #[test]
@@ -293,11 +279,10 @@ mod tests {
         let result = detect(dir.path()).unwrap();
         assert_eq!(result.len(), 1);
         let gate = &result[0];
-        assert!(matches!(&gate.gate_type, GateType::Husky { hook } if hook == "pre-push"));
+        assert!(matches!(&gate.gate_type, GateType::Husky { hook } if *hook == HookStage::PrePush));
         let check = &gate.proposed_checks[0];
         assert_eq!(check.name, "test");
-        assert_eq!(check.triggers, vec!["push"]);
-        assert_eq!(gate.confidence, Confidence::High);
+        assert_eq!(check.triggers, vec![super::super::plan::TriggerKind::Push]);
     }
 
     #[test]
@@ -339,12 +324,11 @@ mod tests {
     }
 
     #[test]
-    fn unrecognised_command_yields_medium_confidence() {
+    fn unrecognised_command_yields_one_check_with_shell_source() {
         let dir = TempDir::new().unwrap();
         write_hook(dir.path(), "pre-commit", "#!/bin/sh\nmycustomlinter --fix\n");
         let result = detect(dir.path()).unwrap();
         let gate = &result[0];
-        assert_eq!(gate.confidence, Confidence::Medium);
         assert_eq!(gate.proposed_checks.len(), 1);
         let check = &gate.proposed_checks[0];
         assert_eq!(check.name, "mycustomlinter");
@@ -352,11 +336,11 @@ mod tests {
     }
 
     #[test]
-    fn recognised_command_yields_high_confidence() {
+    fn recognised_command_has_correct_timeout() {
         let dir = TempDir::new().unwrap();
         write_hook(dir.path(), "pre-commit", "#!/bin/sh\nnpm run lint\n");
         let result = detect(dir.path()).unwrap();
-        assert_eq!(result[0].confidence, Confidence::High);
+        assert_eq!(result[0].proposed_checks[0].timeout_secs, 120);
     }
 
     #[test]

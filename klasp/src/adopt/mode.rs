@@ -40,21 +40,20 @@ mod tests {
 
     use super::*;
     use crate::adopt::plan::{
-        AdoptionPlan, ChainSupport, Confidence, DetectedGate, GateType, ProposedCheck,
-        ProposedCheckSource,
+        AdoptionPlan, ChainSupport, DetectedGate, GateType, HookStage, ProposedCheck,
+        ProposedCheckSource, TriggerKind,
     };
 
     fn gate_with_instructions(instructions: &str) -> DetectedGate {
         DetectedGate {
             gate_type: GateType::Husky {
-                hook: "pre-commit".to_string(),
+                hook: HookStage::PreCommit,
             },
             source_path: PathBuf::from(".husky/pre-commit"),
-            confidence: Confidence::High,
             proposed_checks: vec![ProposedCheck {
                 name: "husky-pre-commit".to_string(),
-                triggers: vec!["commit".to_string()],
-                timeout_secs: Some(120),
+                triggers: vec![TriggerKind::Commit],
+                timeout_secs: 120,
                 source: ProposedCheckSource::Shell {
                     command: "pnpm exec lint-staged".to_string(),
                 },
@@ -69,11 +68,10 @@ mod tests {
         DetectedGate {
             gate_type: GateType::PreCommitFramework,
             source_path: PathBuf::from(".pre-commit-config.yaml"),
-            confidence: Confidence::High,
             proposed_checks: vec![ProposedCheck {
                 name: "pre-commit".to_string(),
-                triggers: vec!["commit".to_string()],
-                timeout_secs: Some(120),
+                triggers: vec![TriggerKind::Commit],
+                timeout_secs: 120,
                 source: ProposedCheckSource::PreCommit {
                     hook_stage: None,
                     config_path: None,

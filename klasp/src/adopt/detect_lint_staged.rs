@@ -42,8 +42,9 @@
 use std::io;
 use std::path::Path;
 
+use crate::adopt::detect::first_existing_file;
 use crate::adopt::plan::{
-    ChainSupport, Confidence, DetectedGate, GateType, ProposedCheck, ProposedCheckSource,
+    ChainSupport, DetectedGate, GateType, ProposedCheck, ProposedCheckSource, TriggerKind,
 };
 
 /// Standalone lint-staged config files, in priority order.
@@ -85,7 +86,6 @@ pub fn detect(repo_root: &Path) -> io::Result<Vec<DetectedGate>> {
     let gate = DetectedGate {
         gate_type: GateType::LintStaged,
         source_path,
-        confidence: Confidence::High,
         proposed_checks: vec![proposed_check(command)],
         chain_support: ChainSupport::ManualOnly,
         manual_chain_instructions: Some(manual_instructions(from_package_json)),
@@ -101,20 +101,19 @@ pub fn detect(repo_root: &Path) -> io::Result<Vec<DetectedGate>> {
 /// Returns `None` when no config is found.
 fn find_config(repo_root: &Path) -> io::Result<Option<(std::path::PathBuf, bool)>> {
     // Check standalone files first.
-    for name in STANDALONE_CONFIGS {
-        let path = repo_root.join(name);
-        if path.is_file() {
-            return Ok(Some((path, false)));
-        }
+    if let Some(path) = first_existing_file(repo_root, STANDALONE_CONFIGS) {
+        return Ok(Some((path, false)));
     }
 
     // Fall back to package.json substring search.
     let pkg_json = repo_root.join("package.json");
-    if pkg_json.is_file() {
-        let contents = std::fs::read_to_string(&pkg_json)?;
-        if package_json_has_lint_staged(&contents) {
-            return Ok(Some((pkg_json, true)));
-        }
+    let contents = match std::fs::read_to_string(&pkg_json) {
+        Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    if package_json_has_lint_staged(&contents) {
+        return Ok(Some((pkg_json, true)));
     }
 
     Ok(None)
@@ -126,7 +125,7 @@ fn find_config(repo_root: &Path) -> io::Result<Option<(std::path::PathBuf, bool)
 /// The search looks for `"lint-staged"` followed (after optional whitespace)
 /// by `:`, which is the JSON syntax for a key–value pair. This is a
 /// heuristic; see module-level docs for limitations.
-fn package_json_has_lint_staged(contents: &str) -> bool {
+pub(super) fn package_json_has_lint_staged(contents: &str) -> bool {
     let mut rest = contents;
     while let Some(pos) = rest.find(PACKAGE_JSON_MARKER) {
         let after_key = &rest[pos + PACKAGE_JSON_MARKER.len()..];
@@ -154,11 +153,12 @@ fn resolve_command(repo_root: &Path) -> String {
 /// Build the list of duplicate-execution warnings.
 fn build_warnings(repo_root: &Path) -> io::Result<Vec<String>> {
     let husky_hook = repo_root.join(".husky/pre-commit");
-    if !husky_hook.is_file() {
-        return Ok(vec![]);
-    }
+    let contents = match std::fs::read_to_string(&husky_hook) {
+        Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(e),
+    };
 
-    let contents = std::fs::read_to_string(&husky_hook)?;
     if contents.contains("lint-staged") {
         return Ok(vec![
             "if Husky pre-commit also runs lint-staged, klasp will run it a second time on \
@@ -175,8 +175,8 @@ fn build_warnings(repo_root: &Path) -> io::Result<Vec<String>> {
 fn proposed_check(command: String) -> ProposedCheck {
     ProposedCheck {
         name: "lint-staged".to_string(),
-        triggers: vec!["commit".to_string()],
-        timeout_secs: Some(120),
+        triggers: vec![TriggerKind::Commit],
+        timeout_secs: 120,
         source: ProposedCheckSource::Shell { command },
     }
 }
@@ -219,7 +219,6 @@ mod tests {
         let findings = detect(dir.path()).unwrap();
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].gate_type, GateType::LintStaged);
-        assert_eq!(findings[0].confidence, Confidence::High);
     }
 
     #[test]
@@ -424,7 +423,7 @@ mod tests {
         let findings = detect(dir.path()).unwrap();
         let check = &findings[0].proposed_checks[0];
         assert_eq!(check.name, "lint-staged");
-        assert_eq!(check.triggers, vec!["commit"]);
-        assert_eq!(check.timeout_secs, Some(120));
+        assert_eq!(check.triggers, vec![TriggerKind::Commit]);
+        assert_eq!(check.timeout_secs, 120);
     }
 }

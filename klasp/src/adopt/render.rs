@@ -54,9 +54,9 @@ fn gate_label(gate: &DetectedGate) -> &'static str {
 fn gate_human_name(gt: &GateType) -> String {
     match gt {
         GateType::PreCommitFramework => "pre-commit framework".to_string(),
-        GateType::Husky { hook } => format!("husky {hook}"),
+        GateType::Husky { hook } => format!("husky {}", hook.as_str()),
         GateType::Lefthook => "lefthook".to_string(),
-        GateType::PlainGitHook { hook } => format!("plain git hook ({hook})"),
+        GateType::PlainGitHook { hook } => format!("plain git hook ({})", hook.as_str()),
         GateType::LintStaged => "lint-staged".to_string(),
         GateType::Tooling(name) => name.clone(),
     }
@@ -69,7 +69,7 @@ fn summarise_checks(gate: &DetectedGate) -> String {
     };
     match &first.source {
         ProposedCheckSource::PreCommit { .. } => {
-            format!("mirror: type = \"pre_commit\"")
+            "mirror: type = \"pre_commit\"".to_string()
         }
         ProposedCheckSource::Shell { command } => {
             format!("mirror: command = \"{command}\"")
@@ -83,19 +83,18 @@ mod tests {
 
     use super::*;
     use crate::adopt::plan::{
-        AdoptionPlan, ChainSupport, Confidence, DetectedGate, GateType, ProposedCheck,
-        ProposedCheckSource,
+        AdoptionPlan, ChainSupport, DetectedGate, GateType, HookStage, ProposedCheck,
+        ProposedCheckSource, TriggerKind,
     };
 
     fn pre_commit_gate() -> DetectedGate {
         DetectedGate {
             gate_type: GateType::PreCommitFramework,
             source_path: PathBuf::from(".pre-commit-config.yaml"),
-            confidence: Confidence::High,
             proposed_checks: vec![ProposedCheck {
                 name: "pre-commit".to_string(),
-                triggers: vec!["commit".to_string()],
-                timeout_secs: Some(120),
+                triggers: vec![TriggerKind::Commit],
+                timeout_secs: 120,
                 source: ProposedCheckSource::PreCommit {
                     hook_stage: None,
                     config_path: None,
@@ -110,10 +109,9 @@ mod tests {
     fn plain_hook_gate() -> DetectedGate {
         DetectedGate {
             gate_type: GateType::PlainGitHook {
-                hook: "pre-push".to_string(),
+                hook: HookStage::PrePush,
             },
             source_path: PathBuf::from(".git/hooks/pre-push"),
-            confidence: Confidence::Medium,
             proposed_checks: vec![],
             chain_support: ChainSupport::Unsafe,
             manual_chain_instructions: Some(
@@ -174,11 +172,10 @@ mod tests {
         let gate = DetectedGate {
             gate_type: GateType::LintStaged,
             source_path: PathBuf::from("package.json"),
-            confidence: Confidence::High,
             proposed_checks: vec![ProposedCheck {
                 name: "lint-staged".to_string(),
-                triggers: vec!["commit".to_string()],
-                timeout_secs: Some(120),
+                triggers: vec![TriggerKind::Commit],
+                timeout_secs: 120,
                 source: ProposedCheckSource::Shell {
                     command: "pnpm exec lint-staged".to_string(),
                 },

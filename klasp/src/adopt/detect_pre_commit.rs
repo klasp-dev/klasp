@@ -22,8 +22,9 @@
 use std::io;
 use std::path::Path;
 
+use crate::adopt::detect::first_existing_file;
 use crate::adopt::plan::{
-    ChainSupport, Confidence, DetectedGate, GateType, ProposedCheck, ProposedCheckSource,
+    ChainSupport, DetectedGate, GateType, ProposedCheck, ProposedCheckSource, TriggerKind,
 };
 
 /// Marker substring written by `pre-commit install` into `.git/hooks/pre-commit`.
@@ -47,16 +48,9 @@ const CONFIG_YML: &str = ".pre-commit-config.yml";
 /// reading the `.git/hooks/pre-commit` file). Absence of config files is
 /// not an error.
 pub fn detect(repo_root: &Path) -> io::Result<Vec<DetectedGate>> {
-    let yaml_path = repo_root.join(CONFIG_YAML);
-    let yml_path = repo_root.join(CONFIG_YML);
-
-    // Prefer .yaml over .yml (matches pre-commit's own discovery order).
-    let config_path = if yaml_path.is_file() {
-        yaml_path
-    } else if yml_path.is_file() {
-        yml_path
-    } else {
-        return Ok(vec![]);
+    let config_path = match first_existing_file(repo_root, &[CONFIG_YAML, CONFIG_YML]) {
+        Some(p) => p,
+        None => return Ok(vec![]),
     };
 
     let warnings = build_warnings(repo_root)?;
@@ -64,7 +58,6 @@ pub fn detect(repo_root: &Path) -> io::Result<Vec<DetectedGate>> {
     let gate = DetectedGate {
         gate_type: GateType::PreCommitFramework,
         source_path: config_path,
-        confidence: Confidence::High,
         proposed_checks: vec![proposed_check()],
         chain_support: ChainSupport::ManualOnly,
         manual_chain_instructions: Some(manual_instructions()),
@@ -77,11 +70,12 @@ pub fn detect(repo_root: &Path) -> io::Result<Vec<DetectedGate>> {
 /// Build the list of duplicate-execution warnings for this detection pass.
 fn build_warnings(repo_root: &Path) -> io::Result<Vec<String>> {
     let hook_path = repo_root.join(".git/hooks/pre-commit");
-    if !hook_path.is_file() {
-        return Ok(vec![]);
-    }
+    let contents = match std::fs::read_to_string(&hook_path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(e),
+    };
 
-    let contents = std::fs::read_to_string(&hook_path)?;
     if contents.contains(PRE_COMMIT_GENERATED_MARKER) {
         return Ok(vec![
             "running both pre-commit's git hook AND klasp's `pre_commit` recipe will execute \
@@ -99,8 +93,8 @@ fn build_warnings(repo_root: &Path) -> io::Result<Vec<String>> {
 fn proposed_check() -> ProposedCheck {
     ProposedCheck {
         name: "pre-commit".to_string(),
-        triggers: vec!["commit".to_string()],
-        timeout_secs: Some(120),
+        triggers: vec![TriggerKind::Commit],
+        timeout_secs: 120,
         source: ProposedCheckSource::PreCommit {
             hook_stage: None,
             config_path: None,
@@ -131,7 +125,7 @@ mod tests {
     }
 
     #[test]
-    fn yaml_config_yields_one_finding_with_high_confidence() {
+    fn yaml_config_yields_one_finding() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(CONFIG_YAML), "repos: []\n").unwrap();
 
@@ -140,7 +134,6 @@ mod tests {
 
         let gate = &findings[0];
         assert_eq!(gate.gate_type, GateType::PreCommitFramework);
-        assert_eq!(gate.confidence, Confidence::High);
         assert_eq!(gate.source_path, dir.path().join(CONFIG_YAML));
     }
 
@@ -178,8 +171,8 @@ mod tests {
         let check = &findings[0].proposed_checks[0];
 
         assert_eq!(check.name, "pre-commit");
-        assert_eq!(check.triggers, vec!["commit"]);
-        assert_eq!(check.timeout_secs, Some(120));
+        assert_eq!(check.triggers, vec![TriggerKind::Commit]);
+        assert_eq!(check.timeout_secs, 120);
         assert!(
             matches!(
                 &check.source,

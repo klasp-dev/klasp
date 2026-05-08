@@ -8,6 +8,7 @@
 mod adopt;
 mod cli;
 mod cmd;
+mod fs_util;
 mod git;
 mod output;
 mod registry;

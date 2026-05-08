@@ -28,19 +28,55 @@ pub struct DetectedGate {
     pub gate_type: GateType,
     /// The file that triggered detection (config file, hook script, etc.).
     pub source_path: PathBuf,
-    /// How certain the detector is about this finding.
-    pub confidence: Confidence,
     /// Proposed `klasp.toml` checks that mirror what the existing gate does.
     pub proposed_checks: Vec<ProposedCheck>,
     /// Whether klasp can safely chain into this gate automatically.
     pub chain_support: ChainSupport,
     /// Human-readable chaining instructions when automatic chaining is not
-    /// safe. `None` when `chain_support` is [`ChainSupport::AutoSafe`].
+    /// safe.
     pub manual_chain_instructions: Option<String>,
     /// Non-fatal warnings the user should be aware of (e.g. duplicate
     /// execution risk when both the existing hook and klasp would run the
     /// same tool at commit time).
     pub warnings: Vec<String>,
+}
+
+/// The git hook stage (e.g. pre-commit, pre-push).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookStage {
+    /// The `pre-commit` git hook.
+    PreCommit,
+    /// The `pre-push` git hook.
+    PrePush,
+}
+
+impl HookStage {
+    /// Return the canonical git hook name for this stage.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PreCommit => "pre-commit",
+            Self::PrePush => "pre-push",
+        }
+    }
+}
+
+/// The kind of trigger a proposed check fires on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TriggerKind {
+    /// Fire at commit time (`on = ["commit"]`).
+    Commit,
+    /// Fire at push time (`on = ["push"]`).
+    Push,
+}
+
+impl TriggerKind {
+    /// Return the TOML-serialisable trigger name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Commit => "commit",
+            Self::Push => "push",
+        }
+    }
 }
 
 /// The kind of existing gate infrastructure that was found.
@@ -50,16 +86,16 @@ pub enum GateType {
     PreCommitFramework,
     /// A Husky hook file (`.husky/<hook>`) was found.
     Husky {
-        /// The git hook name (e.g. `"pre-commit"`, `"pre-push"`).
-        hook: String,
+        /// The git hook stage that was detected.
+        hook: HookStage,
     },
     /// `lefthook.yml` or `lefthook.yaml` was found.
     Lefthook,
     /// A plain user-owned `.git/hooks/<hook>` script was found that is not
     /// attributed to any other recognised hook manager.
     PlainGitHook {
-        /// The git hook name (e.g. `"pre-commit"`, `"pre-push"`).
-        hook: String,
+        /// The git hook stage that was detected.
+        hook: HookStage,
     },
     /// `lint-staged` config was found (key in `package.json` or standalone
     /// `.lintstagedrc*` file).
@@ -69,23 +105,11 @@ pub enum GateType {
     Tooling(String),
 }
 
-/// How certain the detector is that the finding is correct.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Confidence {
-    /// The config file unambiguously identifies the tool.
-    High,
-    /// The file exists but some heuristics were needed to attribute it.
-    Medium,
-    /// The detection is speculative (e.g. generic `Makefile` target name).
-    Low,
-}
-
+// AutoSafe is reserved for chain-mode v2; not yet constructed
 /// Whether klasp can automatically chain into the existing gate at
 /// `--mode chain` time, or whether manual steps are required.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChainSupport {
-    /// Chaining can be performed automatically and is proven reversible.
-    AutoSafe,
     /// Chaining requires manual steps; klasp prints instructions.
     ManualOnly,
     /// Chaining is explicitly blocked (would overwrite user content without
@@ -101,11 +125,12 @@ pub enum ChainSupport {
 pub struct ProposedCheck {
     /// Value for `[[checks]] name = …`.
     pub name: String,
-    /// Values for `triggers = [{ on = […] }]` — list of trigger names
-    /// such as `"commit"` or `"push"`.
-    pub triggers: Vec<String>,
-    /// Value for `timeout_secs = …`. `None` omits the field.
-    pub timeout_secs: Option<u64>,
+    /// Values for `triggers = [{ on = […] }]` — list of trigger kinds
+    /// such as `Commit` or `Push`.
+    pub triggers: Vec<TriggerKind>,
+    /// Value for `timeout_secs = …`. Required; the writer never silently
+    /// defaults this.
+    pub timeout_secs: u64,
     /// The source block (`[checks.source]`) for this check.
     pub source: ProposedCheckSource,
 }
@@ -156,11 +181,10 @@ mod tests {
         let gate = DetectedGate {
             gate_type: GateType::PreCommitFramework,
             source_path: PathBuf::from(".pre-commit-config.yaml"),
-            confidence: Confidence::High,
             proposed_checks: vec![ProposedCheck {
                 name: "pre-commit".to_string(),
-                triggers: vec!["commit".to_string()],
-                timeout_secs: Some(120),
+                triggers: vec![TriggerKind::Commit],
+                timeout_secs: 120,
                 source: ProposedCheckSource::PreCommit {
                     hook_stage: None,
                     config_path: None,
@@ -182,16 +206,21 @@ mod tests {
     }
 
     #[test]
-    fn confidence_copy_semantics() {
-        let c = Confidence::High;
-        let c2 = c;
-        assert_eq!(c, c2);
-    }
-
-    #[test]
     fn chain_support_copy_semantics() {
         let cs = ChainSupport::ManualOnly;
         let cs2 = cs;
         assert_eq!(cs, cs2);
+    }
+
+    #[test]
+    fn trigger_kind_as_str() {
+        assert_eq!(TriggerKind::Commit.as_str(), "commit");
+        assert_eq!(TriggerKind::Push.as_str(), "push");
+    }
+
+    #[test]
+    fn hook_stage_as_str() {
+        assert_eq!(HookStage::PreCommit.as_str(), "pre-commit");
+        assert_eq!(HookStage::PrePush.as_str(), "pre-push");
     }
 }

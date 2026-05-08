@@ -5,4 +5,5 @@
 //! call them directly without spawning a subprocess.
 
 pub mod adopt;
+pub(crate) mod fs_util;
 pub mod output;

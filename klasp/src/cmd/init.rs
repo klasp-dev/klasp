@@ -10,7 +10,7 @@
 //! Combine `--adopt` with `--mode mirror` to write the config, or use
 //! `--mode inspect` (default) to only print the plan without writing.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{anyhow, Context, Result};
@@ -125,20 +125,8 @@ fn try_run(args: &InitArgs) -> Result<PathBuf> {
         ));
     }
 
-    atomic_write_text(&target, EXAMPLE_TOML)
+    crate::fs_util::atomic_write_text(&target, EXAMPLE_TOML)
         .with_context(|| format!("writing klasp.toml to {}", target.display()))?;
 
     Ok(target)
-}
-
-/// Atomic write via tempfile + rename. No chmod — config files don't need
-/// an execute bit.
-fn atomic_write_text(path: &Path, contents: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut tf = tempfile::NamedTempFile::new_in(dir)?;
-    tf.write_all(contents.as_bytes())?;
-    tf.flush()?;
-    tf.persist(path).map_err(|e| e.error)?;
-    Ok(())
 }
