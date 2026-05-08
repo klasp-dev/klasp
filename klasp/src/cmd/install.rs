@@ -64,6 +64,15 @@ fn try_run(args: &InstallArgs) -> Result<ExitCode> {
         Selection::Surfaces(s) => s,
     };
 
+    // Warn when the user installs a single specific agent but klasp.toml lists
+    // additional agents that this install will not cover. Doctor would FAIL for
+    // those uncovered agents if left uninstalled. The install itself succeeds.
+    if let Some(agent_name) = args.agent.as_deref() {
+        if agent_name != AGENT_ALL {
+            warn_if_narrower_than_config(agent_name, &repo_root, &registry);
+        }
+    }
+
     // Auto-detection is only meaningful when the user did NOT name a
     // specific selection. When `--agent <name>` (or `--agent all`) is
     // explicit, the user has told us exactly which surfaces to drive;
@@ -198,6 +207,37 @@ fn filter_by_detect<'a>(
         .into_iter()
         .filter(|s| s.detect(repo_root))
         .collect()
+}
+
+/// Emit a stderr WARN when `--agent <name>` installs a single surface but
+/// `klasp.toml`'s `[gate].agents` declares additional agents that will remain
+/// without a gate hook after this install. The install itself still succeeds.
+///
+/// Silently skips when: klasp.toml is absent, unparseable, or `[gate].agents`
+/// is empty — those are handled by other error paths.
+fn warn_if_narrower_than_config(installing: &str, repo_root: &Path, registry: &SurfaceRegistry) {
+    let config = match ConfigV1::load(repo_root) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let uncovered: Vec<&str> = config
+        .gate
+        .agents
+        .iter()
+        .filter(|a| a.as_str() != installing)
+        .filter(|a| registry.get(a.as_str()).is_some()) // only known agents
+        .map(String::as_str)
+        .collect();
+
+    if !uncovered.is_empty() {
+        eprintln!(
+            "warning: klasp.toml lists agents {} that this install will NOT cover; \
+             doctor will report them as missing. \
+             Run `klasp install --agent all` to cover all declared agents.",
+            uncovered.join(", ")
+        );
+    }
 }
 
 fn print_reports(reports: &[InstallReport], dry_run: bool) {
