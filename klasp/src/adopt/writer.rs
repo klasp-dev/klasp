@@ -8,10 +8,11 @@
 //!
 //! See klasp-dev/klasp#97, klasp-dev/klasp#103.
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::adopt::plan::{AdoptionPlan, ProposedCheckSource};
+use crate::adopt::plan::{AdoptionPlan, GateType, ProposedCheckSource};
 
 /// Write (or overwrite) `<repo_root>/klasp.toml` from the adoption plan.
 ///
@@ -95,11 +96,28 @@ fn generate_toml(plan: &AdoptionPlan, agents: Option<&[String]>) -> String {
          policy = \"any_fail\"\n"
     );
 
+    // Track seen names so duplicate checks get a gate-type suffix.
+    let mut seen_names: HashMap<String, usize> = HashMap::new();
+
     for finding in &plan.findings {
         for check in &finding.proposed_checks {
+            // Determine the effective name: first occurrence keeps the bare
+            // name; subsequent collisions get `<name>-<gate_suffix>`.
+            let base = &check.name;
+            let count = seen_names.entry(base.clone()).or_insert(0);
+            let effective_name = if *count == 0 {
+                base.clone()
+            } else {
+                format!("{}-{}", base, gate_suffix(&finding.gate_type))
+            };
+            *count += 1;
+
             out.push('\n');
             out.push_str("[[checks]]\n");
-            out.push_str(&format!("name = \"{}\"\n", escape_toml_string(&check.name)));
+            out.push_str(&format!(
+                "name = \"{}\"\n",
+                escape_toml_string(&effective_name)
+            ));
 
             let trigger_items: Vec<String> = check
                 .triggers
@@ -141,6 +159,22 @@ fn generate_toml(plan: &AdoptionPlan, agents: Option<&[String]>) -> String {
     out
 }
 
+/// Return a short suffix string for a gate type, used when two checks from
+/// different detectors collide on the same base name (e.g. both Husky and
+/// Lefthook emit a check named "lint").
+///
+/// The suffix is appended with a hyphen: `lint` → `lint-husky`.
+fn gate_suffix(gate_type: &GateType) -> &'static str {
+    match gate_type {
+        GateType::PreCommitFramework => "pre-commit",
+        GateType::Husky { .. } => "husky",
+        GateType::Lefthook => "lefthook",
+        GateType::PlainGitHook { .. } => "git-hook",
+        GateType::LintStaged => "lint-staged",
+        GateType::Tooling(_) => "tooling",
+    }
+}
+
 /// Minimal TOML string escaping: backslash and double-quote characters only.
 /// TOML basic strings require `"` → `\"` and `\` → `\\`.
 fn escape_toml_string(s: &str) -> String {
@@ -153,8 +187,8 @@ mod tests {
 
     use super::*;
     use crate::adopt::plan::{
-        AdoptionPlan, ChainSupport, DetectedGate, GateType, ProposedCheck, ProposedCheckSource,
-        TriggerKind,
+        AdoptionPlan, ChainSupport, DetectedGate, GateType, HookStage, ProposedCheck,
+        ProposedCheckSource, TriggerKind,
     };
 
     fn pre_commit_plan() -> AdoptionPlan {
@@ -347,13 +381,109 @@ mod tests {
         let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
         let content = std::fs::read_to_string(&written).unwrap();
         let config = klasp_core::ConfigV1::parse(&content).unwrap();
-        assert_eq!(
-            config.gate.agents,
-            vec!["claude_code", "codex", "aider"]
-        );
+        assert_eq!(config.gate.agents, vec!["claude_code", "codex", "aider"]);
         assert!(
             content.contains("Comment out any you don't use"),
             "fallback should include edit-me comment"
+        );
+    }
+
+    /// AC: duplicate check names across gate types get a suffix on the second.
+    /// First "lint" stays "lint"; second "lint" (from a different gate) becomes
+    /// "lint-<gate_suffix>".
+    #[test]
+    fn duplicate_name_suffix_on_collision() {
+        let plan = AdoptionPlan {
+            findings: vec![
+                DetectedGate {
+                    gate_type: GateType::Husky {
+                        hook: HookStage::PreCommit,
+                    },
+                    source_path: PathBuf::from(".husky/pre-commit"),
+                    proposed_checks: vec![ProposedCheck {
+                        name: "lint".to_string(),
+                        triggers: vec![TriggerKind::Commit],
+                        timeout_secs: 60,
+                        source: ProposedCheckSource::Shell {
+                            command: "pnpm lint".to_string(),
+                        },
+                    }],
+                    chain_support: ChainSupport::ManualOnly,
+                    manual_chain_instructions: None,
+                    warnings: vec![],
+                },
+                DetectedGate {
+                    gate_type: GateType::Lefthook,
+                    source_path: PathBuf::from("lefthook.yml"),
+                    proposed_checks: vec![ProposedCheck {
+                        name: "lint".to_string(), // same name — should get suffix
+                        triggers: vec![TriggerKind::Commit],
+                        timeout_secs: 60,
+                        source: ProposedCheckSource::Shell {
+                            command: "pnpm lint".to_string(),
+                        },
+                    }],
+                    chain_support: ChainSupport::ManualOnly,
+                    manual_chain_instructions: None,
+                    warnings: vec![],
+                },
+            ],
+        };
+
+        let toml_str = generate_toml(&plan, None);
+
+        // First occurrence: bare name.
+        assert!(
+            toml_str.contains("name = \"lint\"\n"),
+            "first 'lint' should keep bare name:\n{toml_str}"
+        );
+        // Second occurrence: suffixed.
+        assert!(
+            toml_str.contains("name = \"lint-lefthook\"\n"),
+            "second 'lint' (from Lefthook) should be 'lint-lefthook':\n{toml_str}"
+        );
+
+        // Verify round-trip parse.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let written = write_klasp_toml(tmp.path(), &plan, false, None).unwrap();
+        let config = klasp_core::ConfigV1::parse(&std::fs::read_to_string(&written).unwrap())
+            .expect("collision-resolved TOML should parse cleanly");
+        let names: Vec<&str> = config.checks.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["lint", "lint-lefthook"]);
+    }
+
+    /// AC: first occurrence of a name is always kept bare — suffix only kicks
+    /// in on collision, never preemptively.
+    #[test]
+    fn first_occurrence_keeps_bare_name() {
+        let plan = AdoptionPlan {
+            findings: vec![DetectedGate {
+                gate_type: GateType::Husky {
+                    hook: HookStage::PreCommit,
+                },
+                source_path: PathBuf::from(".husky/pre-commit"),
+                proposed_checks: vec![ProposedCheck {
+                    name: "lint".to_string(),
+                    triggers: vec![TriggerKind::Commit],
+                    timeout_secs: 60,
+                    source: ProposedCheckSource::Shell {
+                        command: "pnpm lint".to_string(),
+                    },
+                }],
+                chain_support: ChainSupport::ManualOnly,
+                manual_chain_instructions: None,
+                warnings: vec![],
+            }],
+        };
+
+        let toml_str = generate_toml(&plan, None);
+        assert!(
+            toml_str.contains("name = \"lint\"\n"),
+            "single 'lint' must stay bare:\n{toml_str}"
+        );
+        assert!(
+            !toml_str.contains("lint-husky"),
+            "no suffix unless collision:\n{toml_str}"
         );
     }
 }
