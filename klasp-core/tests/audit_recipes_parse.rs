@@ -120,21 +120,18 @@ fn extract_toml_blocks(source: &str) -> Vec<TomlBlock> {
     let mut index: usize = 0;
 
     for (line_idx, line) in source.lines().enumerate() {
-        // Markdown line numbers are 1-based; `line_idx` is 0-based.
         let line_no = line_idx + 1;
         let trimmed = line.trim_start();
 
         if !in_block {
-            // Match an opening fence with `toml` info-string. Allow
-            // whitespace after the language (rare) but reject e.g.
-            // ```toml-ish or ```toml,custom — those aren't TOML.
+            // Reject `` ```toml-ish `` or `` ```toml,custom `` — only
+            // accept ` ```toml ` exactly or with trailing whitespace.
             if trimmed == "```toml" || trimmed.starts_with("```toml ") {
                 in_block = true;
                 start_line = line_no;
                 current.clear();
             }
         } else if trimmed == "```" {
-            // Closing fence — emit the collected block.
             index += 1;
             blocks.push(TomlBlock {
                 index,
@@ -170,6 +167,48 @@ enum BlockKind {
     /// table headers. Wrap with [`BARE_FIELD_PRELUDE`] which lands the
     /// fields inside a `[checks.source]` `type = "shell"` block.
     BareFieldFragment,
+    /// Block doesn't match any known shape. The test panics on these so
+    /// a new fragment style added in a future doc forces a classifier
+    /// update rather than silently parsing inside the wrong wrapper.
+    Unknown,
+}
+
+/// Match a top-level `version = N` field, rejecting near-misses like
+/// `versionless = 1` or `version_note = "…"`.
+fn is_version_field(line: &str) -> bool {
+    let key = line.split('=').next().unwrap_or("").trim();
+    key == "version"
+}
+
+/// Match the `[gate]` table header exactly, allowing trailing whitespace
+/// or an inline `# comment`. Excludes `[gate.subtable]` or `[gateway]`.
+fn is_gate_table_header(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("[gate]") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    rest.is_empty() || rest.starts_with('#')
+}
+
+/// True when every non-blank, non-comment line is a simple
+/// `key = "scalar"` assignment with no arrays or inline tables. Required
+/// before wrapping inside `[checks.source]`; arrays at the top level
+/// (e.g. `triggers = [...]`) would parse spuriously inside that table.
+fn is_simple_bare_field(body: &str) -> bool {
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some(eq_idx) = line.find('=') else {
+            return false;
+        };
+        let value = line[eq_idx + 1..].trim();
+        if value.starts_with('[') || value.starts_with('{') {
+            return false;
+        }
+    }
+    true
 }
 
 /// Classify a block by inspecting its non-comment, non-blank lines for
@@ -184,14 +223,11 @@ fn classify(body: &str) -> BlockKind {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if line.starts_with("version") && line.contains("= 1") {
+        if is_version_field(line) {
             has_version = true;
         }
         if line.starts_with('[') {
-            // Match `[gate]` exactly to keep `[gate.something]` (none
-            // exist today, but defensively) from being confused with
-            // a top-level gate fragment.
-            if line == "[gate]" {
+            if is_gate_table_header(line) {
                 has_gate_header = true;
             } else {
                 has_other_header = true;
@@ -205,8 +241,10 @@ fn classify(body: &str) -> BlockKind {
         BlockKind::GateFragment
     } else if has_other_header || has_gate_header {
         BlockKind::StructuredFragment
-    } else {
+    } else if is_simple_bare_field(body) {
         BlockKind::BareFieldFragment
+    } else {
+        BlockKind::Unknown
     }
 }
 
@@ -260,6 +298,18 @@ fn audit_recipe_toml_snippets_parse() {
                 BlockKind::BareFieldFragment => {
                     stats.bare_field_fragments += 1;
                     format!("{}{}", BARE_FIELD_PRELUDE, block.body)
+                }
+                BlockKind::Unknown => {
+                    panic!(
+                        "{path} block #{idx} (lines {start}-{end}) has a novel \
+                         fragment shape the classifier doesn't recognise. \
+                         Update classify() to handle it.\n\nsnippet:\n{snippet}",
+                        path = doc.path,
+                        idx = block.index,
+                        start = block.start_line,
+                        end = block.end_line,
+                        snippet = block.body,
+                    );
                 }
             };
 
@@ -375,6 +425,33 @@ end\n";
         assert_eq!(
             classify("# just a hint\n\ncommand = \"foo\"\n"),
             BlockKind::BareFieldFragment
+        );
+        // Top-level array values are not safe to wrap as bare fields —
+        // they would parse spuriously inside `[checks.source]`.
+        assert_eq!(
+            classify("triggers = [{ on = [\"push\"] }]\n"),
+            BlockKind::Unknown
+        );
+        // Inline tables also count as Unknown.
+        assert_eq!(
+            classify("source = { type = \"shell\", command = \"x\" }\n"),
+            BlockKind::Unknown
+        );
+        // `versionless = 1` must not be misclassified as a whole config.
+        assert_eq!(
+            classify("versionless = 1\ncommand = \"foo\"\n"),
+            BlockKind::BareFieldFragment
+        );
+        // `[gate]` with a trailing comment still classifies as a gate
+        // fragment.
+        assert_eq!(
+            classify("[gate]  # see recipes.md\nagents = [\"claude\"]\n"),
+            BlockKind::GateFragment
+        );
+        // `[gate.subtable]` is not a top-level gate fragment.
+        assert_eq!(
+            classify("[gate.subtable]\nx = 1\n"),
+            BlockKind::StructuredFragment
         );
     }
 }
