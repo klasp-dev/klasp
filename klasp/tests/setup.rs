@@ -163,6 +163,32 @@ fn dry_run_prints_plan_writes_nothing() {
         so.to_lowercase().contains("dry-run") || so.contains("writing nothing"),
         "stdout should indicate dry-run mode:\n{so}"
     );
+    let first_nonempty = so.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    assert!(
+        first_nonempty.starts_with("(--dry-run"),
+        "first non-empty stdout line must start with \"(--dry-run\", got: {first_nonempty:?}"
+    );
+}
+
+// ─── AC: no stale "Next:" footer from setup ──────────────────────────────────
+
+/// `klasp setup` must NOT print a "Next:" block — those commands are run
+/// automatically by setup itself, so the footer would be misleading.
+#[test]
+fn setup_output_does_not_contain_next_footer_when_gates_detected() {
+    let Some(repo) = fixture_repo() else { return };
+    let home = fake_home(&[FakeAgent::Claude]);
+
+    // Seed a gate so the plan is non-empty (empty plans never emit "Next:" anyway).
+    fs::write(repo.path().join(".pre-commit-config.yaml"), "repos: []\n").unwrap();
+
+    let out = run_setup(repo.path(), home.path(), &[]);
+
+    let so = stdout(&out);
+    assert!(
+        !so.contains("Next:"),
+        "`klasp setup` stdout must not contain \"Next:\" footer\nstdout: {so}"
+    );
 }
 
 // ─── AC: claude-only narrowing ───────────────────────────────────────────────
