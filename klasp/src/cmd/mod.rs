@@ -1,3 +1,4 @@
+pub mod demo;
 pub mod doctor;
 pub mod gate;
 pub mod init;

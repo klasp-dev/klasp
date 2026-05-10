@@ -1,0 +1,4 @@
+{"type":"message","role":"user","content":"Stage and commit."}
+{"type":"tool_call","id":"tc_001","name":"Bash","input":{"command":"git add -A && git commit -m 'wip'"}}
+{"type":"tool_result","tool_call_id":"tc_001","output":"klasp-gate: blocked (1 errors, 1 findings total, policy=AnyFail):\n  - [error][tsc] src/lib/foo.ts:3:1 — Cannot find module 'lodash'","exit_code":1}
+{"type":"message","role":"assistant","content":"Gate blocked. Fixing src/lib/foo.ts:3 — removing the lodash import."}

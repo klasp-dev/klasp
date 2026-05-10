@@ -34,6 +34,8 @@ pub enum Cmd {
     Plugins(PluginsArgs),
     /// One-command first-run setup: detect gates, narrow agents, write config, install, doctor.
     Setup(SetupArgs),
+    /// Replay a captured agent session fixture and verify the gate feedback loop.
+    Demo(DemoArgs),
 }
 
 #[derive(Debug, Args)]
@@ -171,6 +173,22 @@ pub struct SetupArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct DemoArgs {
+    /// Path to JSONL session fixture to replay.
+    #[arg(long)]
+    pub fixture: std::path::PathBuf,
+
+    /// Path to demo repo (reserved for future live-replay mode).
+    #[allow(unused)]
+    #[arg(long)]
+    pub repo: Option<std::path::PathBuf>,
+
+    /// Print each step as it replays.
+    #[arg(long)]
+    pub verbose: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct PluginsArgs {
     #[command(subcommand)]
     pub action: PluginsAction,
@@ -206,5 +224,6 @@ pub fn run() -> ExitCode {
         Cmd::Doctor(args) => cmd::doctor::run(args),
         Cmd::Plugins(args) => cmd::plugins::run(&args.action),
         Cmd::Setup(args) => cmd::setup::run(args),
+        Cmd::Demo(args) => cmd::demo::run(args),
     }
 }
