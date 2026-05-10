@@ -179,7 +179,10 @@ fn demo_replay_verbose_flag_works() {
     );
 
     let (code, stdout, _stderr) = run_demo(fixture.path(), &["--verbose"]);
-    assert_eq!(code, 0, "verbose mode must not change exit code\nstdout: {stdout}");
+    assert_eq!(
+        code, 0,
+        "verbose mode must not change exit code\nstdout: {stdout}"
+    );
     assert!(
         stdout.contains("gate block"),
         "expected verbose gate block output\nstdout: {stdout}",

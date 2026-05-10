@@ -93,7 +93,10 @@ fn try_run(args: &DemoArgs) -> Result<ExitCode, String> {
             if args.verbose {
                 if let Some(ref content) = assistant_response {
                     let snippet: String = content.chars().take(120).collect();
-                    println!("  assistant response (line {}): {snippet}", assistant_line.unwrap_or(0));
+                    println!(
+                        "  assistant response (line {}): {snippet}",
+                        assistant_line.unwrap_or(0)
+                    );
                 } else {
                     println!("  assistant response: (none found)");
                 }
@@ -111,9 +114,7 @@ fn try_run(args: &DemoArgs) -> Result<ExitCode, String> {
     }
 
     if blocks.is_empty() {
-        println!(
-            "warning: no klasp-gate blocked sequences found in fixture — nothing to verify"
-        );
+        println!("warning: no klasp-gate blocked sequences found in fixture — nothing to verify");
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -194,7 +195,9 @@ fn extract_filenames(output: &str) -> Vec<String> {
     // Walk each whitespace-separated token and check for file:line patterns.
     for token in output.split_whitespace() {
         // Strip surrounding punctuation like `'`, `"`, `(`, `)`.
-        let token = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-');
+        let token = token.trim_matches(|c: char| {
+            !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-'
+        });
         // Find a colon followed by a digit — that's the file:line boundary.
         if let Some(colon_pos) = token.find(':') {
             let after_colon = &token[colon_pos + 1..];
@@ -212,7 +215,6 @@ fn extract_filenames(output: &str) -> Vec<String> {
     }
     results
 }
-
 
 #[cfg(test)]
 mod tests {
