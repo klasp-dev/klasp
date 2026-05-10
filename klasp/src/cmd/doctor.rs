@@ -224,7 +224,10 @@ fn check_hook(repo_root: &Path, surface: &dyn AgentSurface, c: &mut Counters) {
         // Surfaces with managed blocks (e.g. Codex) may have user content
         // outside the block. Compare only the block portion — that's what
         // encodes the schema version.
-        match (extract_managed_block(&actual), extract_managed_block(&expected)) {
+        match (
+            extract_managed_block(&actual),
+            extract_managed_block(&expected),
+        ) {
             (Some(a), Some(e)) => a == e,
             _ => false,
         }
