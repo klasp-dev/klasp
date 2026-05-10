@@ -27,6 +27,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+use klasp_agents_codex::git_hooks::{MANAGED_END, MANAGED_START};
 use klasp_core::{
     AgentSurface, CheckSourceConfig, ConfigV1, InstallContext, KlaspError, GATE_SCHEMA_VERSION,
 };
@@ -190,10 +191,12 @@ pub(crate) fn check_surfaces(repo_root: &Path, config: Option<&ConfigV1>, c: &mu
     }
 }
 
-/// Check 2 — byte-equality of the on-disk hook against a fresh re-render at
-/// the binary's `GATE_SCHEMA_VERSION`. A mismatch means the binary was
-/// upgraded since the last `klasp install` (the gate runtime would
-/// fail-open in this state).
+/// Check 2 — verify the on-disk hook contains a fresh managed block at the
+/// binary's `GATE_SCHEMA_VERSION`. For surfaces that splice a managed block
+/// into an existing hook (e.g. Codex), the file may have user content above
+/// or below the block; we compare only the block itself rather than the
+/// full file. A mismatch means the binary was upgraded since the last
+/// `klasp install` (the gate runtime would fail-open in this state).
 fn check_hook(repo_root: &Path, surface: &dyn AgentSurface, c: &mut Counters) {
     let agent_id = surface.agent_id();
     let hook_path = surface.hook_path(repo_root);
@@ -217,7 +220,17 @@ fn check_hook(repo_root: &Path, surface: &dyn AgentSurface, c: &mut Counters) {
     };
     let expected = surface.render_hook_script(&ctx);
 
-    if actual == expected {
+    let ok = actual == expected || {
+        // Surfaces with managed blocks (e.g. Codex) may have user content
+        // outside the block. Compare only the block portion — that's what
+        // encodes the schema version.
+        match (extract_managed_block(&actual), extract_managed_block(&expected)) {
+            (Some(a), Some(e)) => a == e,
+            _ => false,
+        }
+    };
+
+    if ok {
         c.ok(&format!(
             "hook[{agent_id}]: current (schema v{GATE_SCHEMA_VERSION})"
         ));
@@ -226,6 +239,24 @@ fn check_hook(repo_root: &Path, surface: &dyn AgentSurface, c: &mut Counters) {
             "hook[{agent_id}]: schema drift detected (re-run `klasp install`)"
         ));
     }
+}
+
+/// Extract the klasp managed block (inclusive of both markers and the
+/// trailing newline) from a hook file body. Returns `None` when no block
+/// markers are present or the markers appear out of order.
+fn extract_managed_block(s: &str) -> Option<&str> {
+    let start = s.find(MANAGED_START)?;
+    let end_marker = s.find(MANAGED_END)?;
+    if end_marker < start {
+        return None;
+    }
+    let end_of_marker = end_marker + MANAGED_END.len();
+    let end = if s.as_bytes().get(end_of_marker) == Some(&b'\n') {
+        end_of_marker + 1
+    } else {
+        end_of_marker
+    };
+    Some(&s[start..end])
 }
 
 /// Check 3 — settings JSON exists, parses, and contains klasp's

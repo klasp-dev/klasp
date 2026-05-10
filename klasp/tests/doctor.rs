@@ -363,6 +363,45 @@ policy = "any_fail"
     );
 }
 
+/// Regression guard for #102: when a `.git/hooks/pre-commit` already has
+/// user content above the klasp managed block, `doctor` must still exit 0.
+/// The old byte-equality check always failed in this shape; the new
+/// `contains(expected_trimmed)` secondary check must pass it.
+#[test]
+fn doctor_codex_hook_with_user_content_above_block_exits_0() {
+    let repo = fresh_repo_with_claude();
+    let toml_with_codex = r#"version = 1
+
+[gate]
+agents = ["claude_code", "codex"]
+policy = "any_fail"
+"#;
+    write_toml(repo.path(), toml_with_codex);
+    install_seeded(repo.path());
+
+    // Seed a pre-commit hook with user content before invoking codex install.
+    // install_codex_seeded will append the managed block after the user content.
+    let hooks_dir = repo.path().join(".git/hooks");
+    fs::create_dir_all(&hooks_dir).unwrap();
+    fs::write(hooks_dir.join("pre-commit"), "#!/bin/sh\nmake lint\n").unwrap();
+
+    install_codex_seeded(repo.path());
+
+    let out = run_doctor(repo.path());
+    assert!(
+        out.status.success(),
+        "codex hook with user content above managed block must pass doctor\nstdout:\n{}\nstderr:\n{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let so = stdout(&out);
+    assert!(so.contains("OK    hook[codex]:"), "stdout:\n{so}");
+    assert!(
+        !so.contains("FAIL"),
+        "no FAIL lines expected\nstdout:\n{so}"
+    );
+}
+
 /// When `[gate].agents` includes `"codex"` and the codex hook IS installed,
 /// `klasp doctor` must exit 0.
 #[test]

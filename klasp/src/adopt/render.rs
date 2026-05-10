@@ -10,6 +10,18 @@ use crate::adopt::plan::{AdoptionPlan, ChainSupport, DetectedGate, GateType, Pro
 /// The string always ends with a newline. It is suitable for direct `print!`
 /// (not `println!`) to stdout.
 pub fn render_plan(plan: &AdoptionPlan) -> String {
+    render_plan_inner(plan, true)
+}
+
+/// Like [`render_plan`] but omits the "Next:" footer.
+///
+/// Use this from callers (e.g. `klasp setup`) that immediately run the
+/// next-step commands themselves, making the footer stale/misleading.
+pub fn render_plan_no_next(plan: &AdoptionPlan) -> String {
+    render_plan_inner(plan, false)
+}
+
+fn render_plan_inner(plan: &AdoptionPlan, show_next: bool) -> String {
     if plan.findings.is_empty() {
         return "No existing gates detected. Run `klasp init` for a fresh klasp.toml.\n"
             .to_string();
@@ -20,10 +32,12 @@ pub fn render_plan(plan: &AdoptionPlan) -> String {
         out.push('\n');
         out.push_str(&render_gate(gate));
     }
-    out.push_str("\nNext:\n");
-    out.push_str("  klasp init --adopt --mode mirror\n");
-    out.push_str("  klasp install --agent all\n");
-    out.push_str("  klasp doctor\n");
+    if show_next {
+        out.push_str("\nNext:\n");
+        out.push_str("  klasp init --adopt --mode mirror\n");
+        out.push_str("  klasp install --agent all\n");
+        out.push_str("  klasp doctor\n");
+    }
     out
 }
 

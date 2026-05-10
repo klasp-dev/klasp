@@ -43,10 +43,10 @@ fn try_run(args: &SetupArgs) -> Result<ExitCode> {
     // Step 1: detect existing gates.
     let plan = crate::adopt::detect::detect_all(&repo_root).context("detecting existing gates")?;
 
-    println!("klasp setup — detected {} gate(s)", plan.findings.len());
     if args.dry_run {
-        println!("(--dry-run: printing plan only, writing nothing)");
+        println!("(--dry-run mode — no files will be written)");
     }
+    println!("klasp setup — detected {} gate(s)", plan.findings.len());
 
     // Step 2: detect installed agents on this machine.
     let home = crate::fs_util::home_dir();
@@ -61,7 +61,7 @@ fn try_run(args: &SetupArgs) -> Result<ExitCode> {
     );
 
     // Step 3: print the gate detection plan.
-    print!("{}", crate::adopt::render::render_plan(&plan));
+    print!("{}", crate::adopt::render::render_plan_no_next(&plan));
 
     // Interactive: gate selection prompt.
     let gates_to_use = if args.interactive {
