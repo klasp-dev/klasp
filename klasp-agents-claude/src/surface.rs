@@ -74,7 +74,6 @@ impl AgentSurface for ClaudeCodeSurface {
         let mut findings = Vec::new();
         let agent_id = self.agent_id();
 
-        // Hook script: byte-equality against fresh render.
         let hook_path = self.hook_path(repo_root);
         let hook_actual = match std::fs::read_to_string(&hook_path) {
             Ok(s) => s,
@@ -102,7 +101,6 @@ impl AgentSurface for ClaudeCodeSurface {
             )));
         }
 
-        // Settings: JSON parse + PreToolUse[Bash] hook entry check.
         let settings_path = self.settings_path(repo_root);
         let raw = match std::fs::read_to_string(&settings_path) {
             Ok(s) => s,

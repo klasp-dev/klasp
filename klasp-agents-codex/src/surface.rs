@@ -184,20 +184,6 @@ pub struct CodexInstallReport {
     pub warnings: Vec<HookWarning>,
 }
 
-fn extract_managed_block(s: &str) -> Option<&str> {
-    let start = s.find(git_hooks::MANAGED_START)?;
-    let end_marker = s.find(git_hooks::MANAGED_END)?;
-    if end_marker < start {
-        return None;
-    }
-    let end_of_marker = end_marker + git_hooks::MANAGED_END.len();
-    let end = if s.as_bytes().get(end_of_marker) == Some(&b'\n') {
-        end_of_marker + 1
-    } else {
-        end_of_marker
-    };
-    Some(&s[start..end])
-}
 
 impl AgentSurface for CodexSurface {
     fn agent_id(&self) -> &'static str {
@@ -293,7 +279,7 @@ impl AgentSurface for CodexSurface {
                 Ok(actual) => {
                     let expected_block =
                         git_hooks::render_managed_block(kind, schema_version);
-                    match extract_managed_block(&actual) {
+                    match git_hooks::extract_managed_block(&actual) {
                         Some(actual_block) if actual_block == expected_block => {
                             findings.push(DoctorFinding::Ok(format!(
                                 "hook[{agent_id}][{label}]: \
