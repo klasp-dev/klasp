@@ -105,6 +105,25 @@ pub enum HookWarning {
     },
 }
 
+impl std::fmt::Display for HookWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HookWarning::Skipped { path, kind, conflict } => {
+                let hook_label = kind.filename();
+                let tool = conflict.tool();
+                let trigger = kind.trigger_arg();
+                write!(
+                    f,
+                    "skipping {hook_label} hook ({path}) — file is managed by {tool}. \
+                     Install klasp's gate manually: \
+                     `klasp gate --agent codex --trigger {trigger} \"$@\"`",
+                    path = path.display()
+                )
+            }
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum HookError {
     /// The hook file contains an unmatched marker pair (start without

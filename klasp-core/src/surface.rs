@@ -8,6 +8,7 @@
 //! with the others, and lets v0.3 plugins ship third-party `AgentSurface`
 //! implementations without forking klasp.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 /// Inputs handed to every `install` invocation. Holds enough context that
@@ -64,6 +65,22 @@ pub enum InstallError {
     Surface { agent_id: String, message: String },
 }
 
+/// A non-fatal warning produced by surface install or doctor operations.
+#[derive(Debug, Clone)]
+pub struct SurfaceWarning {
+    pub path: PathBuf,
+    pub message: Cow<'static, str>,
+}
+
+/// A single finding from [`AgentSurface::doctor_check`].
+#[derive(Debug, Clone)]
+pub enum DoctorFinding {
+    Ok(String),
+    Warn(String),
+    Fail(String),
+    Info(String),
+}
+
 /// Object-safe trait. The surface registry stores impls as
 /// `Box<dyn AgentSurface>`; built-in surfaces (Claude in v0.1, Codex in
 /// v0.2, etc.) are registered statically, and v0.3 subprocess plugins add
@@ -96,4 +113,58 @@ pub trait AgentSurface: Send + Sync {
 
     /// Path to the agent's settings/config file this surface mutates.
     fn settings_path(&self, repo_root: &Path) -> PathBuf;
+
+    /// Install the surface and return the report plus any non-fatal warnings
+    /// (e.g. skipped hook conflicts). The default delegates to `install` and
+    /// returns an empty warning list; surfaces that can produce warnings
+    /// (currently Codex) override this method.
+    fn install_with_warnings(
+        &self,
+        ctx: &InstallContext,
+    ) -> Result<(InstallReport, Vec<SurfaceWarning>), InstallError> {
+        Ok((self.install(ctx)?, Vec::new()))
+    }
+
+    /// Per-surface health check for `klasp doctor`. Returns a list of
+    /// [`DoctorFinding`]s; the default implementation verifies that the
+    /// on-disk hook at `hook_path` byte-matches a freshly rendered
+    /// `render_hook_script`. Surfaces with richer install shapes (Codex:
+    /// two hooks + AGENTS.md block; Claude Code: JSON settings parse)
+    /// override this method.
+    fn doctor_check(&self, repo_root: &Path, schema_version: u32) -> Vec<DoctorFinding> {
+        let agent_id = self.agent_id();
+        let hook_path = self.hook_path(repo_root);
+        let mut findings = Vec::new();
+
+        let actual = match std::fs::read_to_string(&hook_path) {
+            Ok(s) => s,
+            Err(_) => {
+                findings.push(DoctorFinding::Fail(format!(
+                    "hook[{agent_id}]: {} not found; re-run `klasp install`",
+                    hook_path.display()
+                )));
+                return findings;
+            }
+        };
+
+        let ctx = InstallContext {
+            repo_root: repo_root.to_path_buf(),
+            dry_run: false,
+            force: false,
+            schema_version,
+        };
+        let expected = self.render_hook_script(&ctx);
+
+        if actual == expected {
+            findings.push(DoctorFinding::Ok(format!(
+                "hook[{agent_id}]: current (schema v{schema_version})"
+            )));
+        } else {
+            findings.push(DoctorFinding::Fail(format!(
+                "hook[{agent_id}]: schema drift detected (re-run `klasp install`)"
+            )));
+        }
+
+        findings
+    }
 }

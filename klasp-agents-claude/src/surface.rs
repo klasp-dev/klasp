@@ -69,6 +69,95 @@ impl AgentSurface for ClaudeCodeSurface {
         hook_template::render(ctx.schema_version)
     }
 
+    fn doctor_check(&self, repo_root: &Path, schema_version: u32) -> Vec<klasp_core::DoctorFinding> {
+        use klasp_core::DoctorFinding;
+        let mut findings = Vec::new();
+        let agent_id = self.agent_id();
+
+        // Hook script: byte-equality against fresh render.
+        let hook_path = self.hook_path(repo_root);
+        let hook_actual = match std::fs::read_to_string(&hook_path) {
+            Ok(s) => s,
+            Err(_) => {
+                findings.push(DoctorFinding::Fail(format!(
+                    "hook[{agent_id}]: {} not found; re-run `klasp install`",
+                    hook_path.display()
+                )));
+                return findings;
+            }
+        };
+        let ctx = InstallContext {
+            repo_root: repo_root.to_path_buf(),
+            dry_run: false,
+            force: false,
+            schema_version,
+        };
+        if hook_actual == self.render_hook_script(&ctx) {
+            findings.push(DoctorFinding::Ok(format!(
+                "hook[{agent_id}]: current (schema v{schema_version})"
+            )));
+        } else {
+            findings.push(DoctorFinding::Fail(format!(
+                "hook[{agent_id}]: schema drift detected (re-run `klasp install`)"
+            )));
+        }
+
+        // Settings: JSON parse + PreToolUse[Bash] hook entry check.
+        let settings_path = self.settings_path(repo_root);
+        let raw = match std::fs::read_to_string(&settings_path) {
+            Ok(s) => s,
+            Err(_) => {
+                findings.push(DoctorFinding::Fail(format!(
+                    "settings[{agent_id}]: {} not found; re-run `klasp install`",
+                    settings_path.display()
+                )));
+                return findings;
+            }
+        };
+        let root: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                findings.push(DoctorFinding::Fail(format!(
+                    "settings[{agent_id}]: failed to parse {} as JSON: {e}",
+                    settings_path.display()
+                )));
+                return findings;
+            }
+        };
+        let hook_command = Self::HOOK_COMMAND;
+        let has_entry = root
+            .get("hooks")
+            .and_then(|h| h.get("PreToolUse"))
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|arr| {
+                arr.iter().any(|matcher_entry| {
+                    matcher_entry.get("matcher").and_then(serde_json::Value::as_str)
+                        == Some("Bash")
+                        && matcher_entry
+                            .get("hooks")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|inner| {
+                                inner.iter().any(|hook| {
+                                    hook.get("command")
+                                        .and_then(serde_json::Value::as_str)
+                                        == Some(hook_command)
+                                })
+                            })
+                })
+            });
+        if has_entry {
+            findings.push(DoctorFinding::Ok(format!(
+                "settings[{agent_id}]: hook entry present"
+            )));
+        } else {
+            findings.push(DoctorFinding::Fail(format!(
+                "settings[{agent_id}]: klasp hook entry missing; re-run `klasp install`"
+            )));
+        }
+
+        findings
+    }
+
     fn install(&self, ctx: &InstallContext) -> Result<InstallReport, InstallError> {
         let hook_path = self.hook_path(&ctx.repo_root);
         let settings_path = self.settings_path(&ctx.repo_root);

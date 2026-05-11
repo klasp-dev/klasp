@@ -38,7 +38,7 @@ pub use protocol::{
     PLUGIN_PROTOCOL_VERSION,
 };
 pub use source::{CheckResult, CheckSource, CheckSourceError, RepoState};
-pub use surface::{AgentSurface, InstallContext, InstallError, InstallReport};
+pub use surface::{AgentSurface, DoctorFinding, InstallContext, InstallError, InstallReport, SurfaceWarning};
 pub use trigger::{GitEvent, Trigger};
 pub use trigger_config::{validate_user_triggers, UserTrigger, UserTriggerConfig};
 pub use verdict::{Finding, Severity, Verdict, VerdictPolicy};
