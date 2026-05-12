@@ -16,11 +16,11 @@
 //! - omitted — fall back to the v0.1 behaviour: every registered surface
 //!   that auto-detects (or all of them under `--force`).
 //!
-//! ## Codex warnings
+//! ## Surface warnings
 //!
 //! [`klasp_agents_codex::CodexSurface`] returns
-//! [`HookWarning::Skipped`](klasp_agents_codex::HookWarning) when a foreign
-//! hook manager (husky / lefthook / pre-commit framework) owns the
+//! [`klasp_core::SurfaceWarning`]s (via `install_with_warnings`) when a
+//! foreign hook manager (husky / lefthook / pre-commit framework) owns the
 //! `.git/hooks/pre-commit` (or `pre-push`) file. We render those to stderr
 //! as a non-fatal `warning:` line per acceptance #2 of issue #28; the
 //! install completes successfully.
@@ -29,7 +29,6 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{anyhow, Context, Result};
-use klasp_agents_codex::{CodexSurface, HookKind, HookWarning};
 use klasp_core::{
     AgentSurface, ConfigV1, InstallContext, InstallReport, KlaspError, GATE_SCHEMA_VERSION,
 };
@@ -256,55 +255,22 @@ fn print_reports(reports: &[InstallReport], dry_run: bool) {
     }
 }
 
-/// Install a single surface. For Codex, uses the detailed entry-point that
-/// returns hook-conflict warnings. Returns `(report, warnings)`.
+/// Install a single surface via the trait's `install_with_warnings` method.
+/// Returns `(report, warnings)`.
 pub(crate) fn install_one_surface(
     surface: &dyn AgentSurface,
     ctx: &InstallContext,
-) -> Result<(InstallReport, Vec<HookWarning>)> {
-    if surface.agent_id() == CodexSurface::AGENT_ID {
-        let detailed = CodexSurface
-            .install_detailed(ctx)
-            .with_context(|| format!("installing {}", surface.agent_id()))?;
-        Ok((detailed.report, detailed.warnings))
-    } else {
-        let report = surface
-            .install(ctx)
-            .with_context(|| format!("installing {}", surface.agent_id()))?;
-        Ok((report, vec![]))
-    }
+) -> Result<(InstallReport, Vec<klasp_core::SurfaceWarning>)> {
+    surface
+        .install_with_warnings(ctx)
+        .with_context(|| format!("installing {}", surface.agent_id()))
 }
 
-/// Render a non-fatal hook conflict to stderr. The format matches the
-/// "actionable suggestion is mandatory" requirement from issue #29: tell
-/// the user *exactly* what to do next.
-pub(crate) fn print_hook_warning(warning: &HookWarning) {
-    match warning {
-        HookWarning::Skipped {
-            path,
-            kind,
-            conflict,
-        } => {
-            let hook_label = match kind {
-                HookKind::Commit => "pre-commit",
-                HookKind::Push => "pre-push",
-            };
-            let trigger = kind.trigger_arg();
-            let tool = conflict.tool();
-            eprintln!(
-                "warning: skipping {hook_label} hook ({}) — file is managed by {tool}.",
-                path.display()
-            );
-            eprintln!(
-                "         Install klasp's gate manually by adding `klasp gate \
-                 --agent codex --trigger {trigger} \"$@\"`"
-            );
-            eprintln!(
-                "         to your existing hook, or remove the foreign tool and \
-                 re-run `klasp install --agent codex`."
-            );
-        }
-    }
+/// Render a non-fatal surface warning to stderr. The `message` field is set
+/// by the surface impl (e.g. `CodexSurface` formats the full actionable text
+/// including what hook was skipped and how to add it manually).
+pub(crate) fn print_hook_warning(warning: &klasp_core::SurfaceWarning) {
+    eprintln!("warning: {}", warning.message);
 }
 
 pub(crate) fn resolve_repo_root(explicit: Option<&Path>) -> Result<PathBuf> {

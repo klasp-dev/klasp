@@ -184,6 +184,7 @@ pub struct CodexInstallReport {
     pub warnings: Vec<HookWarning>,
 }
 
+
 impl AgentSurface for CodexSurface {
     fn agent_id(&self) -> &'static str {
         Self::AGENT_ID
@@ -218,6 +219,87 @@ impl AgentSurface for CodexSurface {
         // `klasp-core` and we may not extend it from here. W3 will
         // call `install_detailed` from the CLI to surface them.
         Ok(self.install_detailed(ctx)?.report)
+    }
+
+    fn install_with_warnings(
+        &self,
+        ctx: &InstallContext,
+    ) -> Result<(InstallReport, Vec<klasp_core::SurfaceWarning>), InstallError> {
+        let detailed = self.install_detailed(ctx)?;
+        let warnings = detailed
+            .warnings
+            .into_iter()
+            .map(|w| {
+                let path = match &w {
+                    HookWarning::Skipped { path, .. } => path.clone(),
+                };
+                klasp_core::SurfaceWarning {
+                    path,
+                    message: w.to_string().into(),
+                }
+            })
+            .collect();
+        Ok((detailed.report, warnings))
+    }
+
+    fn doctor_check(&self, repo_root: &Path, schema_version: u32) -> Vec<klasp_core::DoctorFinding> {
+        use klasp_core::DoctorFinding;
+        let mut findings = Vec::new();
+        let agent_id = self.agent_id();
+
+        // 1. AGENTS.md — managed-block presence.
+        let agents_md_path = self.settings_path(repo_root);
+        match std::fs::read_to_string(&agents_md_path) {
+            Err(_) => findings.push(DoctorFinding::Fail(format!(
+                "settings[{agent_id}]: {} not found; re-run `klasp install`",
+                agents_md_path.display()
+            ))),
+            Ok(content) => {
+                if content.contains(agents_md::MANAGED_START) {
+                    findings.push(DoctorFinding::Ok(format!(
+                        "settings[{agent_id}]: AGENTS.md managed block present"
+                    )));
+                } else {
+                    findings.push(DoctorFinding::Fail(format!(
+                        "settings[{agent_id}]: AGENTS.md managed block missing; \
+                         re-run `klasp install`"
+                    )));
+                }
+            }
+        }
+
+        // 2. Both git hooks — compare managed block only (user content above/below is allowed).
+        for (kind, hook_path) in Self::all_hook_paths(repo_root) {
+            let label = kind.filename();
+            match std::fs::read_to_string(&hook_path) {
+                Err(_) => findings.push(DoctorFinding::Fail(format!(
+                    "hook[{agent_id}][{label}]: {} not found; re-run `klasp install`",
+                    hook_path.display()
+                ))),
+                Ok(actual) => {
+                    let expected_block =
+                        git_hooks::render_managed_block(kind, schema_version);
+                    match git_hooks::extract_managed_block(&actual) {
+                        Some(actual_block) if actual_block == expected_block => {
+                            findings.push(DoctorFinding::Ok(format!(
+                                "hook[{agent_id}][{label}]: \
+                                 current (schema v{schema_version})"
+                            )));
+                        }
+                        Some(_) => findings.push(DoctorFinding::Fail(format!(
+                            "hook[{agent_id}][{label}]: schema drift detected \
+                             (re-run `klasp install`)"
+                        ))),
+                        None => findings.push(DoctorFinding::Fail(format!(
+                            "hook[{agent_id}][{label}]: managed block missing; \
+                             re-run `klasp install`"
+                        ))),
+                    }
+                }
+            }
+        }
+
+        findings
     }
 
     fn uninstall(&self, repo_root: &Path, dry_run: bool) -> Result<Vec<PathBuf>, InstallError> {

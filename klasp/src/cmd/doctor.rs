@@ -27,11 +27,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use klasp_agents_codex::git_hooks::{MANAGED_END, MANAGED_START};
-use klasp_core::{
-    AgentSurface, CheckSourceConfig, ConfigV1, InstallContext, KlaspError, GATE_SCHEMA_VERSION,
-};
-use serde_json::Value;
+use klasp_core::{CheckSourceConfig, ConfigV1, KlaspError, GATE_SCHEMA_VERSION};
 
 use crate::cli::DoctorArgs;
 use crate::cmd::install::resolve_repo_root;
@@ -169,8 +165,14 @@ pub(crate) fn check_surfaces(repo_root: &Path, config: Option<&ConfigV1>, c: &mu
             continue;
         }
         active += 1;
-        check_hook(repo_root, surface, c);
-        check_settings(repo_root, surface, c);
+        for finding in surface.doctor_check(repo_root, GATE_SCHEMA_VERSION) {
+            match finding {
+                klasp_core::DoctorFinding::Ok(msg) => c.ok(&msg),
+                klasp_core::DoctorFinding::Warn(msg) => c.warn(&msg),
+                klasp_core::DoctorFinding::Fail(msg) => c.fail(&msg),
+                klasp_core::DoctorFinding::Info(msg) => Counters::info(&msg),
+            }
+        }
     }
 
     if active == 0 {
@@ -188,145 +190,6 @@ pub(crate) fn check_surfaces(repo_root: &Path, config: Option<&ConfigV1>, c: &mu
             "AGENTS.md present but \"codex\" not in [gate].agents \
              — run `klasp install --agent codex` to enable codex gate coverage",
         );
-    }
-}
-
-/// Check 2 — verify the on-disk hook contains a fresh managed block at the
-/// binary's `GATE_SCHEMA_VERSION`. For surfaces that splice a managed block
-/// into an existing hook (e.g. Codex), the file may have user content above
-/// or below the block; we compare only the block itself rather than the
-/// full file. A mismatch means the binary was upgraded since the last
-/// `klasp install` (the gate runtime would fail-open in this state).
-fn check_hook(repo_root: &Path, surface: &dyn AgentSurface, c: &mut Counters) {
-    let agent_id = surface.agent_id();
-    let hook_path = surface.hook_path(repo_root);
-
-    let actual = match std::fs::read_to_string(&hook_path) {
-        Ok(s) => s,
-        Err(_) => {
-            c.fail(&format!(
-                "hook[{agent_id}]: {} not found; re-run `klasp install`",
-                hook_path.display()
-            ));
-            return;
-        }
-    };
-
-    let ctx = InstallContext {
-        repo_root: repo_root.to_path_buf(),
-        dry_run: false,
-        force: false,
-        schema_version: GATE_SCHEMA_VERSION,
-    };
-    let expected = surface.render_hook_script(&ctx);
-
-    let ok = actual == expected || {
-        // Surfaces with managed blocks (e.g. Codex) may have user content
-        // outside the block. Compare only the block portion — that's what
-        // encodes the schema version.
-        match (
-            extract_managed_block(&actual),
-            extract_managed_block(&expected),
-        ) {
-            (Some(a), Some(e)) => a == e,
-            _ => false,
-        }
-    };
-
-    if ok {
-        c.ok(&format!(
-            "hook[{agent_id}]: current (schema v{GATE_SCHEMA_VERSION})"
-        ));
-    } else {
-        c.fail(&format!(
-            "hook[{agent_id}]: schema drift detected (re-run `klasp install`)"
-        ));
-    }
-}
-
-/// Extract the klasp managed block (inclusive of both markers and the
-/// trailing newline) from a hook file body. Returns `None` when no block
-/// markers are present or the markers appear out of order.
-fn extract_managed_block(s: &str) -> Option<&str> {
-    let start = s.find(MANAGED_START)?;
-    let end_marker = s.find(MANAGED_END)?;
-    if end_marker < start {
-        return None;
-    }
-    let end_of_marker = end_marker + MANAGED_END.len();
-    let end = if s.as_bytes().get(end_of_marker) == Some(&b'\n') {
-        end_of_marker + 1
-    } else {
-        end_of_marker
-    };
-    Some(&s[start..end])
-}
-
-/// Check 3 — settings JSON exists, parses, and contains klasp's
-/// `PreToolUse[Bash]` entry.
-///
-/// JSON-shaped only — the Codex surface's `settings_path` points at an
-/// `AGENTS.md` markdown file with no JSON inside. Doctor's W3 contract is
-/// "don't FAIL on a healthy Codex install"; v0.3 will add a typed
-/// per-surface health check on the trait so this special-case can go away.
-fn check_settings(repo_root: &Path, surface: &dyn AgentSurface, c: &mut Counters) {
-    let agent_id = surface.agent_id();
-    if agent_id != klasp_agents_claude::ClaudeCodeSurface::AGENT_ID {
-        // Non-Claude surfaces have their own format (e.g. AGENTS.md
-        // managed-block for Codex). The hook-script byte-equality check
-        // run by `check_hook` is the surface-agnostic health signal; the
-        // settings-parse logic below is Claude-specific.
-        return;
-    }
-    let settings_path = surface.settings_path(repo_root);
-
-    let raw = match std::fs::read_to_string(&settings_path) {
-        Ok(s) => s,
-        Err(_) => {
-            c.fail(&format!(
-                "settings[{agent_id}]: {} not found; re-run `klasp install`",
-                settings_path.display()
-            ));
-            return;
-        }
-    };
-
-    let root: Value = match serde_json::from_str(&raw) {
-        Ok(v) => v,
-        Err(e) => {
-            c.fail(&format!(
-                "settings[{agent_id}]: failed to parse {} as JSON: {e}",
-                settings_path.display()
-            ));
-            return;
-        }
-    };
-
-    let hook_command = klasp_agents_claude::ClaudeCodeSurface::HOOK_COMMAND;
-    let has_entry = root
-        .get("hooks")
-        .and_then(|h| h.get("PreToolUse"))
-        .and_then(Value::as_array)
-        .is_some_and(|arr| {
-            arr.iter().any(|matcher_entry| {
-                matcher_entry.get("matcher").and_then(Value::as_str) == Some("Bash")
-                    && matcher_entry
-                        .get("hooks")
-                        .and_then(Value::as_array)
-                        .is_some_and(|inner| {
-                            inner.iter().any(|hook| {
-                                hook.get("command").and_then(Value::as_str) == Some(hook_command)
-                            })
-                        })
-            })
-        });
-
-    if has_entry {
-        c.ok(&format!("settings[{agent_id}]: hook entry present"));
-    } else {
-        c.fail(&format!(
-            "settings[{agent_id}]: klasp hook entry missing; re-run `klasp install`"
-        ));
     }
 }
 

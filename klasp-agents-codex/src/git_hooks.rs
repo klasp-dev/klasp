@@ -105,6 +105,25 @@ pub enum HookWarning {
     },
 }
 
+impl std::fmt::Display for HookWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HookWarning::Skipped { path, kind, conflict } => {
+                let hook_label = kind.filename();
+                let tool = conflict.tool();
+                let trigger = kind.trigger_arg();
+                write!(
+                    f,
+                    "skipping {hook_label} hook ({path}) — file is managed by {tool}. \
+                     Install klasp's gate manually: \
+                     `klasp gate --agent codex --trigger {trigger} \"$@\"`",
+                    path = path.display()
+                )
+            }
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum HookError {
     /// The hook file contains an unmatched marker pair (start without
@@ -141,6 +160,25 @@ pub fn render_managed_body(kind: HookKind, schema_version: u32) -> String {
         ver = schema_version,
         trigger = kind.trigger_arg(),
     )
+}
+
+/// Extract the managed block (from [`MANAGED_START`] through [`MANAGED_END`]
+/// inclusive of the trailing newline) from a hook file string. Returns `None`
+/// when either marker is absent or the end marker precedes the start marker.
+/// Malformed (mismatched) markers are treated as absent.
+pub(crate) fn extract_managed_block(s: &str) -> Option<&str> {
+    let start = s.find(MANAGED_START)?;
+    let end_marker = s.find(MANAGED_END)?;
+    if end_marker < start {
+        return None;
+    }
+    let end_of_marker = end_marker + MANAGED_END.len();
+    let end = if s.as_bytes().get(end_of_marker) == Some(&b'\n') {
+        end_of_marker + 1
+    } else {
+        end_of_marker
+    };
+    Some(&s[start..end])
 }
 
 /// Render the full managed block (markers + body) for the given hook.
