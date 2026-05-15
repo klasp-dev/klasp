@@ -10,7 +10,46 @@ follow the migration notes attached to each minor release.
 
 ## [Unreleased]
 
-Nothing pending.
+### Added
+
+- **`klasp demo` subcommand + replay harness ([#69])** — `klasp demo` runs a
+  self-contained replay of a pre-recorded gate session, letting users see klasp
+  in action without enrolling a real repo. Replay harness drives the gate binary
+  against a frozen snapshot so the demo is deterministic across installs.
+- **`AgentSurface::install_with_warnings` + `doctor_check` ([#55])** — new
+  trait methods replace stringly-typed dispatch in `klasp install` and
+  `klasp doctor`. Surfaces now own their install-side warning logic and the
+  per-surface doctor check, eliminating the last ad-hoc string matching in the
+  doctor command path.
+
+### Fixed
+
+- **`klasp doctor` false-positive on managed-block hooks ([#110])** — doctor
+  reported `FAIL hook[…]` when a hook file contained a managed block written by
+  an earlier install but the file also had user-added lines after the block.
+  Now only the managed block region is compared; trailing content is ignored.
+  Setup subcommand output polished: redundant status lines collapsed, install
+  confirmation message is consistent across surfaces.
+
+## [0.4.0]
+
+Two first-run ergonomics features and an expanded recipes guide.
+
+### Added
+
+- **`klasp setup` one-command first-run flow ([#103], [#104])** — `klasp setup`
+  runs `init` + `install` in sequence with agent-narrowing defaults, so a new
+  user can enrol a repo in a single command. Agent selection is narrowed
+  automatically to surfaces whose tooling is already present in the repo.
+- **`klasp init --adopt` ([#97], [#101])** — detects an existing hook or
+  config in the repo and mirrors its gate configuration into the generated
+  `klasp.toml`, preserving existing check entries rather than overwriting them.
+
+### Changed
+
+- **Recipes guide expanded ([#100])** — `docs/recipes.md` audited and extended
+  with worked examples covering Python (pytest + ruff), TypeScript
+  (ESLint/Biome), Rust (cargo), Go, polyglot projects, and monorepo setups.
 
 ## [0.3.1]
 
@@ -285,7 +324,9 @@ The MVP. Claude Code only. Shell-command checks. One-command install. See
 
 See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan.
 
-[Unreleased]: https://github.com/klasp-dev/klasp/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/klasp-dev/klasp/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/klasp-dev/klasp/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/klasp-dev/klasp/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/klasp-dev/klasp/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/klasp-dev/klasp/compare/v0.2.3...v0.2.5
 [0.2.3]: https://github.com/klasp-dev/klasp/compare/v0.2.2...v0.2.3
@@ -303,5 +344,12 @@ See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan.
 [#44]: https://github.com/klasp-dev/klasp/issues/44
 [#45]: https://github.com/klasp-dev/klasp/issues/45
 [#46]: https://github.com/klasp-dev/klasp/issues/46
+[#55]: https://github.com/klasp-dev/klasp/issues/55
 [#68]: https://github.com/klasp-dev/klasp/issues/68
 [#69]: https://github.com/klasp-dev/klasp/issues/69
+[#97]: https://github.com/klasp-dev/klasp/issues/97
+[#100]: https://github.com/klasp-dev/klasp/pull/100
+[#101]: https://github.com/klasp-dev/klasp/pull/101
+[#103]: https://github.com/klasp-dev/klasp/issues/103
+[#104]: https://github.com/klasp-dev/klasp/pull/104
+[#110]: https://github.com/klasp-dev/klasp/pull/110
