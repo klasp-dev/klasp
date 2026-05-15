@@ -108,7 +108,11 @@ pub enum HookWarning {
 impl std::fmt::Display for HookWarning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HookWarning::Skipped { path, kind, conflict } => {
+            HookWarning::Skipped {
+                path,
+                kind,
+                conflict,
+            } => {
                 let hook_label = kind.filename();
                 let tool = conflict.tool();
                 let trigger = kind.trigger_arg();

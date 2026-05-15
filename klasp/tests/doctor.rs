@@ -395,7 +395,10 @@ policy = "any_fail"
         stderr(&out)
     );
     let so = stdout(&out);
-    assert!(so.contains("OK    hook[codex][pre-commit]:"), "stdout:\n{so}");
+    assert!(
+        so.contains("OK    hook[codex][pre-commit]:"),
+        "stdout:\n{so}"
+    );
     assert!(
         !so.contains("FAIL"),
         "no FAIL lines expected\nstdout:\n{so}"
@@ -426,7 +429,10 @@ policy = "any_fail"
     );
     let so = stdout(&out);
     assert!(so.contains("OK    hook[claude_code]:"), "stdout:\n{so}");
-    assert!(so.contains("OK    hook[codex][pre-commit]:"), "stdout:\n{so}");
+    assert!(
+        so.contains("OK    hook[codex][pre-commit]:"),
+        "stdout:\n{so}"
+    );
     assert!(
         !so.contains("FAIL"),
         "no FAIL lines expected\nstdout:\n{so}"

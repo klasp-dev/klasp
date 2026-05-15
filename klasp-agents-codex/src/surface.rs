@@ -184,7 +184,6 @@ pub struct CodexInstallReport {
     pub warnings: Vec<HookWarning>,
 }
 
-
 impl AgentSurface for CodexSurface {
     fn agent_id(&self) -> &'static str {
         Self::AGENT_ID
@@ -242,7 +241,11 @@ impl AgentSurface for CodexSurface {
         Ok((detailed.report, warnings))
     }
 
-    fn doctor_check(&self, repo_root: &Path, schema_version: u32) -> Vec<klasp_core::DoctorFinding> {
+    fn doctor_check(
+        &self,
+        repo_root: &Path,
+        schema_version: u32,
+    ) -> Vec<klasp_core::DoctorFinding> {
         use klasp_core::DoctorFinding;
         let mut findings = Vec::new();
         let agent_id = self.agent_id();
@@ -277,8 +280,7 @@ impl AgentSurface for CodexSurface {
                     hook_path.display()
                 ))),
                 Ok(actual) => {
-                    let expected_block =
-                        git_hooks::render_managed_block(kind, schema_version);
+                    let expected_block = git_hooks::render_managed_block(kind, schema_version);
                     match git_hooks::extract_managed_block(&actual) {
                         Some(actual_block) if actual_block == expected_block => {
                             findings.push(DoctorFinding::Ok(format!(
