@@ -69,7 +69,11 @@ impl AgentSurface for ClaudeCodeSurface {
         hook_template::render(ctx.schema_version)
     }
 
-    fn doctor_check(&self, repo_root: &Path, schema_version: u32) -> Vec<klasp_core::DoctorFinding> {
+    fn doctor_check(
+        &self,
+        repo_root: &Path,
+        schema_version: u32,
+    ) -> Vec<klasp_core::DoctorFinding> {
         use klasp_core::DoctorFinding;
         let mut findings = Vec::new();
         let agent_id = self.agent_id();
@@ -129,15 +133,16 @@ impl AgentSurface for ClaudeCodeSurface {
             .and_then(serde_json::Value::as_array)
             .is_some_and(|arr| {
                 arr.iter().any(|matcher_entry| {
-                    matcher_entry.get("matcher").and_then(serde_json::Value::as_str)
+                    matcher_entry
+                        .get("matcher")
+                        .and_then(serde_json::Value::as_str)
                         == Some("Bash")
                         && matcher_entry
                             .get("hooks")
                             .and_then(serde_json::Value::as_array)
                             .is_some_and(|inner| {
                                 inner.iter().any(|hook| {
-                                    hook.get("command")
-                                        .and_then(serde_json::Value::as_str)
+                                    hook.get("command").and_then(serde_json::Value::as_str)
                                         == Some(hook_command)
                                 })
                             })
