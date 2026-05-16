@@ -8,9 +8,55 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Cancel superseded PR runs; never cancel main pushes (group key is unique
+  # per ref on main, per PR number on PRs).
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      npm: ${{ steps.filter.outputs.npm }}
+      pypi: ${{ steps.filter.outputs.pypi }}
+      ci: ${{ steps.filter.outputs.ci }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # actions/checkout@v4
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          # On `push`, paths-filter compares to the previous commit on the
+          # branch. On PRs it compares to the base ref. Either way, treat
+          # CI/Greptile config changes as "everything changed" to retest
+          # pipeline edits.
+          filters: |
+            rust:
+              - 'klasp/**'
+              - 'klasp-core/**'
+              - 'klasp-agents-*/**'
+              - 'examples/klasp-plugin-*/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain*'
+            npm:
+              - 'npm/**'
+              - 'pnpm-workspace.yaml'
+              - 'pnpm-lock.yaml'
+              - 'package.json'
+              - '.npmrc'
+            pypi:
+              - 'pypi/**'
+            ci:
+              - '.github/workflows/**'
+              - 'greptile.json'
+
   check:
-    name: cargo check + fmt + clippy
+    name: cargo check + fmt + clippy + test
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # actions/checkout@v4
@@ -37,8 +83,24 @@ jobs:
         run: cargo test --workspace -- --ignored
         continue-on-error: true
 
+      # Insta snapshot guard. `cargo test` accepts matching snapshots but
+      # leaves `*.snap.new` artefacts on drift. Fail the build if any are
+      # present — forces an explicit `cargo insta accept` (or revert) in the
+      # author's commit rather than silent acceptance on `main`.
+      - name: verify no stray insta snapshots
+        shell: bash
+        run: |
+          orphans=$(find . -name '*.snap.new' -not -path './target/*' -not -path './.claude/*' -print)
+          if [ -n "$orphans" ]; then
+            echo "::error::Uncommitted insta snapshot drift:"
+            echo "$orphans"
+            exit 1
+          fi
+
   cross-platform-build:
     name: build / ${{ matrix.target.os }}
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +126,8 @@ jobs:
 
   npm-validate:
     name: npm publish --dry-run
+    needs: changes
+    if: ${{ needs.changes.outputs.npm == 'true' || needs.changes.outputs.ci == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # actions/checkout@v4
@@ -78,6 +142,10 @@ jobs:
 
   pypi-validate:
     name: pypi maturin build + twine check
+    needs: changes
+    # pypi wheel is built via maturin from the Rust source, so Rust changes
+    # also trigger this job.
+    if: ${{ needs.changes.outputs.pypi == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # actions/checkout@v4
@@ -96,3 +164,52 @@ jobs:
       - name: twine check
         working-directory: pypi
         run: uvx twine check dist/*
+
+  # ------------------------------------------------------------------
+  # Aggregate required-check.
+  #
+  # Branch protection should require ONLY this job (plus `semantic-title`
+  # from pr-title.yml and any Greptile check). All other jobs above are
+  # consumed by this one, so internal job names can be added, renamed, or
+  # sharded without re-touching branch-protection rules.
+  #
+  # Pattern: run always (`if: always()`), then explicitly accept `success`
+  # and `skipped` as pass states. `skipped` is critical — it lets docs-only
+  # PRs pass when path filters skip the Rust/npm/pypi jobs.
+  # ------------------------------------------------------------------
+  build-and-test:
+    name: build-and-test
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - check
+      - cross-platform-build
+      - npm-validate
+      - pypi-validate
+    if: always()
+    steps:
+      - name: verify required jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          declare -A results=(
+            [changes]="${{ needs.changes.result }}"
+            [check]="${{ needs.check.result }}"
+            [cross-platform-build]="${{ needs.cross-platform-build.result }}"
+            [npm-validate]="${{ needs.npm-validate.result }}"
+            [pypi-validate]="${{ needs.pypi-validate.result }}"
+          )
+          fail=0
+          for job in "${!results[@]}"; do
+            r="${results[$job]}"
+            case "$r" in
+              success|skipped)
+                echo "ok $job: $r"
+                ;;
+              *)
+                echo "::error::$job: $r"
+                fail=1
+                ;;
+            esac
+          done
+          exit $fail
