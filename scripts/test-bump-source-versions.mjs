@@ -3,14 +3,18 @@
 // bump-source-versions.mjs.  Run with:
 //   node scripts/test-bump-source-versions.mjs
 //
-// Strategy: invoke the script with versions that should be rejected and check
-// the exit code + stderr message.  For accepted versions we only test the
-// whitelist regex (the patchFile calls need real manifests, so those are
-// covered by the release workflow itself).
+// Strategy:
+//   - Rejected versions: invoke the real script and check the exit code +
+//     stderr message (exercises the actual CLI contract end-to-end).
+//   - Accepted versions: assert against the real exported SUPPORTED_TAG_RE and
+//     toPypiVersion, so the test tracks production instead of a private copy.
+//     (The patchFile calls need real manifests, so those stay covered by the
+//     release workflow itself.)
 
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { SUPPORTED_TAG_RE, toPypiVersion } from "./bump-source-versions.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(__dirname, "bump-source-versions.mjs");
@@ -24,7 +28,7 @@ let failed = 0;
 
 function run(version) {
   try {
-    const stderr = execFileSync(process.execPath, [SCRIPT, version], {
+    execFileSync(process.execPath, [SCRIPT, version], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -48,21 +52,13 @@ function expectReject(version, expectedMessageFragment) {
   }
 }
 
-// Whitelist regex — mirrors SUPPORTED_TAG_RE in bump-source-versions.mjs.
-// We test acceptance here without running the full patchFile logic (which
-// requires real manifest files).
-const SUPPORTED_TAG_RE = /^\d+\.\d+\.\d+(?:-(rc|alpha|beta)\.\d+)?$/;
-
 function expectAccept(version, expectedPypi) {
   if (!SUPPORTED_TAG_RE.test(version)) {
     console.error(`FAIL  accept '${version}': regex rejected it`);
     failed++;
     return;
   }
-  const pypi = version
-    .replace(/-rc\.?/i, "rc")
-    .replace(/-alpha\.?/i, "a")
-    .replace(/-beta\.?/i, "b");
+  const pypi = toPypiVersion(version);
   if (pypi === expectedPypi) {
     console.log(`PASS  accept '${version}' -> pypi '${pypi}'`);
     passed++;

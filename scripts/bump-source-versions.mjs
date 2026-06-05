@@ -18,34 +18,34 @@
 
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(__dirname, "..");
-
-const version = process.argv[2];
-if (!version) {
-  console.error("usage: bump-source-versions.mjs <version>");
-  process.exit(1);
-}
-
-if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
-  console.error(`error: '${version}' is not a valid semver string`);
-  process.exit(1);
-}
+// Single source of truth for the pre-release kinds this project ships and
+// their PEP 440 suffixes. The whitelist regex, the PyPI transform, and the
+// error message all derive from this table, so adding a kind is one line.
+const PRERELEASE = [
+  { tag: "rc", pypi: "rc" },
+  { tag: "alpha", pypi: "a" },
+  { tag: "beta", pypi: "b" },
+];
+const PRERELEASE_KINDS = PRERELEASE.map((p) => p.tag).join("|"); // "rc|alpha|beta"
 
 // Whitelist the tag forms this project ships. Anything else (e.g. -pre.N,
 // -dev.N, +sha.abc) would either be silently mangled by the PEP 440
 // normalisation below or produce a string PyPI rejects outright.
 // Supported: X.Y.Z  |  X.Y.Z-rc.N  |  X.Y.Z-alpha.N  |  X.Y.Z-beta.N
-const SUPPORTED_TAG_RE =
-  /^\d+\.\d+\.\d+(?:-(rc|alpha|beta)\.\d+)?$/;
-if (!SUPPORTED_TAG_RE.test(version)) {
-  console.error(
-    `error: Unsupported tag format '${version}'. ` +
-      "Supported: X.Y.Z | X.Y.Z-rc.N | X.Y.Z-alpha.N | X.Y.Z-beta.N"
+export const SUPPORTED_TAG_RE = new RegExp(
+  `^\\d+\\.\\d+\\.\\d+(?:-(${PRERELEASE_KINDS})\\.\\d+)?$`
+);
+
+// Map a supported semver tag to its PEP 440 form, e.g. 1.2.3-rc.1 -> 1.2.3rc1.
+// PEP 440 prefers `1.0.0rc1` over `1.0.0-rc.1`. Assumes the input already
+// passed SUPPORTED_TAG_RE; non-pre-release versions pass through unchanged.
+export function toPypiVersion(version) {
+  return version.replace(
+    new RegExp(`-(${PRERELEASE_KINDS})\\.(\\d+)$`),
+    (_, tag, n) => PRERELEASE.find((p) => p.tag === tag).pypi + n
   );
-  process.exit(1);
 }
 
 function patchFile(path, replacements) {
@@ -65,30 +65,6 @@ function patchFile(path, replacements) {
   writeFileSync(path, modified);
   console.log(`patched ${path}`);
 }
-
-// Workspace root Cargo.toml: bump `[workspace.package] version = "..."`.
-patchFile(join(repoRoot, "Cargo.toml"), [
-  {
-    description: "workspace.package.version",
-    find: /^version\s*=\s*"[^"]*"\s*$/m,
-    replace: `version = "${version}"`,
-  },
-]);
-
-// PyPI pyproject.toml: bump `[project] version = "..."`.
-// PEP 440 prefers `1.0.0rc1` over `1.0.0-rc.1`. We pass the raw semver in
-// here; if you want PEP 440 normalisation, do it in CI before calling.
-const pypiVersion = version
-  .replace(/-rc\.?/i, "rc")
-  .replace(/-alpha\.?/i, "a")
-  .replace(/-beta\.?/i, "b");
-patchFile(join(repoRoot, "pypi", "pyproject.toml"), [
-  {
-    description: "project.version",
-    find: /^version\s*=\s*"[^"]*"\s*$/m,
-    replace: `version = "${pypiVersion}"`,
-  },
-]);
 
 // Path-dependency version specifiers — line up the published crate version
 // with dep declarations in downstream crates so `cargo publish` accepts them.
@@ -116,22 +92,69 @@ function isMemberDir(entry, root) {
   return existsSync(join(root, entry.name, "Cargo.toml"));
 }
 
-const memberCargoTomls = readdirSync(repoRoot, { withFileTypes: true })
-  .filter((e) => isMemberDir(e, repoRoot))
-  .map((e) => join(repoRoot, e.name, "Cargo.toml"));
+function main() {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = resolve(__dirname, "..");
 
-let touched = 0;
-for (const cargoToml of memberCargoTomls) {
-  const original = readFileSync(cargoToml, "utf8");
-  const modified = original.replace(PATH_DEP_RE, `$1${version}$2`);
-  if (modified !== original) {
-    writeFileSync(cargoToml, modified);
-    console.log(`patched path-deps in ${cargoToml}`);
-    touched++;
+  const version = process.argv[2];
+  if (!version) {
+    console.error("usage: bump-source-versions.mjs <version>");
+    process.exit(1);
   }
-}
-if (touched === 0) {
-  console.log("path-deps already at target version (nothing to patch)");
+
+  if (!SUPPORTED_TAG_RE.test(version)) {
+    console.error(
+      `error: Unsupported tag format '${version}'. Supported: X.Y.Z | ` +
+        PRERELEASE.map((p) => `X.Y.Z-${p.tag}.N`).join(" | ")
+    );
+    process.exit(1);
+  }
+
+  // Workspace root Cargo.toml: bump `[workspace.package] version = "..."`.
+  patchFile(join(repoRoot, "Cargo.toml"), [
+    {
+      description: "workspace.package.version",
+      find: /^version\s*=\s*"[^"]*"\s*$/m,
+      replace: `version = "${version}"`,
+    },
+  ]);
+
+  // PyPI pyproject.toml: bump `[project] version = "..."`.
+  const pypiVersion = toPypiVersion(version);
+  patchFile(join(repoRoot, "pypi", "pyproject.toml"), [
+    {
+      description: "project.version",
+      find: /^version\s*=\s*"[^"]*"\s*$/m,
+      replace: `version = "${pypiVersion}"`,
+    },
+  ]);
+
+  // Walk every workspace member's Cargo.toml and bump every path-dep version
+  // specifier so `cargo publish` accepts them at the new version.
+  const memberCargoTomls = readdirSync(repoRoot, { withFileTypes: true })
+    .filter((e) => isMemberDir(e, repoRoot))
+    .map((e) => join(repoRoot, e.name, "Cargo.toml"));
+
+  let touched = 0;
+  for (const cargoToml of memberCargoTomls) {
+    const original = readFileSync(cargoToml, "utf8");
+    const modified = original.replace(PATH_DEP_RE, `$1${version}$2`);
+    if (modified !== original) {
+      writeFileSync(cargoToml, modified);
+      console.log(`patched path-deps in ${cargoToml}`);
+      touched++;
+    }
+  }
+  if (touched === 0) {
+    console.log("path-deps already at target version (nothing to patch)");
+  }
+
+  console.log(`bumped source manifests to version ${version} (pypi: ${pypiVersion})`);
 }
 
-console.log(`bumped source manifests to version ${version} (pypi: ${pypiVersion})`);
+// Run the bump only when invoked as a CLI, not when imported (the test imports
+// SUPPORTED_TAG_RE and toPypiVersion to exercise the real logic). The argv[1]
+// guard keeps this safe under `node -e` / REPL imports where it is undefined.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
