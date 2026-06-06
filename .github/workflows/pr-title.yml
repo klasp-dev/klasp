@@ -1,0 +1,50 @@
+name: pr-title
+
+# Validates that every PR title follows Conventional Commits, so the
+# auto-generated changelog and release-please metadata stay coherent.
+#
+# Allowed types are aligned with `commitlint.config.js` style defaults plus
+# `klasp`-specific scopes used in CHANGELOG.md. Bump the list when a new type
+# appears in the changelog.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  semantic-title:
+    name: semantic-title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@0723387faaf9b38adef4775cd42cfd5155ed6017 # v5.5.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            chore
+            ci
+            docs
+            refactor
+            perf
+            test
+            build
+            revert
+          # Allow but do not require a scope.
+          requireScope: false
+          # Subject case rule: forbid title-case / sentence-case sentences
+          # (subjects should read like "add foo" not "Add foo" or "Adds foo").
+          subjectPattern: ^(?![A-Z])(?!.*[.]$).+$
+          subjectPatternError: |
+            The PR title subject "{subject}" must:
+              - start lowercase ("add", not "Add")
+              - not end with a period
+            See CONTRIBUTING / CHANGELOG.md for examples.
