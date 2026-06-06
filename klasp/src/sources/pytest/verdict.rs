@@ -8,13 +8,12 @@
 //! parent module can compose them into its `CheckSource::run` impl.
 
 use std::path::Path;
-use std::process::Command;
-use std::sync::OnceLock;
 
 use klasp_core::{Finding, Severity, Verdict};
 
 use super::junit::{collect_failures, summarise_failures};
 use super::ShellOutcome;
+use crate::sources::recipe_util;
 
 /// Lowest pytest release whose JUnit XML schema and exit-code semantics
 /// match the parser in `junit::collect_failures`. klasp 0.2 was
@@ -95,18 +94,13 @@ pub(super) fn fail_with_optional_warning(
     detail: String,
     version_warning: Option<&str>,
 ) -> Verdict {
-    let mut findings = vec![note(check_name, &detail, Severity::Error)];
-    if let Some(warning) = version_warning {
-        findings.insert(0, note(check_name, warning, Severity::Warn));
-    }
-    Verdict::Fail {
-        findings,
-        message: detail,
-    }
+    recipe_util::fail_with_optional_warning(super::RULE_PREFIX, check_name, detail, version_warning)
 }
 
 /// Centralised `Finding` builder. `rule_suffix = ""` produces a top-
-/// level rule (`pytest:<check>`); a non-empty suffix nests it.
+/// level rule (`pytest:<check>`); a non-empty suffix nests it. Thin
+/// wrapper over [`recipe_util::finding`] pinning the `pytest:` prefix;
+/// re-exported to [`super::junit`] via `use super::verdict::finding`.
 pub(super) fn finding(
     check_name: &str,
     rule_suffix: &str,
@@ -115,83 +109,27 @@ pub(super) fn finding(
     line: Option<u32>,
     severity: Severity,
 ) -> Finding {
-    let rule = if rule_suffix.is_empty() {
-        format!("pytest:{check_name}")
-    } else {
-        format!("pytest:{check_name}:{rule_suffix}")
-    };
-    Finding {
-        rule,
-        message: message.to_string(),
+    recipe_util::finding(
+        super::RULE_PREFIX,
+        check_name,
+        rule_suffix,
+        message,
         file,
         line,
         severity,
-    }
+    )
 }
 
 pub(super) fn note(check_name: &str, message: &str, severity: Severity) -> Finding {
-    finding(check_name, "", message, None, None, severity)
+    recipe_util::note(super::RULE_PREFIX, check_name, message, severity)
 }
 
 /// Cached `pytest --version` probe. Same shape as fallow / pre_commit /
-/// cargo's sniffs.
+/// cargo's sniffs, except `check_stderr = true`: pytest 7.x prints its
+/// banner on stderr while 8.x uses stdout, so the probe concatenates both
+/// channels before parsing.
 pub(super) fn sniff_version_warning(cwd: &Path) -> Option<String> {
-    static CACHED: OnceLock<Option<String>> = OnceLock::new();
-    CACHED
-        .get_or_init(|| sniff_version_warning_uncached(cwd))
-        .clone()
-}
-
-fn sniff_version_warning_uncached(cwd: &Path) -> Option<String> {
-    let output = Command::new("pytest")
-        .arg("--version")
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    // pytest 7.x prints its banner on stderr; 8.x on stdout. Concatenate
-    // so the parser sees both regardless of which channel was used.
-    let mut raw = String::from_utf8_lossy(&output.stdout).into_owned();
-    raw.push('\n');
-    raw.push_str(&String::from_utf8_lossy(&output.stderr));
-    let (major, minor) = parse_version(&raw)?;
-    if (major, minor) < MIN_SUPPORTED_VERSION {
-        let (rmaj, rmin) = MIN_SUPPORTED_VERSION;
-        return Some(format!(
-            "pytest {major}.{minor} is older than the minimum tested version \
-             {rmaj}.{rmin}; output parsing may be incomplete"
-        ));
-    }
-    None
-}
-
-/// Parse `"pytest 8.3.2"` → `Some((8, 3))`. Tolerant: scans every line
-/// for the first whitespace-separated `MAJOR.MINOR.…` token whose first
-/// segment parses as an integer; pytest's banner sometimes prefixes
-/// with "This is pytest version X.Y.Z" so we can't rely on a fixed
-/// position.
-pub(super) fn parse_version(raw: &str) -> Option<(u32, u32)> {
-    for line in raw.lines() {
-        for token in line.split_whitespace() {
-            let mut parts = token.split('.');
-            let Some(maj_raw) = parts.next() else {
-                continue;
-            };
-            let Some(min_raw) = parts.next() else {
-                continue;
-            };
-            let Ok(major) = maj_raw.parse::<u32>() else {
-                continue;
-            };
-            let Ok(minor) = min_raw.parse::<u32>() else {
-                continue;
-            };
-            return Some((major, minor));
-        }
-    }
-    None
+    recipe_util::sniff_version_warning("pytest", MIN_SUPPORTED_VERSION, cwd, true)
 }
 
 #[cfg(test)]
@@ -301,13 +239,16 @@ mod tests {
 
     #[test]
     fn parse_version_extracts_major_minor() {
-        assert_eq!(parse_version("pytest 7.4.0"), Some((7, 4)));
-        assert_eq!(parse_version("pytest 8.3.2\n"), Some((8, 3)));
+        // Version parsing now lives in `recipe_util`; this guards the
+        // pytest-shaped banners (including the "This is pytest version …"
+        // prefix where the version isn't the last token) against regression.
+        assert_eq!(recipe_util::parse_version("pytest 7.4.0"), Some((7, 4)));
+        assert_eq!(recipe_util::parse_version("pytest 8.3.2\n"), Some((8, 3)));
         assert_eq!(
-            parse_version("This is pytest version 8.0.1, imported from …"),
+            recipe_util::parse_version("This is pytest version 8.0.1, imported from …"),
             Some((8, 0))
         );
-        assert_eq!(parse_version(""), None);
-        assert_eq!(parse_version("not a version"), None);
+        assert_eq!(recipe_util::parse_version(""), None);
+        assert_eq!(recipe_util::parse_version("not a version"), None);
     }
 }

@@ -8,13 +8,12 @@
 //! them into its `CheckSource::run` impl.
 
 use std::path::Path;
-use std::process::Command;
-use std::sync::OnceLock;
 
 use klasp_core::{Finding, Severity, Verdict};
 
 use super::messages::{collect_compiler_diagnostics, summarise_diagnostics, summarise_test_output};
 use super::ShellOutcome;
+use crate::sources::recipe_util;
 
 /// Lowest cargo release the recipe was developed against. Cargo's
 /// `--message-format=json` shape has been stable since 1.0 and the
@@ -83,18 +82,13 @@ pub(super) fn fail_with_optional_warning(
     detail: String,
     version_warning: Option<&str>,
 ) -> Verdict {
-    let mut findings = vec![note(check_name, &detail, Severity::Error)];
-    if let Some(warning) = version_warning {
-        findings.insert(0, note(check_name, warning, Severity::Warn));
-    }
-    Verdict::Fail {
-        findings,
-        message: detail,
-    }
+    recipe_util::fail_with_optional_warning(super::RULE_PREFIX, check_name, detail, version_warning)
 }
 
 /// Centralised `Finding` builder. `rule_suffix = ""` produces a top-
-/// level rule (`cargo:<check>`); a non-empty suffix nests it.
+/// level rule (`cargo:<check>`); a non-empty suffix nests it. Thin
+/// wrapper over [`recipe_util::finding`] pinning the `cargo:` prefix;
+/// re-exported to [`super::messages`] via `use super::verdict::finding`.
 pub(super) fn finding(
     check_name: &str,
     rule_suffix: &str,
@@ -103,77 +97,26 @@ pub(super) fn finding(
     line: Option<u32>,
     severity: Severity,
 ) -> Finding {
-    let rule = if rule_suffix.is_empty() {
-        format!("cargo:{check_name}")
-    } else {
-        format!("cargo:{check_name}:{rule_suffix}")
-    };
-    Finding {
-        rule,
-        message: message.to_string(),
+    recipe_util::finding(
+        super::RULE_PREFIX,
+        check_name,
+        rule_suffix,
+        message,
         file,
         line,
         severity,
-    }
+    )
 }
 
 pub(super) fn note(check_name: &str, message: &str, severity: Severity) -> Finding {
-    finding(check_name, "", message, None, None, severity)
+    recipe_util::note(super::RULE_PREFIX, check_name, message, severity)
 }
 
 /// Cached `cargo --version` probe. Same shape as fallow / pre_commit /
-/// pytest's sniffs — see `fallow.rs` for the rationale on
-/// cwd-insensitive caching.
+/// pytest's sniffs — see [`recipe_util::sniff_version_warning`] for the
+/// rationale on per-binary, cwd-insensitive caching.
 pub(super) fn sniff_version_warning(cwd: &Path) -> Option<String> {
-    static CACHED: OnceLock<Option<String>> = OnceLock::new();
-    CACHED
-        .get_or_init(|| sniff_version_warning_uncached(cwd))
-        .clone()
-}
-
-fn sniff_version_warning_uncached(cwd: &Path) -> Option<String> {
-    let output = Command::new("cargo")
-        .arg("--version")
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let raw = String::from_utf8_lossy(&output.stdout).into_owned();
-    let (major, minor) = parse_version(&raw)?;
-    if (major, minor) < MIN_SUPPORTED_VERSION {
-        let (rmaj, rmin) = MIN_SUPPORTED_VERSION;
-        return Some(format!(
-            "cargo {major}.{minor} is older than the minimum tested version \
-             {rmaj}.{rmin}; output parsing may be incomplete"
-        ));
-    }
-    None
-}
-
-/// Parse `"cargo 1.79.0 (ded6e..)\n"` → `Some((1, 79))`. Tolerant — the
-/// banner sometimes carries a build-date suffix; we only inspect the
-/// first dot-separated pair we find.
-pub(super) fn parse_version(raw: &str) -> Option<(u32, u32)> {
-    let line = raw.lines().find(|l| !l.trim().is_empty())?;
-    for token in line.split_whitespace() {
-        let mut parts = token.split('.');
-        let Some(maj_raw) = parts.next() else {
-            continue;
-        };
-        let Some(min_raw) = parts.next() else {
-            continue;
-        };
-        let Ok(major) = maj_raw.parse::<u32>() else {
-            continue;
-        };
-        let Ok(minor) = min_raw.parse::<u32>() else {
-            continue;
-        };
-        return Some((major, minor));
-    }
-    None
+    recipe_util::sniff_version_warning("cargo", MIN_SUPPORTED_VERSION, cwd, false)
 }
 
 #[cfg(test)]
@@ -261,12 +204,14 @@ mod tests {
 
     #[test]
     fn parse_version_extracts_major_minor() {
+        // Version parsing now lives in `recipe_util`; this guards the
+        // cargo-shaped banner (with build-date suffix) against regression.
         assert_eq!(
-            parse_version("cargo 1.79.0 (ded6ed5ec 2024-04-19)"),
+            recipe_util::parse_version("cargo 1.79.0 (ded6ed5ec 2024-04-19)"),
             Some((1, 79))
         );
-        assert_eq!(parse_version("cargo 1.95.0\n"), Some((1, 95)));
-        assert_eq!(parse_version(""), None);
-        assert_eq!(parse_version("not a version"), None);
+        assert_eq!(recipe_util::parse_version("cargo 1.95.0\n"), Some((1, 95)));
+        assert_eq!(recipe_util::parse_version(""), None);
+        assert_eq!(recipe_util::parse_version("not a version"), None);
     }
 }

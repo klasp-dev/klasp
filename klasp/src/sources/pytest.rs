@@ -22,10 +22,15 @@ use klasp_core::{
     CheckConfig, CheckResult, CheckSource, CheckSourceConfig, CheckSourceError, RepoState,
 };
 
+use super::recipe_util::shell_quote;
 use super::shell::{run_with_timeout, ShellOutcome, DEFAULT_TIMEOUT_SECS};
 
 /// Stable identifier this source advertises through `CheckSource::source_id`.
 const SOURCE_ID: &str = "pytest";
+
+/// Tool slug prepended to every `Finding` rule this recipe emits. Matches
+/// [`SOURCE_ID`]; shared with `pytest/verdict.rs` via `super`.
+pub(super) const RULE_PREFIX: &str = "pytest";
 
 /// Cap on findings emitted into a verdict so a wall of test failures
 /// doesn't drown the agent's stderr.
@@ -157,13 +162,6 @@ fn build_command(
         }
     }
     parts.join(" ")
-}
-
-/// Single-quote a value for inclusion in a `sh -c "<command>"` string.
-/// Embedded single quotes become `'\''`, the standard POSIX trick.
-fn shell_quote(value: &str) -> String {
-    let escaped = value.replace('\'', "'\\''");
-    format!("'{escaped}'")
 }
 
 #[cfg(test)]

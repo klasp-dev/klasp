@@ -18,6 +18,7 @@ pub mod fallow;
 pub mod plugin;
 pub mod pre_commit;
 pub mod pytest;
+pub mod recipe_util;
 pub mod shell;
 
 use klasp_core::{CheckConfig, CheckSource, CheckSourceConfig};
