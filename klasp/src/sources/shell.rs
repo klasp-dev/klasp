@@ -23,8 +23,8 @@
 //! [`CheckSourceError::Spawn`]; the gate runtime fails open with a stderr
 //! notice rather than blocking the agent on a tooling gap.
 
-use std::io::Read;
-use std::process::{Command, Stdio};
+use std::io::{Read, Write as _};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -45,6 +45,10 @@ pub(super) const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
 /// Granularity of the std-only `try_wait` poll loop. 50 ms keeps idle
 /// wakeups cheap and bounds gate-runtime latency on a fast-exiting check.
+///
+/// Single home: every subprocess source (shell recipes and the plugin source)
+/// polls through [`spawn_with_timeout`], so this const is the one place the
+/// cadence is defined.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Stable identifier this source advertises through `CheckSource::source_id`.
@@ -122,6 +126,10 @@ pub(super) struct ShellOutcome {
 
 /// Spawn `sh -c {command}`, capture stdio, kill if it overruns `timeout`.
 ///
+/// Thin wrapper over [`spawn_with_timeout`]: builds the `sh -c` command with
+/// the shell-source env, then adapts the shared primitive's [`ProcessOutput`]
+/// / [`ProcessError`] back into [`ShellOutcome`] / [`CheckSourceError`].
+///
 /// Implementation notes:
 ///
 /// - `sh -c` is the conventional invocation: identical surface on macOS,
@@ -133,105 +141,249 @@ pub(super) struct ShellOutcome {
 ///   [docs/design.md §3.5] so diff-aware tools (`pre-commit`, `fallow`)
 ///   can scope themselves to changed-since-base. The gate runtime computed
 ///   the value via `git merge-base` before assembling [`RepoState`].
-/// - Stdio is captured via background reader threads. Buffering the streams
-///   on the main thread risks the child blocking on a full pipe before we
-///   call `wait`; `wait_with_output` would solve that but doesn't compose
-///   with the std-only timeout pattern (it blocks indefinitely).
+/// - No stdin payload (`None` → `Stdio::null()`) and no output cap (`None` →
+///   unbounded `read_to_string`), preserving v0.1 shell-source behaviour.
+///   Non-zero exit is *not* an error here — the status code rides back inside
+///   [`ShellOutcome`] for [`exit_status_to_verdict`] to interpret.
 pub(super) fn run_with_timeout(
     command: &str,
     cwd: &std::path::Path,
     base_ref: &str,
     timeout: Duration,
 ) -> Result<ShellOutcome, CheckSourceError> {
-    let mut child = Command::new("sh")
-        .arg("-c")
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
         .arg(command)
         .current_dir(cwd)
-        .env("KLASP_BASE_REF", base_ref)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|source| CheckSourceError::Spawn { source })?;
+        .env("KLASP_BASE_REF", base_ref);
 
-    // Drain stdout / stderr in background threads so a chatty check can't
-    // wedge on a full OS pipe buffer while we're polling `try_wait`. Held in
-    // mutable Options so error / timeout paths can `.take()` and join them
-    // before propagating, rather than detaching.
-    let mut stdout_handle = child.stdout.take().map(spawn_drain);
-    let mut stderr_handle = child.stderr.take().map(spawn_drain);
+    let output = spawn_with_timeout(&mut cmd, None, timeout, None)?;
+
+    Ok(ShellOutcome {
+        status_code: output.status_code,
+        stdout: output.stdout,
+        stderr: output.stderr,
+    })
+}
+
+/// Buffered stdio + exit status from a finished (or killed) child.
+///
+/// The shared output of [`spawn_with_timeout`]. `status_code` is `None` when
+/// the child was killed by a signal (no exit code). Callers decide what a
+/// non-zero or absent code means — the primitive does not treat non-zero exit
+/// as an error.
+///
+/// `pub(super)` so sibling sources (the plugin source) can adapt it to their
+/// own output shape.
+pub(super) struct ProcessOutput {
+    pub(super) status_code: Option<i32>,
+    pub(super) stdout: String,
+    pub(super) stderr: String,
+}
+
+/// Failure modes of [`spawn_with_timeout`]. Caller-agnostic so each caller can
+/// map it to its own error type (`CheckSourceError` for shell sources, `String`
+/// for the plugin source).
+pub(super) enum ProcessError {
+    /// The child could not be spawned, or a kernel-level `try_wait` error
+    /// occurred while polling it.
+    Spawn(std::io::Error),
+    /// The child overran `timeout` and was killed.
+    Timeout { secs: u64 },
+    /// A drain thread failed: read error, panic, output cap exceeded, or
+    /// non-UTF-8 bytes. The string describes the failure.
+    Output(String),
+}
+
+impl From<ProcessError> for CheckSourceError {
+    fn from(e: ProcessError) -> Self {
+        match e {
+            ProcessError::Spawn(source) => CheckSourceError::Spawn { source },
+            ProcessError::Timeout { secs } => CheckSourceError::Timeout { secs },
+            ProcessError::Output(msg) => CheckSourceError::Output(msg),
+        }
+    }
+}
+
+/// Shared spawn/poll/drain/kill primitive for klasp's subprocess sources.
+///
+/// Captures the mechanics that the shell source and the plugin source had
+/// independently grown:
+///
+/// - a single `try_wait` poll loop on one [`POLL_INTERVAL`],
+/// - background stdout/stderr drain threads (so a chatty child can't wedge on
+///   a full OS pipe buffer while we poll),
+/// - kill-on-timeout (and on `try_wait` error) followed by a `wait` reap,
+/// - draining the reader threads on every exit path so none are detached.
+///
+/// The real per-caller differences are parameters:
+///
+/// - `stdin`: `None` wires `Stdio::null()`; `Some(payload)` pipes it in on a
+///   dedicated writer thread (so a slow-reading child can't block the poll
+///   loop, and a payload larger than the pipe buffer can't deadlock).
+/// - `cap`: `None` reads each stream unbounded; `Some(n)` bails the drain with
+///   a `ProcessError::Output` if either stream exceeds `n` bytes (OOM guard).
+///
+/// Callers keep their own env setup (set on `cmd` before calling) and their own
+/// exit-status interpretation — the primitive returns the status code rather
+/// than deciding whether non-zero is a failure. `stdout`/`stderr` are
+/// configured here so callers don't have to.
+pub(super) fn spawn_with_timeout(
+    cmd: &mut Command,
+    stdin: Option<&str>,
+    timeout: Duration,
+    cap: Option<usize>,
+) -> Result<ProcessOutput, ProcessError> {
+    cmd.stdin(if stdin.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(ProcessError::Spawn)?;
+
+    // Spawn drain threads BEFORE writing stdin so a stdin payload larger than
+    // the pipe buffer (~64 KB on Linux, ~16 KB on macOS) cannot deadlock if the
+    // child interleaves stdin reads with stdout writes. Held in mutable Options
+    // so error / timeout paths can `.take()` and join them before propagating,
+    // rather than detaching.
+    let mut stdout_handle = child.stdout.take().map(|r| spawn_drain(r, cap));
+    let mut stderr_handle = child.stderr.take().map(|r| spawn_drain(r, cap));
+
+    // stdin write happens in its own thread so a slow-reading child can't block
+    // the parent's poll loop.
+    let mut stdin_handle = match (stdin, child.stdin.take()) {
+        (Some(payload), Some(mut pipe)) => {
+            let payload = payload.to_string();
+            Some(thread::spawn(move || {
+                // BrokenPipe is acceptable if the child exited early — the
+                // child's exit status is the authoritative signal for that case.
+                let _ = pipe.write_all(payload.as_bytes());
+            }))
+        }
+        _ => None,
+    };
 
     let started = Instant::now();
     let exit_status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
+            Ok(Some(status)) => break status,
             Ok(None) => {
                 if started.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    if let Some(h) = stdout_handle.take() {
-                        let _ = h.join();
-                    }
-                    if let Some(h) = stderr_handle.take() {
-                        let _ = h.join();
-                    }
-                    return Err(CheckSourceError::Timeout {
+                    reap_and_join(
+                        &mut child,
+                        &mut stdin_handle,
+                        &mut stdout_handle,
+                        &mut stderr_handle,
+                    );
+                    return Err(ProcessError::Timeout {
                         secs: timeout.as_secs(),
                     });
                 }
                 thread::sleep(POLL_INTERVAL);
             }
             Err(source) => {
-                // `try_wait` errors are kernel-level (rare); reap the child
-                // and join the readers so we don't orphan the process or
-                // detach the drain threads.
-                let _ = child.kill();
-                let _ = child.wait();
-                if let Some(h) = stdout_handle.take() {
-                    let _ = h.join();
-                }
-                if let Some(h) = stderr_handle.take() {
-                    let _ = h.join();
-                }
-                return Err(CheckSourceError::Spawn { source });
+                // `try_wait` errors are kernel-level (rare); reap the child and
+                // join the readers so we don't orphan the process or detach the
+                // drain threads.
+                reap_and_join(
+                    &mut child,
+                    &mut stdin_handle,
+                    &mut stdout_handle,
+                    &mut stderr_handle,
+                );
+                return Err(ProcessError::Spawn(source));
             }
         }
     };
 
-    let stdout = stdout_handle
-        .map(join_drain)
-        .transpose()?
-        .unwrap_or_default();
-    let stderr = stderr_handle
-        .map(join_drain)
-        .transpose()?
-        .unwrap_or_default();
+    if let Some(h) = stdin_handle.take() {
+        let _ = h.join();
+    }
 
-    Ok(ShellOutcome {
-        status_code: exit_status.and_then(|s| s.code()),
+    let stdout = stdout_handle.map(join_drain).transpose()?.unwrap_or_default();
+    let stderr = stderr_handle.map(join_drain).transpose()?.unwrap_or_default();
+
+    Ok(ProcessOutput {
+        status_code: exit_status.code(),
         stdout,
         stderr,
     })
 }
 
+/// Kill + reap the child and join every outstanding I/O thread. Used on the
+/// timeout and `try_wait`-error exit paths so no process is orphaned and no
+/// drain/stdin thread is detached.
+fn reap_and_join(
+    child: &mut Child,
+    stdin_handle: &mut Option<thread::JoinHandle<()>>,
+    stdout_handle: &mut Option<thread::JoinHandle<Result<String, ProcessError>>>,
+    stderr_handle: &mut Option<thread::JoinHandle<Result<String, ProcessError>>>,
+) {
+    let _ = child.kill();
+    let _ = child.wait();
+    if let Some(h) = stdin_handle.take() {
+        let _ = h.join();
+    }
+    if let Some(h) = stdout_handle.take() {
+        let _ = h.join();
+    }
+    if let Some(h) = stderr_handle.take() {
+        let _ = h.join();
+    }
+}
+
+/// Drain `reader` to a `String` on a background thread.
+///
+/// `cap = None` reads unbounded via `read_to_string` (shell-source behaviour).
+/// `cap = Some(n)` reads in chunks and bails with a `ProcessError::Output` if
+/// total bytes exceed `n` — the plugin OOM guard.
 fn spawn_drain<R: Read + Send + 'static>(
     mut reader: R,
-) -> thread::JoinHandle<std::io::Result<String>> {
-    thread::spawn(move || {
-        let mut buf = String::new();
-        reader.read_to_string(&mut buf).map(|_| buf)
+    cap: Option<usize>,
+) -> thread::JoinHandle<Result<String, ProcessError>> {
+    thread::spawn(move || match cap {
+        None => {
+            let mut buf = String::new();
+            reader
+                .read_to_string(&mut buf)
+                .map(|_| buf)
+                .map_err(|e| ProcessError::Output(format!("failed to read child stdio: {e}")))
+        }
+        Some(cap) => drain_capped(reader, cap),
     })
 }
 
+/// Read `reader` into a `String`, bailing if total bytes exceed `cap`. Backs
+/// the `Some(cap)` arm of [`spawn_drain`].
+fn drain_capped(mut reader: impl Read, cap: usize) -> Result<String, ProcessError> {
+    let mut buf = Vec::with_capacity(8 * 1024);
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                if buf.len() + n > cap {
+                    return Err(ProcessError::Output(format!(
+                        "output exceeded {cap}-byte cap; killed"
+                    )));
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            Err(e) => return Err(ProcessError::Output(format!("read error: {e}"))),
+        }
+    }
+    String::from_utf8(buf).map_err(|e| ProcessError::Output(format!("not valid UTF-8: {e}")))
+}
+
 fn join_drain(
-    handle: thread::JoinHandle<std::io::Result<String>>,
-) -> Result<String, CheckSourceError> {
+    handle: thread::JoinHandle<Result<String, ProcessError>>,
+) -> Result<String, ProcessError> {
     match handle.join() {
-        Ok(Ok(s)) => Ok(s),
-        Ok(Err(e)) => Err(CheckSourceError::Output(format!(
-            "failed to read child stdio: {e}"
-        ))),
-        Err(_) => Err(CheckSourceError::Output(
+        Ok(result) => result,
+        Err(_) => Err(ProcessError::Output(
             "stdio reader thread panicked".to_string(),
         )),
     }
