@@ -23,5 +23,5 @@ anyhow = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 which = { workspace = true }
-quick-xml = "0.37"
+quick-xml = "0.40"
 rayon = "1.10"
