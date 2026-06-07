@@ -8,8 +8,6 @@
 //! [`json`]; version sniffing in [`version`].
 
 use std::path::Path;
-use std::process::Command;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use klasp_core::{
@@ -18,10 +16,18 @@ use klasp_core::{
 };
 use serde_json::Value;
 
+use super::recipe_util::{
+    self, fail_with_optional_warning as util_fail_with_optional_warning, shell_quote,
+};
 use super::shell::{run_with_timeout, ShellOutcome, DEFAULT_TIMEOUT_SECS};
 
 /// Stable identifier this source advertises through `CheckSource::source_id`.
 const SOURCE_ID: &str = "fallow";
+
+/// Tool slug prepended to every `Finding` rule this recipe emits. Matches
+/// [`SOURCE_ID`]; named separately so the rule-slug intent is explicit at
+/// the builder call sites.
+const RULE_PREFIX: &str = "fallow";
 
 /// Lowest fallow release whose audit JSON schema matches the parser in
 /// [`json::collect_findings`]. klasp 0.2 was developed against fallow
@@ -79,7 +85,12 @@ impl CheckSource for FallowSource {
         let timeout = Duration::from_secs(config.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
         let outcome = run_with_timeout(&command, &state.root, &state.base_ref, timeout)?;
 
-        let version_warning = sniff_version_warning(&state.root);
+        let version_warning = recipe_util::sniff_version_warning(
+            RULE_PREFIX,
+            MIN_SUPPORTED_VERSION,
+            &state.root,
+            false,
+        );
         let verdict = outcome_to_verdict(&config.name, &outcome, version_warning.as_deref());
 
         Ok(CheckResult {
@@ -139,15 +150,6 @@ fn build_command(event: GitEvent, base: Option<&str>, config_path: Option<&Path>
         parts.push(shell_quote(&path.to_string_lossy()));
     }
     parts.join(" ")
-}
-
-/// Single-quote a value for inclusion in a `sh -c "<command>"` string.
-/// Embedded single quotes become `'\''`, the standard POSIX trick. Used
-/// only for user-supplied strings (`base`, `config_path`); the flag
-/// literals are static and don't need quoting.
-fn shell_quote(value: &str) -> String {
-    let escaped = value.replace('\'', "'\\''");
-    format!("'{escaped}'")
 }
 
 fn outcome_to_verdict(
@@ -243,26 +245,23 @@ fn unparseable_detail(check_name: &str, outcome: &ShellOutcome) -> String {
 }
 
 /// Build a `Verdict::Fail` whose findings carry the supplied detail plus
-/// an optional version-warning prepended at `Severity::Warn`.
+/// an optional version-warning prepended at `Severity::Warn`. Thin wrapper
+/// over [`recipe_util::fail_with_optional_warning`] pinning the `fallow:`
+/// rule prefix.
 fn fail_with_optional_warning(
     check_name: &str,
     detail: String,
     version_warning: Option<&str>,
 ) -> Verdict {
-    let mut findings = vec![note(check_name, &detail, Severity::Error)];
-    if let Some(warning) = version_warning {
-        findings.insert(0, note(check_name, warning, Severity::Warn));
-    }
-    Verdict::Fail {
-        findings,
-        message: detail,
-    }
+    util_fail_with_optional_warning(RULE_PREFIX, check_name, detail, version_warning)
 }
 
 /// `Finding` builder. `rule_suffix = ""` produces a top-level rule
 /// (`fallow:<check>`), suitable for recipe-level notices. A non-empty
 /// suffix nests the rule (`fallow:<check>:<suffix>`) for per-finding
-/// rows so a future filter can target one category at a time.
+/// rows so a future filter can target one category at a time. Thin
+/// wrapper over [`recipe_util::finding`] pinning the `fallow:` prefix;
+/// re-exported to [`json`] via `use super::finding`.
 fn finding(
     check_name: &str,
     rule_suffix: &str,
@@ -271,68 +270,19 @@ fn finding(
     line: Option<u32>,
     severity: Severity,
 ) -> Finding {
-    let rule = if rule_suffix.is_empty() {
-        format!("fallow:{check_name}")
-    } else {
-        format!("fallow:{check_name}:{rule_suffix}")
-    };
-    Finding {
-        rule,
-        message: message.to_string(),
+    recipe_util::finding(
+        RULE_PREFIX,
+        check_name,
+        rule_suffix,
+        message,
         file,
         line,
         severity,
-    }
+    )
 }
 
 fn note(check_name: &str, message: &str, severity: Severity) -> Finding {
-    finding(check_name, "", message, None, None, severity)
-}
-
-/// Lazily run `fallow --version`, parse the major.minor, and return a
-/// warning when older than [`MIN_SUPPORTED_VERSION`]. `None` means OK
-/// *or* we couldn't probe fallow; both cases swallow. Cached for the
-/// lifetime of the process — a gate invocation resolves `fallow` from
-/// the same `$PATH` entry for every check, so re-running the probe
-/// would multiply subprocess overhead by N for no signal.
-fn sniff_version_warning(cwd: &Path) -> Option<String> {
-    static CACHED: OnceLock<Option<String>> = OnceLock::new();
-    CACHED
-        .get_or_init(|| sniff_version_warning_uncached(cwd))
-        .clone()
-}
-
-fn sniff_version_warning_uncached(cwd: &Path) -> Option<String> {
-    let output = Command::new("fallow")
-        .arg("--version")
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let raw = String::from_utf8_lossy(&output.stdout).to_string();
-    let (major, minor) = parse_version(&raw)?;
-    if (major, minor) < MIN_SUPPORTED_VERSION {
-        let (rmaj, rmin) = MIN_SUPPORTED_VERSION;
-        return Some(format!(
-            "fallow {major}.{minor} is older than the minimum tested version \
-             {rmaj}.{rmin}; output parsing may be incomplete"
-        ));
-    }
-    None
-}
-
-/// Parse `"fallow 2.62.0\n"` → `Some((2, 62))`. Tolerant: takes the
-/// last whitespace-separated token from the first non-empty line and
-/// parses its first two dot-separated segments.
-fn parse_version(raw: &str) -> Option<(u32, u32)> {
-    let line = raw.lines().find(|l| !l.trim().is_empty())?;
-    let token = line.split_whitespace().last()?;
-    let mut parts = token.split('.');
-    let major = parts.next()?.parse::<u32>().ok()?;
-    let minor = parts.next()?.parse::<u32>().ok()?;
-    Some((major, minor))
+    recipe_util::note(RULE_PREFIX, check_name, message, severity)
 }
 
 #[cfg(test)]
@@ -516,9 +466,11 @@ mod tests {
 
     #[test]
     fn parse_version_extracts_major_minor() {
-        assert_eq!(parse_version("fallow 2.62.0"), Some((2, 62)));
-        assert_eq!(parse_version("fallow 3.0.1\n"), Some((3, 0)));
-        assert_eq!(parse_version(""), None);
-        assert_eq!(parse_version("not a version"), None);
+        // Version parsing now lives in `recipe_util`; this guards the
+        // fallow-shaped banners against a future parser regression.
+        assert_eq!(recipe_util::parse_version("fallow 2.62.0"), Some((2, 62)));
+        assert_eq!(recipe_util::parse_version("fallow 3.0.1\n"), Some((3, 0)));
+        assert_eq!(recipe_util::parse_version(""), None);
+        assert_eq!(recipe_util::parse_version("not a version"), None);
     }
 }

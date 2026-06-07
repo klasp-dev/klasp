@@ -10,11 +10,13 @@
 
 pub mod config;
 pub mod error;
+pub mod fs;
 pub mod plugin;
 pub mod plugin_disable;
 pub mod protocol;
 pub mod source;
 pub mod surface;
+pub mod text;
 pub mod trigger;
 pub mod trigger_config;
 pub mod verdict;

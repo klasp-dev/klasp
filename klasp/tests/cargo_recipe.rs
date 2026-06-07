@@ -26,12 +26,11 @@
 //! the JSON shape and let us assert on the rendered findings without
 //! racing the toolchain.
 
-use std::io::Write;
-use std::path::Path;
-use std::process::{Command, Stdio};
+mod common;
 
-use klasp_core::GATE_SCHEMA_VERSION;
 use tempfile::TempDir;
+
+use common::{spawn_gate, write_fixture, write_klasp_toml};
 
 const FIXTURE_GIT_COMMIT: &str = include_str!("fixtures/claude_commit_hook.json");
 
@@ -41,10 +40,6 @@ const FIXTURE_CHECK_FAIL: &str = include_str!("fixtures/cargo/check-fail.stdout"
 const FIXTURE_CLIPPY_FAIL: &str = include_str!("fixtures/cargo/clippy-fail.stdout");
 const FIXTURE_TEST_PASS: &str = include_str!("fixtures/cargo/test-pass.stdout");
 const FIXTURE_TEST_FAIL: &str = include_str!("fixtures/cargo/test-fail.stdout");
-
-fn klasp_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_klasp")
-}
 
 /// Wrapper around the harness `cargo` shim. The shim:
 ///
@@ -81,62 +76,6 @@ exit "${{FAKE_CARGO_EXIT:-0}}"
         std::fs::set_permissions(&shim, perms).expect("chmod shim");
     }
     bin_dir
-}
-
-/// Spawn `klasp gate` with the configured fake cargo on PATH.
-fn spawn_gate(
-    stdin_payload: &str,
-    project_dir: &Path,
-    fake_dir: &Path,
-    extra_env: &[(&str, &str)],
-) -> (Option<i32>, String) {
-    let path_var = match std::env::var_os("PATH") {
-        Some(existing) => {
-            let mut prefix = std::ffi::OsString::from(fake_dir.as_os_str());
-            prefix.push(":");
-            prefix.push(existing);
-            prefix
-        }
-        None => std::ffi::OsString::from(fake_dir.as_os_str()),
-    };
-
-    let mut cmd = Command::new(klasp_bin());
-    cmd.arg("gate")
-        .env("KLASP_GATE_SCHEMA", GATE_SCHEMA_VERSION.to_string())
-        .env("CLAUDE_PROJECT_DIR", project_dir)
-        .env("PATH", &path_var)
-        .current_dir(project_dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    for (k, v) in extra_env {
-        cmd.env(k, v);
-    }
-
-    let mut child = cmd.spawn().expect("spawn klasp binary");
-    child
-        .stdin
-        .as_mut()
-        .expect("piped stdin")
-        .write_all(stdin_payload.as_bytes())
-        .expect("write stdin");
-    let output = child.wait_with_output().expect("wait for klasp");
-
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    if !stderr.is_empty() {
-        eprintln!("klasp gate stderr:\n{stderr}");
-    }
-    (output.status.code(), stderr)
-}
-
-fn write_fixture(scratch: &TempDir, name: &str, body: &str) -> std::path::PathBuf {
-    let path = scratch.path().join(name);
-    std::fs::write(&path, body).expect("write fixture");
-    path
-}
-
-fn write_klasp_toml(project_dir: &Path, body: &str) {
-    std::fs::write(project_dir.join("klasp.toml"), body).expect("write klasp.toml");
 }
 
 fn klasp_toml_for_subcommand(subcommand: &str) -> String {

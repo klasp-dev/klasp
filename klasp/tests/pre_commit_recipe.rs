@@ -37,12 +37,11 @@
 //! 3. Cross-version coverage (3.8 + 4.0) so a future pre-commit format
 //!    change is caught here, not by the user.
 
-use std::io::Write;
-use std::path::Path;
-use std::process::{Command, Stdio};
+mod common;
 
-use klasp_core::GATE_SCHEMA_VERSION;
 use tempfile::TempDir;
+
+use common::{spawn_gate, write_fixture, write_klasp_toml};
 
 const FIXTURE_GIT_COMMIT: &str = include_str!("fixtures/claude_commit_hook.json");
 
@@ -52,10 +51,6 @@ const FIXTURE_4X_PASS: &str = include_str!("fixtures/pre_commit/4x-pass.stdout")
 const FIXTURE_4X_FAIL: &str = include_str!("fixtures/pre_commit/4x-fail.stdout");
 const FIXTURE_3X_VERSION: &str = include_str!("fixtures/pre_commit/3x-version.stdout");
 const FIXTURE_4X_VERSION: &str = include_str!("fixtures/pre_commit/4x-version.stdout");
-
-fn klasp_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_klasp")
-}
 
 /// Wrapper around the harness `pre-commit` shim. The shim:
 ///
@@ -101,67 +96,6 @@ exit "${{FAKE_PRE_COMMIT_EXIT:-0}}"
         std::fs::set_permissions(&shim, perms).expect("chmod shim");
     }
     bin_dir
-}
-
-/// Spawn `klasp gate` with the configured fake pre-commit on PATH.
-///
-/// `extra_env` lets the caller wire the fixture stdout / exit code without
-/// the harness having to know which fixture is in play.
-fn spawn_gate(
-    stdin_payload: &str,
-    project_dir: &Path,
-    fake_pre_commit_dir: &Path,
-    extra_env: &[(&str, &str)],
-) -> (Option<i32>, String) {
-    let path_var = match std::env::var_os("PATH") {
-        Some(existing) => {
-            let mut prefix = std::ffi::OsString::from(fake_pre_commit_dir.as_os_str());
-            prefix.push(":");
-            prefix.push(existing);
-            prefix
-        }
-        None => std::ffi::OsString::from(fake_pre_commit_dir.as_os_str()),
-    };
-
-    let mut cmd = Command::new(klasp_bin());
-    cmd.arg("gate")
-        .env("KLASP_GATE_SCHEMA", GATE_SCHEMA_VERSION.to_string())
-        .env("CLAUDE_PROJECT_DIR", project_dir)
-        .env("PATH", &path_var)
-        .current_dir(project_dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    for (k, v) in extra_env {
-        cmd.env(k, v);
-    }
-
-    let mut child = cmd.spawn().expect("spawn klasp binary");
-    child
-        .stdin
-        .as_mut()
-        .expect("piped stdin")
-        .write_all(stdin_payload.as_bytes())
-        .expect("write stdin");
-    let output = child.wait_with_output().expect("wait for klasp");
-
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    if !stderr.is_empty() {
-        eprintln!("klasp gate stderr:\n{stderr}");
-    }
-    (output.status.code(), stderr)
-}
-
-/// Write a fixture file and return its path. Pre-commit shim reads from
-/// here at run time, so the path must outlive the gate child.
-fn write_fixture(scratch: &TempDir, name: &str, body: &str) -> std::path::PathBuf {
-    let path = scratch.path().join(name);
-    std::fs::write(&path, body).expect("write fixture");
-    path
-}
-
-fn write_klasp_toml(project_dir: &Path, body: &str) {
-    std::fs::write(project_dir.join("klasp.toml"), body).expect("write klasp.toml");
 }
 
 const PRE_COMMIT_KLASP_TOML: &str = r#"
@@ -378,8 +312,6 @@ exit 0
 fn pre_commit_push_trigger_includes_ref_range_in_argv() {
     // Push trigger must pass --from-ref/--to-ref so pre-commit scopes to the
     // commits being pushed rather than the staging area.
-    use std::io::Write as _;
-
     let project = TempDir::new().expect("tempdir");
     let scratch = TempDir::new().expect("scratch");
     let bin_dir = scratch.path().join("bin");
@@ -436,42 +368,8 @@ exit 0
       "cwd": "/tmp/klasp-fixture/repo"
     }"#;
 
-    let path_var = match std::env::var_os("PATH") {
-        Some(existing) => {
-            let mut prefix = std::ffi::OsString::from(bin_dir.as_os_str());
-            prefix.push(":");
-            prefix.push(existing);
-            prefix
-        }
-        None => std::ffi::OsString::from(bin_dir.as_os_str()),
-    };
-
-    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_klasp"));
-    cmd.arg("gate")
-        .env(
-            "KLASP_GATE_SCHEMA",
-            klasp_core::GATE_SCHEMA_VERSION.to_string(),
-        )
-        .env("CLAUDE_PROJECT_DIR", project.path())
-        .env("PATH", &path_var)
-        .current_dir(project.path())
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    let mut child = cmd.spawn().expect("spawn klasp binary");
-    child
-        .stdin
-        .as_mut()
-        .expect("piped stdin")
-        .write_all(push_payload.as_bytes())
-        .expect("write stdin");
-    let output = child.wait_with_output().expect("wait for klasp");
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "shim returns 0 → gate must exit 0"
-    );
+    let (code, _stderr) = spawn_gate(push_payload, project.path(), &bin_dir, &[]);
+    assert_eq!(code, Some(0), "shim returns 0 → gate must exit 0");
 
     let argv = std::fs::read_to_string(&argv_log).expect("read argv log");
     assert!(

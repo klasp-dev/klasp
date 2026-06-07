@@ -20,10 +20,15 @@ use klasp_core::{
     CheckConfig, CheckResult, CheckSource, CheckSourceConfig, CheckSourceError, RepoState,
 };
 
+use super::recipe_util::shell_quote;
 use super::shell::{run_with_timeout, ShellOutcome, DEFAULT_TIMEOUT_SECS};
 
 /// Stable identifier this source advertises through `CheckSource::source_id`.
 const SOURCE_ID: &str = "cargo";
+
+/// Tool slug prepended to every `Finding` rule this recipe emits. Matches
+/// [`SOURCE_ID`]; shared with `cargo/verdict.rs` via `super`.
+pub(super) const RULE_PREFIX: &str = "cargo";
 
 /// Cap on findings emitted into a verdict so a wall of compiler errors
 /// from a fresh checkout doesn't drown the agent's stderr.
@@ -159,11 +164,6 @@ fn build_command(subcommand: &str, package: Option<&str>, extra_args: Option<&st
     }
 
     parts.join(" ")
-}
-
-fn shell_quote(value: &str) -> String {
-    let escaped = value.replace('\'', "'\\''");
-    format!("'{escaped}'")
 }
 
 #[cfg(test)]
