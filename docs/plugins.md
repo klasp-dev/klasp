@@ -33,6 +33,12 @@ name = "my-name"   # klasp looks for `klasp-plugin-my-name` on PATH
 
 Run `klasp doctor` to confirm the binary is found.
 
+A second reference plugin, [`examples/klasp-plugin-agentic-flow/`](../examples/klasp-plugin-agentic-flow/),
+shows a read-only auditor: it checks that an external workflow's per-step
+receipts are complete and fresh for the current diff (see
+[`docs/agentic-flow-receipts.md`](./agentic-flow-receipts.md) for the receipt
+schema and the canonical diff-hash recipe).
+
 ## Protocol version
 
 ```
@@ -117,6 +123,8 @@ Binaries must follow the `klasp-plugin-<name>` prefix. The prefix is how
 ## See also
 
 - [`docs/plugin-protocol.md`](./plugin-protocol.md) — full wire-format specification
-- [`examples/klasp-plugin-pre-commit/README.md`](../examples/klasp-plugin-pre-commit/README.md) — reference implementation walkthrough
+- [`examples/klasp-plugin-pre-commit/README.md`](../examples/klasp-plugin-pre-commit/README.md) — reference implementation walkthrough (tool wrapper)
+- [`examples/klasp-plugin-agentic-flow/README.md`](../examples/klasp-plugin-agentic-flow/README.md) — reference implementation walkthrough (read-only receipt auditor)
+- [`docs/agentic-flow-receipts.md`](./agentic-flow-receipts.md) — co-owned receipt schema + canonical diff-hash recipe
 - [`klasp/tests/plugin_smoke.rs`](../klasp/tests/plugin_smoke.rs) — end-to-end smoke tests
 - [`klasp/tests/plugin_protocol.rs`](../klasp/tests/plugin_protocol.rs) — protocol unit tests
