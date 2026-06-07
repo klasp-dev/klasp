@@ -22,9 +22,9 @@
 //! forward slashes (resolved by Claude Code at hook-invocation time).
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use klasp_core::fs::{atomic_write, current_mode, ensure_parent, read_or_empty, write_if_changed};
 use klasp_core::{AgentSurface, InstallContext, InstallError, InstallReport};
 
 use crate::hook_template::{self, MANAGED_MARKER};
@@ -194,12 +194,7 @@ impl AgentSurface for ClaudeCodeSurface {
             paths_written.push(hook_path.clone());
         }
 
-        if !settings_unchanged {
-            ensure_parent(&settings_path)?;
-            // Preserve the user's prior mode rather than overwriting it with
-            // NamedTempFile's 0o600 default; fall back to 0o644 for new files.
-            let mode = current_mode(&settings_path).unwrap_or(0o644);
-            atomic_write(&settings_path, merged.as_bytes(), mode)?;
+        if write_if_changed(&settings_path, &settings_input, &merged)? {
             paths_written.push(settings_path.clone());
         }
 
@@ -284,86 +279,6 @@ fn inspect_hook_file(
             path: hook_path.to_path_buf(),
         })
     }
-}
-
-fn read_or_empty(path: &Path) -> Result<String, InstallError> {
-    if !path.exists() {
-        return Ok(String::new());
-    }
-    fs::read_to_string(path).map_err(|e| InstallError::Io {
-        path: path.to_path_buf(),
-        source: e,
-    })
-}
-
-fn ensure_parent(path: &Path) -> Result<(), InstallError> {
-    let Some(parent) = path.parent() else {
-        return Ok(());
-    };
-    fs::create_dir_all(parent).map_err(|e| InstallError::Io {
-        path: parent.to_path_buf(),
-        source: e,
-    })
-}
-
-/// Atomic write via tempfile + rename. `mode` is applied after the rename
-/// (Unix only) — without it the destination silently inherits
-/// `NamedTempFile`'s `0o600` default.
-fn atomic_write(path: &Path, contents: &[u8], mode: u32) -> Result<(), InstallError> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut tf = tempfile::NamedTempFile::new_in(dir).map_err(|e| InstallError::Io {
-        path: dir.to_path_buf(),
-        source: e,
-    })?;
-    tf.write_all(contents).map_err(|e| InstallError::Io {
-        path: tf.path().to_path_buf(),
-        source: e,
-    })?;
-    tf.flush().map_err(|e| InstallError::Io {
-        path: tf.path().to_path_buf(),
-        source: e,
-    })?;
-    tf.persist(path).map_err(|e| InstallError::Io {
-        path: path.to_path_buf(),
-        source: e.error,
-    })?;
-    apply_mode(path, mode)?;
-    Ok(())
-}
-
-/// The file's current Unix mode (low 12 bits), or `None` if the file
-/// doesn't exist or we're not on Unix. Called *before* `atomic_write`
-/// so we can restore the user's prior mode after the rename.
-#[cfg(unix)]
-fn current_mode(path: &Path) -> Option<u32> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::metadata(path).ok().map(|m| m.permissions().mode())
-}
-
-#[cfg(not(unix))]
-fn current_mode(_path: &Path) -> Option<u32> {
-    None
-}
-
-fn apply_mode(path: &Path, mode: u32) -> Result<(), InstallError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(mode);
-        fs::set_permissions(path, perms).map_err(|e| InstallError::Io {
-            path: path.to_path_buf(),
-            source: e,
-        })?;
-    }
-    #[cfg(not(unix))]
-    {
-        // Windows: NTFS has no executable bit; bash.exe (Git for Windows)
-        // interprets the script's shebang at runtime regardless. W4 audit
-        // (see module docstring) confirmed no action is needed here. The
-        // `let _ = (path, mode);` silences the unused-variable lint.
-        let _ = (path, mode);
-    }
-    Ok(())
 }
 
 fn settings_error(path: &Path, error: SettingsError) -> InstallError {

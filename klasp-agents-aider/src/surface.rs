@@ -16,9 +16,9 @@
 //! would risk corrupting structured content. See crate README `### Limitations`.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use klasp_core::fs::{atomic_write, current_mode, ensure_parent, read_or_empty};
 use klasp_core::{AgentSurface, InstallContext, InstallError, InstallReport};
 
 use crate::aider_conf;
@@ -140,79 +140,6 @@ impl AgentSurface for AiderSurface {
 
         Ok(vec![conf_path])
     }
-}
-
-fn read_or_empty(path: &Path) -> Result<String, InstallError> {
-    if !path.exists() {
-        return Ok(String::new());
-    }
-    fs::read_to_string(path).map_err(|e| InstallError::Io {
-        path: path.to_path_buf(),
-        source: e,
-    })
-}
-
-fn ensure_parent(path: &Path) -> Result<(), InstallError> {
-    let Some(parent) = path.parent() else {
-        return Ok(());
-    };
-    if parent.as_os_str().is_empty() {
-        return Ok(());
-    }
-    fs::create_dir_all(parent).map_err(|e| InstallError::Io {
-        path: parent.to_path_buf(),
-        source: e,
-    })
-}
-
-fn atomic_write(path: &Path, contents: &[u8], mode: u32) -> Result<(), InstallError> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut tf = tempfile::NamedTempFile::new_in(dir).map_err(|e| InstallError::Io {
-        path: dir.to_path_buf(),
-        source: e,
-    })?;
-    tf.write_all(contents).map_err(|e| InstallError::Io {
-        path: tf.path().to_path_buf(),
-        source: e,
-    })?;
-    tf.flush().map_err(|e| InstallError::Io {
-        path: tf.path().to_path_buf(),
-        source: e,
-    })?;
-    apply_mode(tf.path(), mode)?;
-    tf.persist(path).map_err(|e| InstallError::Io {
-        path: path.to_path_buf(),
-        source: e.error,
-    })?;
-    Ok(())
-}
-
-#[cfg(unix)]
-fn current_mode(path: &Path) -> Option<u32> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::metadata(path).ok().map(|m| m.permissions().mode())
-}
-
-#[cfg(not(unix))]
-fn current_mode(_path: &Path) -> Option<u32> {
-    None
-}
-
-fn apply_mode(path: &Path, mode: u32) -> Result<(), InstallError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(mode);
-        fs::set_permissions(path, perms).map_err(|e| InstallError::Io {
-            path: path.to_path_buf(),
-            source: e,
-        })?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (path, mode);
-    }
-    Ok(())
 }
 
 fn conf_error(path: &Path, e: aider_conf::AiderConfError) -> InstallError {

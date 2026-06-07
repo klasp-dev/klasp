@@ -10,6 +10,7 @@
 
 pub mod config;
 pub mod error;
+pub mod fs;
 pub mod plugin;
 pub mod plugin_disable;
 pub mod protocol;
