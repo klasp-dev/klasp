@@ -9,8 +9,6 @@
 //! [`MIN_SUPPORTED_VERSION`] surface a `Verdict::Warn`. `verdict_path` is
 //! deferred per [docs/design.md §14].
 
-use std::process::Command;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use klasp_core::{
@@ -18,7 +16,13 @@ use klasp_core::{
     RepoState, Severity, Verdict,
 };
 
+use super::recipe_util::{
+    self, fail_with_optional_warning as util_fail_with_optional_warning, shell_quote,
+};
 use super::shell::{run_with_timeout, ShellOutcome, DEFAULT_TIMEOUT_SECS};
+
+/// Tool slug prepended to every `Finding` rule this recipe emits.
+const RULE_PREFIX: &str = "pre_commit";
 
 /// Stable identifier this source advertises through `CheckSource::source_id`.
 const SOURCE_ID: &str = "pre_commit";
@@ -97,7 +101,12 @@ impl CheckSource for PreCommitSource {
         let timeout = Duration::from_secs(config.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
         let outcome = run_with_timeout(&command, &state.root, &state.base_ref, timeout)?;
 
-        let version_warning = sniff_version_warning(&state.root);
+        let version_warning = recipe_util::sniff_version_warning(
+            "pre-commit",
+            MIN_SUPPORTED_VERSION,
+            &state.root,
+            false,
+        );
         let verdict = outcome_to_verdict(&config.name, &outcome, version_warning.as_deref());
 
         Ok(CheckResult {
@@ -163,15 +172,6 @@ fn build_command(
     }
 
     parts.join(" ")
-}
-
-/// Single-quote a value for inclusion in a `sh -c "<command>"` string.
-/// Embedded single quotes become `'\''`, the standard POSIX trick. Used
-/// only for user-supplied strings (`hook_stage`, `config_path`); the
-/// flag literals are static and don't need quoting.
-fn shell_quote(value: &str) -> String {
-    let escaped = value.replace('\'', "'\\''");
-    format!("'{escaped}'")
 }
 
 fn outcome_to_verdict(
@@ -243,31 +243,22 @@ fn outcome_to_verdict(
 
 /// Build a `Verdict::Fail` whose findings carry the unexpected-exit
 /// detail plus an optional version-warning prepended at `Severity::Warn`.
+/// Thin wrapper over [`recipe_util::fail_with_optional_warning`] that
+/// pins the `pre_commit:` rule prefix.
 fn fail_with_optional_warning(
     check_name: &str,
     detail: String,
     version_warning: Option<&str>,
 ) -> Verdict {
-    let mut findings = vec![finding(check_name, &detail, Severity::Error)];
-    if let Some(warning) = version_warning {
-        findings.insert(0, finding(check_name, warning, Severity::Warn));
-    }
-    Verdict::Fail {
-        findings,
-        message: detail,
-    }
+    util_fail_with_optional_warning(RULE_PREFIX, check_name, detail, version_warning)
 }
 
 /// One-line `Finding` builder. Centralises the `pre_commit:<name>` rule
-/// slug so a single edit can re-shape every emitted finding.
+/// slug so a single edit can re-shape every emitted finding. Thin wrapper
+/// over [`recipe_util::note`] — pre-commit findings never carry a file /
+/// line, so the top-level `note` form is exactly right.
 fn finding(check_name: &str, message: &str, severity: Severity) -> Finding {
-    Finding {
-        rule: format!("pre_commit:{check_name}"),
-        message: message.to_string(),
-        file: None,
-        line: None,
-        severity,
-    }
+    recipe_util::note(RULE_PREFIX, check_name, message, severity)
 }
 
 /// Parse pre-commit's per-hook summary lines (`"<hook>....Failed"`) into
@@ -290,61 +281,6 @@ fn parse_failed_hooks(check_name: &str, stdout: &str) -> Vec<Finding> {
             })
         })
         .collect()
-}
-
-/// Lazily run `pre-commit --version`, parse the major.minor, and return a
-/// warning when it falls outside the supported range. `None` means the
-/// version is fine *or* we couldn't probe pre-commit (some wrappers
-/// don't honour `--version`); both cases swallow the warning.
-///
-/// The probe result is memoised for the lifetime of the process: a klasp
-/// gate invocation typically resolves `pre-commit` from the same `$PATH`
-/// entry for every check, so re-running the probe per check would
-/// multiply subprocess overhead by N for no signal. `cwd` is the first
-/// caller's working directory; later callers reuse the cached probe even
-/// from a different cwd, which is correct because `pre-commit --version`
-/// doesn't read the working directory. If a future klasp use-case spans
-/// repos in one process with divergent `pre-commit` on `$PATH`, this
-/// cache becomes wrong and the keying needs to be revisited.
-fn sniff_version_warning(cwd: &std::path::Path) -> Option<String> {
-    static CACHED: OnceLock<Option<String>> = OnceLock::new();
-    CACHED
-        .get_or_init(|| sniff_version_warning_uncached(cwd))
-        .clone()
-}
-
-fn sniff_version_warning_uncached(cwd: &std::path::Path) -> Option<String> {
-    let output = Command::new("pre-commit")
-        .arg("--version")
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let raw = String::from_utf8_lossy(&output.stdout).to_string();
-    let (major, minor) = parse_version(&raw)?;
-    if (major, minor) < MIN_SUPPORTED_VERSION {
-        let (rmaj, rmin) = MIN_SUPPORTED_VERSION;
-        return Some(format!(
-            "pre-commit {major}.{minor} is older than the minimum tested version \
-             {rmaj}.{rmin}; output parsing may be incomplete"
-        ));
-    }
-    None
-}
-
-/// Parse `"pre-commit 3.8.0\n"` → `Some((3, 8))`. Tolerant: takes the
-/// last whitespace-separated token from the first non-empty line and
-/// parses its first two dot-separated segments. Returns `None` if no
-/// version-shaped token is found.
-fn parse_version(raw: &str) -> Option<(u32, u32)> {
-    let line = raw.lines().find(|l| !l.trim().is_empty())?;
-    let token = line.split_whitespace().last()?;
-    let mut parts = token.split('.');
-    let major = parts.next()?.parse::<u32>().ok()?;
-    let minor = parts.next()?.parse::<u32>().ok()?;
-    Some((major, minor))
 }
 
 #[cfg(test)]
@@ -514,10 +450,15 @@ mod tests {
 
     #[test]
     fn parse_version_extracts_major_minor() {
-        assert_eq!(parse_version("pre-commit 3.8.0"), Some((3, 8)));
-        assert_eq!(parse_version("pre-commit 4.0.1\n"), Some((4, 0)));
-        assert_eq!(parse_version(""), None);
-        assert_eq!(parse_version("not a version"), None);
+        // Version parsing now lives in `recipe_util`; this guards the
+        // pre-commit-shaped banners against a future parser regression.
+        assert_eq!(recipe_util::parse_version("pre-commit 3.8.0"), Some((3, 8)));
+        assert_eq!(
+            recipe_util::parse_version("pre-commit 4.0.1\n"),
+            Some((4, 0))
+        );
+        assert_eq!(recipe_util::parse_version(""), None);
+        assert_eq!(recipe_util::parse_version("not a version"), None);
     }
 
     #[test]

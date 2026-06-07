@@ -347,6 +347,9 @@ See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan.
 [#55]: https://github.com/klasp-dev/klasp/issues/55
 [#68]: https://github.com/klasp-dev/klasp/issues/68
 [#69]: https://github.com/klasp-dev/klasp/issues/69
+[#72]: https://github.com/klasp-dev/klasp/pull/72
+[#73]: https://github.com/klasp-dev/klasp/pull/73
+[#91]: https://github.com/klasp-dev/klasp/issues/91
 [#97]: https://github.com/klasp-dev/klasp/issues/97
 [#100]: https://github.com/klasp-dev/klasp/pull/100
 [#101]: https://github.com/klasp-dev/klasp/pull/101

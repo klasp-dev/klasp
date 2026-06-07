@@ -12,6 +12,7 @@
 //! [`crate::agents_md`]: round-trip canonicalises trailing-newline state
 //! to a single `\n`; bytes outside the block are byte-for-byte preserved.
 
+use klasp_core::text::managed_block::{self, BlockError, Markers, Prelude};
 use thiserror::Error;
 
 /// Opening marker for klasp's managed block in a git-hook file. Stable
@@ -27,6 +28,24 @@ pub const MANAGED_END: &str = "# >>> klasp managed end <<<";
 /// the same shebang, so users running this on minimal Alpine / BSD images
 /// get a working interpreter without a hard-coded `/bin/bash` dependency.
 pub const SHEBANG: &str = "#!/usr/bin/env sh";
+
+/// Marker pair handed to the shared [`managed_block`] writer.
+const MARKERS: Markers<'static> = Markers {
+    start: MANAGED_START,
+    end: MANAGED_END,
+};
+
+/// Shebang prelude the shared writer prepends when fresh-creating a hook
+/// (or appending to one that lacks a shebang).
+const PRELUDE: Prelude<'static> = Prelude { line: SHEBANG };
+
+impl From<BlockError> for HookError {
+    fn from(err: BlockError) -> Self {
+        match err {
+            BlockError::MalformedMarkers => HookError::MalformedMarkers,
+        }
+    }
+}
 
 /// Which git-hook this block targets. Drives the `--trigger` arg passed
 /// through to `klasp gate`, and the on-disk filename
@@ -171,18 +190,11 @@ pub fn render_managed_body(kind: HookKind, schema_version: u32) -> String {
 /// when either marker is absent or the end marker precedes the start marker.
 /// Malformed (mismatched) markers are treated as absent.
 pub(crate) fn extract_managed_block(s: &str) -> Option<&str> {
-    let start = s.find(MANAGED_START)?;
-    let end_marker = s.find(MANAGED_END)?;
-    if end_marker < start {
-        return None;
-    }
-    let end_of_marker = end_marker + MANAGED_END.len();
-    let end = if s.as_bytes().get(end_of_marker) == Some(&b'\n') {
-        end_of_marker + 1
-    } else {
-        end_of_marker
-    };
-    Some(&s[start..end])
+    // Drift detection only cares about the well-formed single-pair case;
+    // malformed/mismatched markers are treated as "no block" (None), same
+    // as the original local implementation.
+    let span = managed_block::find_block(s, &MARKERS).ok()??;
+    Some(&s[span.start..span.end])
 }
 
 /// Render the full managed block (markers + body) for the given hook.
@@ -191,8 +203,7 @@ pub(crate) fn extract_managed_block(s: &str) -> Option<&str> {
 /// ends with [`MANAGED_END`] on its own line, with the body sandwiched.
 pub fn render_managed_block(kind: HookKind, schema_version: u32) -> String {
     let body = render_managed_body(kind, schema_version);
-    let trimmed = body.trim_end_matches('\n');
-    format!("{MANAGED_START}\n{trimmed}\n{MANAGED_END}\n")
+    managed_block::render_block(&MARKERS, &body)
 }
 
 /// Splice klasp's managed block into `existing`, returning the new file
@@ -215,48 +226,18 @@ pub fn install_block(
     kind: HookKind,
     schema_version: u32,
 ) -> Result<String, HookError> {
-    let block = render_managed_block(kind, schema_version);
-
-    if let Some(span) = find_block(existing)? {
-        // Replace in-place. Preserve everything outside [start, end).
-        let mut out = String::with_capacity(existing.len() + block.len());
-        out.push_str(&existing[..span.start]);
-        out.push_str(&block);
-        out.push_str(&existing[span.end..]);
-        return Ok(out);
-    }
-
-    // No existing block. Decide on shebang prelude + appropriate spacing.
-    let trimmed = existing.trim();
-    if trimmed.is_empty() {
-        // Fresh-create: shebang line + blank line + block. The blank
-        // line keeps the marker visually separate from the shebang and
-        // matches the structure `uninstall_block` reverses below.
-        let mut out = String::with_capacity(SHEBANG.len() + block.len() + 2);
-        out.push_str(SHEBANG);
-        out.push_str("\n\n");
-        out.push_str(&block);
-        return Ok(out);
-    }
-
-    // Existing user content. If the file already has a shebang, just
-    // append the block after the user content with a one-line spacer.
-    // Otherwise prepend our own shebang first — without one, git won't
-    // execute the hook on systems that don't have an inherited
-    // interpreter for the file mode.
-    let mut out = String::with_capacity(existing.len() + SHEBANG.len() + block.len() + 4);
-    if has_shebang(existing) {
-        out.push_str(existing.trim_end_matches('\n'));
-        out.push_str("\n\n");
-        out.push_str(&block);
-    } else {
-        out.push_str(SHEBANG);
-        out.push_str("\n\n");
-        out.push_str(existing.trim_end_matches('\n'));
-        out.push_str("\n\n");
-        out.push_str(&block);
-    }
-    Ok(out)
+    // The shebang prelude is the git-hook-specific wrinkle: a fresh hook
+    // must open with an interpreter line, and a hook authored without one
+    // gains it so git executes it on systems with no inherited interpreter.
+    // The shared writer owns the find/replace/append matrix; we supply the
+    // body and the prelude.
+    let body = render_managed_body(kind, schema_version);
+    Ok(managed_block::install_block(
+        existing,
+        &MARKERS,
+        &body,
+        Some(PRELUDE),
+    )?)
 }
 
 /// Inverse of [`install_block`]: remove klasp's managed block and the
@@ -275,47 +256,20 @@ pub fn install_block(
 /// newline gains one. This is the same tolerated normalisation the
 /// AGENTS.md writer documents.
 pub fn uninstall_block(existing: &str) -> Result<String, HookError> {
-    let Some(span) = find_block(existing)? else {
-        return Ok(existing.to_string());
-    };
-
-    let before = &existing[..span.start];
-    let after = &existing[span.end..];
-
-    // Three shapes possible after stripping the block:
-    //
-    // 1. `before` is empty (block was at byte 0): collapse to `after`.
-    //    The fresh-create path *never* hits this — install always
-    //    prepends a shebang. The path is reachable only via a
-    //    user-fabricated input whose first byte is the start marker.
-    //
-    // 2. `before` is just our shebang + whitespace, `after` is empty:
-    //    this is the round-trip from the missing-file install. Collapse
-    //    to empty so the caller can `rm` the file.
-    //
-    // 3. `before` has real content: strip the trailing `\n\n` install
-    //    inserted as a separator, restore canonical `<content>\n`. If
-    //    `after` is non-empty, leave it in place verbatim.
-    let mut out = String::with_capacity(before.len() + after.len() + 1);
-    if before.is_empty() {
-        out.push_str(after);
-    } else if after.is_empty() && is_only_shebang_or_whitespace(before) {
-        // Shebang-only prefix means klasp was the sole content. Collapse
-        // to empty so the caller deletes the file.
-    } else if after.is_empty() {
-        out.push_str(before.trim_end_matches('\n'));
-        out.push('\n');
-    } else {
-        out.push_str(before);
-        out.push_str(after);
-    }
-    Ok(out)
+    // Pass the shebang prelude so the shared writer collapses a
+    // shebang-only-plus-block file (the missing-file install round-trip) to
+    // the empty string, letting the caller `rm` it.
+    Ok(managed_block::uninstall_block(
+        existing,
+        &MARKERS,
+        Some(PRELUDE),
+    )?)
 }
 
 /// `true` when `existing` already contains a (well-formed) klasp managed
 /// block — used by callers to decide whether install is a no-op.
 pub fn contains_block(existing: &str) -> Result<bool, HookError> {
-    Ok(find_block(existing)?.is_some())
+    Ok(managed_block::contains_block(existing, &MARKERS)?)
 }
 
 /// Inspect a hook file's contents for a recognised foreign hook manager.
@@ -352,54 +306,6 @@ pub fn detect_conflict(existing: &str) -> Option<HookConflict> {
         return Some(HookConflict::PreCommit);
     }
     None
-}
-
-/// Byte span of the managed block within `existing`, including both
-/// markers and the trailing `\n` after the end marker. Mirrors the
-/// equivalent helper in [`crate::agents_md`].
-struct Span {
-    start: usize,
-    end: usize,
-}
-
-fn find_block(existing: &str) -> Result<Option<Span>, HookError> {
-    let (Some(start), Some(end_marker_start)) =
-        (existing.find(MANAGED_START), existing.find(MANAGED_END))
-    else {
-        return if existing.contains(MANAGED_START) || existing.contains(MANAGED_END) {
-            Err(HookError::MalformedMarkers)
-        } else {
-            Ok(None)
-        };
-    };
-
-    if existing.rfind(MANAGED_START) != Some(start)
-        || existing.rfind(MANAGED_END) != Some(end_marker_start)
-        || end_marker_start < start
-    {
-        return Err(HookError::MalformedMarkers);
-    }
-
-    let after_marker = end_marker_start + MANAGED_END.len();
-    let end = if existing.as_bytes().get(after_marker) == Some(&b'\n') {
-        after_marker + 1
-    } else {
-        after_marker
-    };
-    Ok(Some(Span { start, end }))
-}
-
-fn has_shebang(s: &str) -> bool {
-    s.starts_with("#!")
-}
-
-/// Returns `true` when `s` consists of only a shebang line plus
-/// whitespace (and nothing else). Used by [`uninstall_block`] to detect
-/// the round-trip-from-missing-file case where klasp owns the entire
-/// file.
-fn is_only_shebang_or_whitespace(s: &str) -> bool {
-    let trimmed = s.trim();
-    trimmed.is_empty() || (trimmed.starts_with("#!") && !trimmed.contains('\n'))
 }
 
 #[cfg(test)]

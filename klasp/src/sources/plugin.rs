@@ -17,12 +17,11 @@
 //! **Timeout.** Default 60 s; override via `KLASP_PLUGIN_TIMEOUT_SECS` env var.
 
 use std::collections::HashSet;
-use std::io::Write as _;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::OnceLock;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use super::shell;
 use klasp_core::{
     plugin_disable_load, plugin_error_warn, CheckConfig, CheckResult, CheckSource,
     CheckSourceConfig, CheckSourceError, Finding, PluginConfig, PluginGateInput, PluginGateOutput,
@@ -34,9 +33,6 @@ use klasp_core::{
 /// shell default — plugins that hang are more likely misuse than intentional
 /// long-running operations.
 const DEFAULT_PLUGIN_TIMEOUT_SECS: u64 = 60;
-
-/// Poll granularity for the `try_wait` loop, matching shell.rs.
-const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Cap each of stdout/stderr at 16 MiB. A buggy or hostile plugin that writes
 /// gigabytes to a pipe would otherwise OOM the gate process. On overflow the
@@ -278,6 +274,11 @@ struct ProcessOutput {
 /// to `timeout`. `extra_env` is a list of additional env vars set on the child
 /// (in addition to `KLASP_PLUGIN_PROTOCOL_VERSION`, which is always set).
 ///
+/// Thin caller of [`shell::spawn_with_timeout`]: it owns the plugin-specific
+/// env, the 16 MiB OOM cap (`MAX_PLUGIN_OUTPUT_BYTES`), the non-zero-exit →
+/// `Err` policy, and mapping the shared `ProcessError` into a `String`. The
+/// poll/drain/kill mechanics live in the shared primitive.
+///
 /// Returns `Err(String)` on non-zero exit, spawn error, timeout, or
 /// stdout/stderr exceeding `MAX_PLUGIN_OUTPUT_BYTES`. The child is always
 /// killed and reaped on error.
@@ -289,137 +290,51 @@ fn spawn_and_wait(
     extra_env: &[(&str, &str)],
 ) -> Result<ProcessOutput, String> {
     let mut cmd = Command::new(binary);
-    cmd.args(args)
-        .env(
-            "KLASP_PLUGIN_PROTOCOL_VERSION",
-            PLUGIN_PROTOCOL_VERSION.to_string(),
-        )
-        .stdin(if stdin_payload.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.args(args).env(
+        "KLASP_PLUGIN_PROTOCOL_VERSION",
+        PLUGIN_PROTOCOL_VERSION.to_string(),
+    );
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
 
-    let mut child = cmd.spawn().map_err(|e| format!("failed to spawn: {e}"))?;
+    let output = shell::spawn_with_timeout(
+        &mut cmd,
+        stdin_payload,
+        timeout,
+        Some(MAX_PLUGIN_OUTPUT_BYTES),
+    )
+    .map_err(process_error_to_string)?;
 
-    // Spawn drain threads BEFORE writing stdin so a stdin payload larger than
-    // the pipe buffer (~64 KB on Linux, ~16 KB on macOS) cannot deadlock if
-    // the child interleaves stdin reads with stdout writes.
-    let stdout_handle = child
-        .stdout
-        .take()
-        .map(|r| thread::spawn(move || drain_capped(r, MAX_PLUGIN_OUTPUT_BYTES, "stdout")));
-    let stderr_handle = child
-        .stderr
-        .take()
-        .map(|r| thread::spawn(move || drain_capped(r, MAX_PLUGIN_OUTPUT_BYTES, "stderr")));
-
-    // stdin write happens in its own thread so a slow-reading child can't block
-    // the parent's poll loop.
-    let stdin_handle = if let (Some(payload), Some(mut stdin)) = (stdin_payload, child.stdin.take())
-    {
-        let payload = payload.to_string();
-        Some(thread::spawn(move || {
-            // BrokenPipe is acceptable if the child exited early — the child's
-            // exit status is the authoritative signal for that case.
-            let _ = stdin.write_all(payload.as_bytes());
-        }))
-    } else {
-        None
-    };
-
-    let started = Instant::now();
-    let exit_status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if started.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    if let Some(h) = stdin_handle {
-                        let _ = h.join();
-                    }
-                    let _ = join_drain(stdout_handle);
-                    let _ = join_drain(stderr_handle);
-                    return Err(format!("timed out after {}s", timeout.as_secs()));
-                }
-                thread::sleep(POLL_INTERVAL);
-            }
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                if let Some(h) = stdin_handle {
-                    let _ = h.join();
-                }
-                let _ = join_drain(stdout_handle);
-                let _ = join_drain(stderr_handle);
-                return Err(format!("wait error: {e}"));
-            }
-        }
-    };
-
-    if let Some(h) = stdin_handle {
-        let _ = h.join();
+    // Unlike the shell source, a plugin's non-zero exit is a protocol failure
+    // (it should report verdicts via JSON, not exit codes), so we fold it into
+    // the error string with the captured stderr for context.
+    if output.status_code != Some(0) {
+        let status = output
+            .status_code
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        let stderr = output.stderr.trim();
+        let detail = if stderr.is_empty() {
+            String::new()
+        } else {
+            format!(": {stderr}")
+        };
+        return Err(format!("exited with status {status}{detail}"));
     }
 
-    let stdout = join_drain(stdout_handle)?;
-    let stderr = join_drain(stderr_handle).unwrap_or_default();
-
-    if !exit_status.success() {
-        return Err(format!(
-            "exited with status {}{}",
-            exit_status
-                .code()
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "signal".to_string()),
-            if stderr.trim().is_empty() {
-                String::new()
-            } else {
-                format!(": {}", stderr.trim())
-            }
-        ));
-    }
-
-    Ok(ProcessOutput { stdout })
+    Ok(ProcessOutput {
+        stdout: output.stdout,
+    })
 }
 
-/// Read from `reader` into a `String`, bailing with an error if total bytes
-/// exceed `cap`. `stream_name` ("stdout" / "stderr") is interpolated into the
-/// overflow error message.
-fn drain_capped(
-    mut reader: impl std::io::Read,
-    cap: usize,
-    stream_name: &'static str,
-) -> Result<String, String> {
-    let mut buf = Vec::with_capacity(8 * 1024);
-    let mut chunk = [0u8; 64 * 1024];
-    loop {
-        match reader.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => {
-                if buf.len() + n > cap {
-                    return Err(format!("{stream_name} exceeded {cap}-byte cap; killed"));
-                }
-                buf.extend_from_slice(&chunk[..n]);
-            }
-            Err(e) => return Err(format!("{stream_name} read error: {e}")),
-        }
-    }
-    String::from_utf8(buf).map_err(|e| format!("{stream_name} not valid UTF-8: {e}"))
-}
-
-fn join_drain(h: Option<thread::JoinHandle<Result<String, String>>>) -> Result<String, String> {
-    match h {
-        None => Ok(String::new()),
-        Some(h) => h
-            .join()
-            .map_err(|_| "drain thread panicked".to_string())
-            .and_then(|r| r),
+/// Map the shared [`shell::ProcessError`] onto the plugin path's `String`
+/// errors, preserving the messages the previous bespoke implementation emitted.
+fn process_error_to_string(e: shell::ProcessError) -> String {
+    match e {
+        shell::ProcessError::Spawn(source) => format!("failed to spawn: {source}"),
+        shell::ProcessError::Timeout { secs } => format!("timed out after {secs}s"),
+        shell::ProcessError::Output(msg) => msg,
     }
 }
 

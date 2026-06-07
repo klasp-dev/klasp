@@ -38,3 +38,9 @@ dist/
 ruvector.db
 ruvector.db-shm
 ruvector.db-wal
+
+# agentic-flow workflow run state (per-clone; audited by klasp-plugin-agentic-flow,
+# never source). Receipts and the state cursor are regenerated each run — see
+# docs/agentic-flow-receipts.md.
+.agentic-flow/receipts/
+.agentic-flow/state.json
