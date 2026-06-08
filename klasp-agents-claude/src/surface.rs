@@ -9,6 +9,16 @@
 //! 5. Atomic write of the script + chmod 0o755 (Unix).
 //! 6. Surgical merge into `.claude/settings.json`.
 //!
+//! ## Foreign hook-manager advisories
+//!
+//! [`AgentSurface::install_with_warnings`] additionally probes the repo
+//! root for co-resident hook managers (husky / lefthook / pre-commit
+//! framework) via [`crate::conflict`]. Because Claude installs through
+//! `.claude/settings.json` rather than `.git/hooks/`, there is no file to
+//! skip — the warning is informational (both gates run independently). It
+//! rides the same [`SurfaceWarning`] channel the Codex surface uses so the
+//! CLI renders a uniform `warning:` line.
+//!
 //! ## Windows notes (audit W4)
 //!
 //! On Windows, `current_mode` and `apply_mode` are no-ops — NTFS has no
@@ -25,8 +35,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use klasp_core::fs::{atomic_write, current_mode, ensure_parent, read_or_empty, write_if_changed};
-use klasp_core::{AgentSurface, InstallContext, InstallError, InstallReport};
+use klasp_core::{AgentSurface, InstallContext, InstallError, InstallReport, SurfaceWarning};
 
+use crate::conflict::{self, HookConflict};
 use crate::hook_template::{self, MANAGED_MARKER};
 use crate::settings::{self, SettingsError};
 
@@ -206,6 +217,34 @@ impl AgentSurface for ClaudeCodeSurface {
             paths_written,
             preview: None,
         })
+    }
+
+    /// Install, then surface a non-fatal advisory for each co-resident
+    /// foreign hook manager (husky / lefthook / pre-commit framework)
+    /// detected at the repo root.
+    ///
+    /// Claude Code installs through `.claude/settings.json` + a standalone
+    /// `.claude/hooks/klasp-gate.sh` shim — it never writes `.git/hooks/`,
+    /// so unlike Codex there is no hook file to *skip*. The conflict is
+    /// purely informational: klasp's PreToolUse[Bash] gate and the foreign
+    /// manager's git hooks run independently and share no state. We still
+    /// route it through the same `SurfaceWarning` channel Codex uses so the
+    /// CLI renders one consistent `warning:` line per detected manager.
+    fn install_with_warnings(
+        &self,
+        ctx: &InstallContext,
+    ) -> Result<(InstallReport, Vec<SurfaceWarning>), InstallError> {
+        let report = self.install(ctx)?;
+        let warnings = conflict::detect_conflicts(&ctx.repo_root)
+            .into_iter()
+            .map(|c: HookConflict| SurfaceWarning {
+                // Point the warning at the foreign tool's marker so the
+                // user can locate it; the message carries the full advisory.
+                path: ctx.repo_root.join(c.marker()),
+                message: conflict::conflict_message(c).into(),
+            })
+            .collect();
+        Ok((report, warnings))
     }
 
     fn uninstall(&self, repo_root: &Path, dry_run: bool) -> Result<Vec<PathBuf>, InstallError> {
