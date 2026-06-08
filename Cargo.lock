@@ -321,6 +321,7 @@ dependencies = [
  "insta",
  "klasp-core",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
