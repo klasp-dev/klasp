@@ -87,7 +87,7 @@ jobs:
           mkdir -p staging
           cp "target/${{ matrix.target.triple }}/release/klasp${{ matrix.target.ext }}" "staging/klasp${{ matrix.target.ext }}"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # actions/upload-artifact@v7.0.1
         with:
           name: klasp-${{ matrix.target.triple }}
           path: staging/klasp${{ matrix.target.ext }}
@@ -237,7 +237,7 @@ jobs:
           # Sccache speeds up repeated builds across the matrix.
           sccache: "true"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # actions/upload-artifact@v7.0.1
         with:
           name: pypi-wheel-${{ matrix.target.triple }}
           path: pypi/dist/*.whl
