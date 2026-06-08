@@ -17,7 +17,7 @@ See [issue #68](https://github.com/klasp-dev/klasp/issues/68) for the tracking d
 
 | Surface | Install | Uninstall | Doctor | Commit gate | Push gate | Structured verdict | Conflict handling | Captured-session test | Notes |
 |---|---|---|---|---|---|---|---|---|---|
-| Claude Code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (husky / lefthook / pre-commit framework) | ✓ | — |
+| Claude Code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (husky / lefthook / pre-commit framework) | ✓ | Conflict handling is advisory: Claude installs via `.claude/settings.json`, not `.git/hooks/`, so it warns (rather than skips) when a co-resident manager is detected. See [#92](https://github.com/klasp-dev/klasp/issues/92). |
 | Codex CLI | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Aider | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | ✓ | v0.3 W1 (#40, #46). Aider has no push-time hook (`.aider.conf.yml` exposes `commit-cmd-pre` only) and no conflicting hook-manager surface — both columns are intentional `—`, not regressions. |
 | Cursor | — | — | — | — | — | — | — | — | Not supported in v0.3 (see [cursor-assessment.md](./cursor-assessment.md)); hook surface is beta with open correctness bugs |
@@ -31,7 +31,7 @@ Tests are linked below:
 
 | Surface | Test file(s) |
 |---|---|
-| Claude Code | [`klasp/tests/install_claude_code.rs`](../klasp/tests/install_claude_code.rs), [`klasp/tests/gate_flow.rs`](../klasp/tests/gate_flow.rs) |
+| Claude Code | [`klasp/tests/install_claude_code.rs`](../klasp/tests/install_claude_code.rs), [`klasp/tests/gate_flow.rs`](../klasp/tests/gate_flow.rs), [`klasp-agents-claude/tests/conflict_detection.rs`](../klasp-agents-claude/tests/conflict_detection.rs) |
 | Codex CLI | [`klasp/tests/install_codex_cli.rs`](../klasp/tests/install_codex_cli.rs), [`klasp/tests/codex_captured_session.rs`](../klasp/tests/codex_captured_session.rs) |
 | Aider | [`klasp-agents-aider/tests/aider_conf_install.rs`](../klasp-agents-aider/tests/aider_conf_install.rs), [`klasp/tests/aider_captured_session.rs`](../klasp/tests/aider_captured_session.rs) |
 
