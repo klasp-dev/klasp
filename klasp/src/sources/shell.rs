@@ -303,8 +303,14 @@ pub(super) fn spawn_with_timeout(
         let _ = h.join();
     }
 
-    let stdout = stdout_handle.map(join_drain).transpose()?.unwrap_or_default();
-    let stderr = stderr_handle.map(join_drain).transpose()?.unwrap_or_default();
+    let stdout = stdout_handle
+        .map(join_drain)
+        .transpose()?
+        .unwrap_or_default();
+    let stderr = stderr_handle
+        .map(join_drain)
+        .transpose()?
+        .unwrap_or_default();
 
     Ok(ProcessOutput {
         status_code: exit_status.code(),
