@@ -30,11 +30,11 @@ serde = { version = "1", features = ["derive"] }
 # now reflects insertion order rather than alphabetised, which SARIF parsers
 # don't care about.
 serde_json = { version = "1", features = ["preserve_order"] }
-toml = "0.8"
-thiserror = "1"
+toml = "1.1"
+thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
 regex = "1"
-which = "6"
+which = "8"
 tempfile = "3"
 serde_yaml_ng = "0.10"
