@@ -130,11 +130,7 @@ pub fn apply_mode(path: &Path, mode: u32) -> Result<(), InstallError> {
 /// read off disk, and on a difference ensure the parent dir, look up the
 /// current mode, and atomically write. Hook-script writes that need a
 /// different default mode (e.g. `0o755`) call [`atomic_write`] directly.
-pub fn write_if_changed(
-    path: &Path,
-    existing: &str,
-    merged: &str,
-) -> Result<bool, InstallError> {
+pub fn write_if_changed(path: &Path, existing: &str, merged: &str) -> Result<bool, InstallError> {
     if merged == existing {
         return Ok(false);
     }
