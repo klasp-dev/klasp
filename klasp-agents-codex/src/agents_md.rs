@@ -101,7 +101,9 @@ pub fn install_block(existing: &str, body: &str) -> Result<String, AgentsMdError
     // Markdown has no prelude: empty input yields the bare block, and an
     // append leaves a blank-line separator. The shared writer owns that
     // matrix; we just map its error onto the crate-local variant.
-    Ok(managed_block::install_block(existing, &MARKERS, body, None)?)
+    Ok(managed_block::install_block(
+        existing, &MARKERS, body, None,
+    )?)
 }
 
 /// Inverse of [`install_block`]: remove klasp's managed block and the
