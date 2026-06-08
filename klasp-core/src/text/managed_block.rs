@@ -64,7 +64,9 @@ pub enum BlockError {
     /// overwriting from the first marker to EOF — could nuke hand-written
     /// content the user intended to keep. Callers map this onto their own
     /// error variant with a file-format-specific message.
-    #[error("managed-block markers are malformed (expected exactly one start followed by one end)")]
+    #[error(
+        "managed-block markers are malformed (expected exactly one start followed by one end)"
+    )]
     MalformedMarkers,
 }
 
@@ -202,8 +204,7 @@ pub fn install_block(
         None => false,
     };
     let prelude_line = prelude.map(|p| p.line).unwrap_or("");
-    let mut out =
-        String::with_capacity(existing.len() + prelude_line.len() + block.len() + 4);
+    let mut out = String::with_capacity(existing.len() + prelude_line.len() + block.len() + 4);
     if needs_prelude {
         out.push_str(prelude_line);
         out.push_str("\n\n");
@@ -322,11 +323,7 @@ mod tests {
 
     #[test]
     fn find_block_rejects_duplicates() {
-        let pre = format!(
-            "{s}\none\n{e}\n{s}\ntwo\n{e}\n",
-            s = MD.start,
-            e = MD.end
-        );
+        let pre = format!("{s}\none\n{e}\n{s}\ntwo\n{e}\n", s = MD.start, e = MD.end);
         assert_eq!(find_block(&pre, &MD), Err(BlockError::MalformedMarkers));
     }
 
