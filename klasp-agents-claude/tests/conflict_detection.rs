@@ -46,9 +46,14 @@ fn clean_repo_install_emits_no_conflict_warning() {
     let repo = fresh_repo();
     let surface = ClaudeCodeSurface;
 
-    let (report, warnings) = surface.install_with_warnings(&ctx_for(repo.path())).unwrap();
+    let (report, warnings) = surface
+        .install_with_warnings(&ctx_for(repo.path()))
+        .unwrap();
 
-    assert!(warnings.is_empty(), "clean repo must not warn: {warnings:?}");
+    assert!(
+        warnings.is_empty(),
+        "clean repo must not warn: {warnings:?}"
+    );
     // Install still does its job.
     assert!(!report.already_installed);
     assert!(repo.path().join(".claude/settings.json").exists());
@@ -68,7 +73,9 @@ fn install_detects_husky_and_warns() {
     fs::write(repo.path().join(".husky").join("pre-commit"), "npm test\n").unwrap();
 
     let surface = ClaudeCodeSurface;
-    let (report, warnings) = surface.install_with_warnings(&ctx_for(repo.path())).unwrap();
+    let (report, warnings) = surface
+        .install_with_warnings(&ctx_for(repo.path()))
+        .unwrap();
 
     assert!(
         warns_about(&warnings, "husky"),
@@ -92,7 +99,9 @@ fn install_detects_lefthook_and_warns() {
         fs::write(repo.path().join(name), "pre-commit:\n  commands:\n").unwrap();
 
         let surface = ClaudeCodeSurface;
-        let (_report, warnings) = surface.install_with_warnings(&ctx_for(repo.path())).unwrap();
+        let (_report, warnings) = surface
+            .install_with_warnings(&ctx_for(repo.path()))
+            .unwrap();
 
         assert!(
             warns_about(&warnings, "lefthook"),
@@ -112,7 +121,9 @@ fn install_detects_pre_commit_framework_and_warns() {
     .unwrap();
 
     let surface = ClaudeCodeSurface;
-    let (_report, warnings) = surface.install_with_warnings(&ctx_for(repo.path())).unwrap();
+    let (_report, warnings) = surface
+        .install_with_warnings(&ctx_for(repo.path()))
+        .unwrap();
 
     assert!(
         warns_about(&warnings, "pre-commit"),
@@ -163,7 +174,9 @@ fn husky_warning_points_at_marker_path() {
     fs::create_dir(repo.path().join(".husky")).unwrap();
 
     let surface = ClaudeCodeSurface;
-    let (_report, warnings) = surface.install_with_warnings(&ctx_for(repo.path())).unwrap();
+    let (_report, warnings) = surface
+        .install_with_warnings(&ctx_for(repo.path()))
+        .unwrap();
 
     let husky = warnings
         .iter()
