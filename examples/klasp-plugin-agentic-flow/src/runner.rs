@@ -18,6 +18,7 @@
 //! the agentic-flow orchestrator) MUST compute it identically.
 
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -45,6 +46,11 @@ const RULE_UNKNOWN: &str = "agentic-flow/unknown-step";
 
 /// Maximum number of findings to emit before truncating.
 const MAX_FINDINGS: usize = 100;
+
+/// DoS guard: cap state/receipt/manifest reads at 8 MiB. Mirrors klasp's
+/// output-cap philosophy — a hostile or runaway file must not be read unbounded
+/// into memory. Anything larger than this is treated as an infra issue (warn).
+const MAX_READ_BYTES: u64 = 8 * 1024 * 1024;
 
 /// state.json schema version this plugin v1 understands.
 const SUPPORTED_STATE_VERSION: u32 = 1;
@@ -151,6 +157,21 @@ fn verdict_for(findings: &[PluginFinding]) -> PluginVerdict {
 /// empty → pass) or `Err(PluginGateOutput::Warn)` for an infrastructure error
 /// (missing dirs/files, malformed JSON/YAML, git failure) that must never fail.
 fn audit(input: &PluginGateInput) -> Result<Vec<PluginFinding>, PluginGateOutput> {
+    // SECURITY (up front, before any git runs): a base_ref shaped like a flag
+    // (e.g. `--output=<path>`) would be honoured by `git diff` as an option
+    // rather than a revision, letting a malicious base_ref write an
+    // attacker-chosen file. Refuse it gracefully — infra warn, never a fail,
+    // exit 0. `canonical_diff_hash` re-checks this as defense-in-depth.
+    if input.base_ref.starts_with('-') {
+        return Err(infra_warn(
+            "base-ref-rejected",
+            format!(
+                "refusing base_ref starting with '-': {:?} (could be smuggled as a git flag)",
+                input.base_ref
+            ),
+        ));
+    }
+
     let repo_root = Path::new(&input.repo_root);
     let settings = input.config.settings.as_ref();
 
@@ -244,29 +265,33 @@ fn audit(input: &PluginGateInput) -> Result<Vec<PluginFinding>, PluginGateOutput
                         StepResult::Ok
                     )
                 });
+                // Point the finding at the earliest alternative's receipt.
+                // `alts.first()` (vs `alts[0]`) can't panic if a future refactor
+                // builds an empty OneOf — an empty group can't be unsatisfied, so
+                // we simply skip it.
                 if !any_ok {
-                    let labels: Vec<String> = alts
-                        .iter()
-                        .map(|(nn, id)| format!("{nn:02}-{id}"))
-                        .collect();
-                    // Point the finding at the earliest alternative's receipt.
-                    let (first_nn, first_id) = &alts[0];
-                    let receipt_rel = receipt_rel_path(
-                        &receipts_dir,
-                        repo_root,
-                        &format!("{first_nn:02}-{first_id}"),
-                    );
-                    audit_errors.push((
-                        *group_nn,
-                        error_finding(
-                            RULE_MISSING,
-                            Some(&receipt_rel),
-                            &format!(
-                                "Missing required receipt for the impl path (need one of: {})",
-                                labels.join(" or ")
+                    if let Some((first_nn, first_id)) = alts.first() {
+                        let labels: Vec<String> = alts
+                            .iter()
+                            .map(|(nn, id)| format!("{nn:02}-{id}"))
+                            .collect();
+                        let receipt_rel = receipt_rel_path(
+                            &receipts_dir,
+                            repo_root,
+                            &format!("{first_nn:02}-{first_id}"),
+                        );
+                        audit_errors.push((
+                            *group_nn,
+                            error_finding(
+                                RULE_MISSING,
+                                Some(&receipt_rel),
+                                &format!(
+                                    "Missing required receipt for the impl path (need one of: {})",
+                                    labels.join(" or ")
+                                ),
                             ),
-                        ),
-                    ));
+                        ));
+                    }
                 }
             }
         }
@@ -420,14 +445,32 @@ pub fn canonical_diff_hash(
     base_ref: &str,
     kind: PluginTriggerKind,
 ) -> anyhow::Result<String> {
+    // SECURITY: refuse a base_ref that looks like a flag. git parses options
+    // *before* the `--` separator, so a base_ref like `--output=<path>` would be
+    // honoured as the `--output` flag (range token = `--output=<path>...HEAD`),
+    // letting a malicious klasp.toml / KLASP_BASE_REF write an attacker-chosen
+    // file. The trailing `--` below does NOT defend against this (it only ends
+    // option parsing for pathspecs); the up-front leading-dash reject does.
+    if base_ref.starts_with('-') {
+        anyhow::bail!("refusing base_ref starting with '-': {base_ref:?}");
+    }
+
     let range = format!("{base_ref}...HEAD");
-    let three_dot = run_git_diff(repo_root, &["diff", "--no-color", "--no-ext-diff", &range])?;
+    // The trailing `--` end-of-options separator stops git from interpreting a
+    // base_ref that resolves to a path/filename as a pathspec or flag.
+    let three_dot = run_git_diff(
+        repo_root,
+        &["diff", "--no-color", "--no-ext-diff", &range, "--"],
+    )?;
 
     let mut hasher = Sha256::new();
     hasher.update(&three_dot);
 
     if kind == PluginTriggerKind::Commit {
-        let cached = run_git_diff(repo_root, &["diff", "--no-color", "--no-ext-diff", "--cached"])?;
+        let cached = run_git_diff(
+            repo_root,
+            &["diff", "--no-color", "--no-ext-diff", "--cached", "--"],
+        )?;
         hasher.update(&cached);
     }
 
@@ -484,6 +527,11 @@ fn current_branch(repo_root: &str) -> Option<String> {
 }
 
 // ── Path resolution ─────────────────────────────────────────────────────────
+//
+// TRUST MODEL: the settings paths (manifest/state/receipts) are trusted at the
+// same level as `klasp.toml` — whoever can edit `klasp.toml` chooses where this
+// plugin reads from. Review `klasp.toml` changes from untrusted contributors,
+// since a hostile path here points the auditor at attacker-controlled files.
 
 /// Read a string field from `settings`.
 fn settings_str<'a>(settings: Option<&'a serde_json::Value>, key: &str) -> Option<&'a str> {
@@ -721,13 +769,48 @@ fn manifest_gating<'a>(
 
 // ── Loading ──────────────────────────────────────────────────────────────────
 
-/// Load and parse flow.yaml. Unreadable/malformed → infra warn (never fail).
+/// A capped-read error: either the file exceeded [`MAX_READ_BYTES`] or a plain
+/// I/O error occurred. Both are infra issues (graceful warn), but they carry
+/// distinct messages.
+enum CappedReadErr {
+    /// File is larger than [`MAX_READ_BYTES`].
+    TooLarge,
+    /// Open/read/utf-8 failure, with a human-readable description.
+    Io(String),
+}
+
+/// Read a file to a `String` but never read more than [`MAX_READ_BYTES`].
+///
+/// DoS guard mirroring klasp's output-cap philosophy: open the file, `take()`
+/// the cap+1 bytes, and reject (rather than read unbounded) if it overflows.
+fn read_to_string_capped(path: &Path) -> Result<String, CappedReadErr> {
+    let file = std::fs::File::open(path).map_err(|e| CappedReadErr::Io(e.to_string()))?;
+    // Read one byte past the cap so we can detect overflow deterministically.
+    let mut handle = file.take(MAX_READ_BYTES + 1);
+    let mut buf = Vec::new();
+    handle
+        .read_to_end(&mut buf)
+        .map_err(|e| CappedReadErr::Io(e.to_string()))?;
+    if buf.len() as u64 > MAX_READ_BYTES {
+        return Err(CappedReadErr::TooLarge);
+    }
+    String::from_utf8(buf).map_err(|e| CappedReadErr::Io(e.to_string()))
+}
+
+/// Load and parse flow.yaml. Unreadable/oversize/malformed → infra warn (never fail).
 fn load_manifest(path: &Path) -> Result<Manifest, PluginGateOutput> {
-    let text = std::fs::read_to_string(path).map_err(|e| {
-        infra_warn(
+    let text = read_to_string_capped(path).map_err(|e| match e {
+        CappedReadErr::TooLarge => infra_warn(
+            "manifest-too-large",
+            format!(
+                "flow.yaml at {} exceeds the {MAX_READ_BYTES}-byte read cap; refusing to read",
+                path.display()
+            ),
+        ),
+        CappedReadErr::Io(msg) => infra_warn(
             "manifest-unreadable",
-            format!("cannot read flow.yaml at {}: {e}", path.display()),
-        )
+            format!("cannot read flow.yaml at {}: {msg}", path.display()),
+        ),
     })?;
     serde_yaml_ng::from_str::<Manifest>(&text).map_err(|e| {
         infra_warn(
@@ -737,13 +820,20 @@ fn load_manifest(path: &Path) -> Result<Manifest, PluginGateOutput> {
     })
 }
 
-/// Load and parse state.json. Missing/malformed → infra warn (never fail).
+/// Load and parse state.json. Missing/oversize/malformed → infra warn (never fail).
 fn load_state(path: &Path) -> Result<StateJson, PluginGateOutput> {
-    let text = std::fs::read_to_string(path).map_err(|e| {
-        infra_warn(
+    let text = read_to_string_capped(path).map_err(|e| match e {
+        CappedReadErr::TooLarge => infra_warn(
+            "state-too-large",
+            format!(
+                "state.json at {} exceeds the {MAX_READ_BYTES}-byte read cap; refusing to read",
+                path.display()
+            ),
+        ),
+        CappedReadErr::Io(msg) => infra_warn(
             "state-unreadable",
-            format!("cannot read state.json at {}: {e}", path.display()),
-        )
+            format!("cannot read state.json at {}: {msg}", path.display()),
+        ),
     })?;
     serde_json::from_str::<StateJson>(&text).map_err(|e| {
         infra_warn(
@@ -778,10 +868,18 @@ fn load_receipts(
             Some(s) => s.to_string(),
             None => continue,
         };
-        let parsed = match std::fs::read_to_string(&path) {
+        let parsed = match read_to_string_capped(&path) {
             Ok(text) => serde_json::from_str::<Receipt>(&text)
                 .map_err(|e| format!("malformed receipt {}: {e}", path.display())),
-            Err(e) => Err(format!("unreadable receipt {}: {e}", path.display())),
+            // Oversize/unreadable receipts are surfaced as a parse-error warn and
+            // treated as absent (a broken receipt can't silently satisfy a step).
+            Err(CappedReadErr::TooLarge) => Err(format!(
+                "receipt {} exceeds the {MAX_READ_BYTES}-byte read cap; treated as absent",
+                path.display()
+            )),
+            Err(CappedReadErr::Io(msg)) => {
+                Err(format!("unreadable receipt {}: {msg}", path.display()))
+            }
         };
         map.insert(stem, parsed);
     }
