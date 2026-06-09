@@ -16,6 +16,11 @@ You write one `klasp.toml`. You run `klasp install`. Every AI agent on the repo 
 
 ## Why klasp
 
+klasp's wedge is **one config, many agents**. That promise is a tracked, public
+contract — the [agent surface conformance matrix](./docs/agent-surfaces.md) records,
+per agent surface, exactly what works today and what doesn't, with every `✓` linked
+to the test that proves it.
+
 ### 1. Stops the `--no-verify` escape hatch
 
 Your agent runs the test suite, sees a red, decides the failure is "unrelated to my task", and commits with `--no-verify` (or amends past the hook). The bad path lands on `main`, CI catches it a few minutes later, and you're the one cleaning up.
@@ -199,14 +204,14 @@ klasp install --agent all                  # regenerates the shim(s) with KLASP_
 | Monorepo config discovery (nearest `klasp.toml` wins) | v0.2.5 (#38) |
 | Aider as the third agent surface alongside Claude + Codex | **v0.3** (#46) — `klasp install --agent aider` |
 | Plugin protocol for third-party `klasp-plugin-*` binaries (experimental) | **v0.3** (#41, #43) — see [`docs/plugins.md`](./docs/plugins.md) |
-| [Agent surface conformance matrix](./docs/conformance-matrix.md) | **v0.3** (#46, #68) — Claude, Codex, Aider all-green; Cursor documented NO-GO |
+| [Agent surface conformance matrix](./docs/agent-surfaces.md) | **v0.3** (#46, #68) — Claude, Codex, Aider all-green; Cursor documented NO-GO |
 | Cursor surface | NO-GO for v0.3 (#44) — see [`docs/cursor-assessment.md`](./docs/cursor-assessment.md) |
 | Parallel check execution | v0.2.5+ (#34) |
 | `klasp init --adopt` (detect + mirror existing gates) | **v0.4.0** ([#97](https://github.com/klasp-dev/klasp/issues/97), [PR #101](https://github.com/klasp-dev/klasp/pull/101)) — see [docs/adopt.md](./docs/adopt.md) |
 | `klasp setup` (one-command first-run orchestrator) | **v0.4.0** ([#103](https://github.com/klasp-dev/klasp/issues/103), [PR #104](https://github.com/klasp-dev/klasp/pull/104)) — see [docs/setup.md](./docs/setup.md) |
 
 v0.3 ships the third agent surface (Aider), the plugin extensibility protocol, and a
-[public conformance matrix](./docs/conformance-matrix.md) so "klasp supports agent X"
+[public conformance matrix](./docs/agent-surfaces.md) so "klasp supports agent X"
 means the same thing for every X. v0.4.0 adds gate adoption and the one-command setup flow. See [`docs/roadmap.md`](./docs/roadmap.md) for the full milestone plan.
 
 ## Example `klasp.toml`
@@ -289,7 +294,7 @@ See [`docs/recipes.md`](./docs/recipes.md#verdict-policies) for selection guidan
 - [`docs/audits/`](./docs/audits/README.md) — per-stack audit recipes (Python, TypeScript, Rust, Go, polyglot, monorepo) with tiered configurations
 - [`docs/plugins.md`](./docs/plugins.md) — plugin authoring guide; fork `examples/klasp-plugin-pre-commit/`
 - [`docs/plugin-protocol.md`](./docs/plugin-protocol.md) — plugin wire-format specification
-- [`docs/conformance-matrix.md`](./docs/conformance-matrix.md) — per-surface support matrix (Claude, Codex, Aider all-green; Cursor NO-GO)
+- [`docs/agent-surfaces.md`](./docs/agent-surfaces.md) — per-surface conformance matrix (Claude, Codex, Aider all-green; Cursor NO-GO)
 - [`docs/roadmap.md`](./docs/roadmap.md) — milestones from v0.1 → v1.0
 - [`CHANGELOG.md`](./CHANGELOG.md) — release notes
 

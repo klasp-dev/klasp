@@ -164,7 +164,7 @@ fn install_does_not_fail_when_all_three_managers_present() {
 
 // ────────────────────────────────────────────────────────────────────
 // Warning payload sanity: each warning points at the foreign marker and
-// carries the canonical tool name (the value docs/conformance-matrix.md
+// carries the canonical tool name (the value docs/agent-surfaces.md
 // claims).
 // ────────────────────────────────────────────────────────────────────
 
@@ -192,7 +192,7 @@ fn husky_warning_points_at_marker_path() {
 
 #[test]
 fn tool_name_strings_match_codex_canonical_vocabulary() {
-    // These are the strings docs/conformance-matrix.md lists in the Claude
+    // These are the strings docs/agent-surfaces.md lists in the Claude
     // row's Conflict-handling cell; keep them load-bearing.
     assert_eq!(HookConflict::Husky.tool(), "husky");
     assert_eq!(HookConflict::Lefthook.tool(), "lefthook");

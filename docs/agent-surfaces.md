@@ -11,6 +11,14 @@ A cell is only `✓` when all three of these are true:
 
 Anything weaker is `?` — feature claimed but not load-bearing.
 
+This file is a **tracked contract**, not a marketing table. Two guards keep it honest:
+
+- Every agent surface crate (`klasp-agents-*`) must have a row here. CI runs
+  [`scripts/check-agent-surfaces.mjs`](../scripts/check-agent-surfaces.mjs) on
+  every PR and fails if a surface crate lands without a matrix row.
+- Every `✓` is backed by a committed test, linked from the proof table in the
+  [What `✓` means](#what--means) section below.
+
 See [issue #68](https://github.com/klasp-dev/klasp/issues/68) for the tracking discussion.
 
 ## v0.3.0
@@ -27,13 +35,18 @@ See [issue #68](https://github.com/klasp-dev/klasp/issues/68) for the tracking d
 ## What `✓` means
 
 A row claims `✓` only when a committed integration test in the test suite proves it.
-Tests are linked below:
+Every `✓`-bearing surface has a proof row below; each test is mapped to the columns
+it backs so a reviewer can trace any `✓` to the file that proves it:
 
-| Surface | Test file(s) |
-|---|---|
-| Claude Code | [`klasp/tests/install_claude_code.rs`](../klasp/tests/install_claude_code.rs), [`klasp/tests/gate_flow.rs`](../klasp/tests/gate_flow.rs), [`klasp-agents-claude/tests/conflict_detection.rs`](../klasp-agents-claude/tests/conflict_detection.rs) |
-| Codex CLI | [`klasp/tests/install_codex_cli.rs`](../klasp/tests/install_codex_cli.rs), [`klasp/tests/codex_captured_session.rs`](../klasp/tests/codex_captured_session.rs) |
-| Aider | [`klasp-agents-aider/tests/aider_conf_install.rs`](../klasp-agents-aider/tests/aider_conf_install.rs), [`klasp/tests/aider_captured_session.rs`](../klasp/tests/aider_captured_session.rs) |
+| Surface | Columns proven | Test file(s) |
+|---|---|---|
+| Claude Code | Install / Uninstall / Doctor | [`klasp/tests/install_claude_code.rs`](../klasp/tests/install_claude_code.rs) |
+| Claude Code | Commit gate / Push gate / Structured verdict / Captured-session | [`klasp/tests/gate_flow.rs`](../klasp/tests/gate_flow.rs) |
+| Claude Code | Conflict handling | [`klasp-agents-claude/tests/conflict_detection.rs`](../klasp-agents-claude/tests/conflict_detection.rs) |
+| Codex CLI | Install / Uninstall / Doctor / Conflict handling | [`klasp/tests/install_codex_cli.rs`](../klasp/tests/install_codex_cli.rs) |
+| Codex CLI | Commit gate / Push gate / Structured verdict / Captured-session | [`klasp/tests/codex_captured_session.rs`](../klasp/tests/codex_captured_session.rs) |
+| Aider | Install / Uninstall / Doctor | [`klasp-agents-aider/tests/aider_conf_install.rs`](../klasp-agents-aider/tests/aider_conf_install.rs) |
+| Aider | Commit gate / Structured verdict / Captured-session | [`klasp/tests/aider_captured_session.rs`](../klasp/tests/aider_captured_session.rs) |
 
 ## Plugin protocol
 

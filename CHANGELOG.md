@@ -10,6 +10,16 @@ follow the migration notes attached to each minor release.
 
 ## [Unreleased]
 
+### Changed
+
+- **Agent conformance matrix is now a tracked contract ([#68])** — moved
+  `docs/conformance-matrix.md` to `docs/agent-surfaces.md`, referenced it from the
+  README's "Why klasp" section, and mapped every `✓` to the test file that proves
+  it. Added `scripts/check-agent-surfaces.mjs` (wired into CI) which fails when an
+  agent surface crate (`klasp-agents-*`) lands without a matrix row, plus a PR
+  template checkbox reminding contributors to update the matrix. (klasp.dev mirror
+  deferred.)
+
 ## [0.5.0]
 
 Cross-surface hook-conflict detection, a receipts-gating reference plugin, and
@@ -144,7 +154,7 @@ assessment in W5/#44).
   check in `klasp.toml`, `klasp gate` dispatches correctly, pass/fail routing
   works. Validates the `klasp-plugin-pre-commit` reference plugin's `--describe`
   output reports `protocol_version = 0`.
-- **`docs/conformance-matrix.md` ([#46], [#68])** — public contract table listing
+- **`docs/agent-surfaces.md` ([#46], [#68])** — public contract table listing
   per-surface support across install / uninstall / doctor / commit-gate /
   push-gate / structured-verdict / conflict / captured-session. Claude Code,
   Codex, and Aider are all-green `✓`. Cursor documents the NO-GO verdict with a
