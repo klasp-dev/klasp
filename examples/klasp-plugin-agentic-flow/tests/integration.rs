@@ -746,6 +746,66 @@ fn gate_unknown_protocol_version_warns_not_fails() {
     );
 }
 
+/// 13a. SECURITY REGRESSION: a `base_ref` shaped like a git flag
+///      (`--output=<path>`) must NOT be smuggled into `git diff` as an option.
+///      Without the up-front leading-dash reject, git honours
+///      `--output=<path>...HEAD` and writes an attacker-chosen file. We assert
+///      the file is NOT created and the plugin still produces a graceful warn
+///      (exit 0, valid protocol JSON, never a fail).
+#[test]
+fn gate_flag_smuggling_base_ref_is_rejected() {
+    let tmp = TempDir::new().unwrap();
+    let (repo, _base) = init_git_repo(&tmp);
+    let manifest = write_manifest(repo.as_path(), full_manifest());
+    write_state(
+        &repo,
+        r#"{ "version": 1, "current_step": "quality-gates", "skipped": [] }"#,
+    );
+    let receipts_dir = repo.join(".agentic-flow").join("receipts");
+    // Receipts present + fresh-ish; irrelevant — the guard fires before audit.
+    write_push_required_fresh(&receipts_dir, "feature/thing", "origin/main", "sha256:abc");
+
+    // The file git WOULD create is `<path>...HEAD` because the plugin builds the
+    // range as `{base_ref}...HEAD`. Keep it inside the temp dir so the test is
+    // hermetic. The base_ref smuggles `--output=<sentinel>`.
+    let sentinel = tmp.path().join("pwned");
+    let should_not_exist = tmp.path().join("pwned...HEAD");
+    assert!(!should_not_exist.exists(), "precondition: sentinel absent");
+    let base_ref = format!("--output={}", sentinel.display());
+
+    let settings = settings_with_manifest(&manifest);
+    let input = gate_input(0, "push", &repo.to_string_lossy(), &base_ref, &settings);
+    let (code, stdout, stderr) = run_plugin(&["--gate"], Some(&input), None);
+
+    // The smuggled --output must NOT have created the file.
+    assert!(
+        !should_not_exist.exists(),
+        "flag-smuggling base_ref created {}; the --output flag was honoured",
+        should_not_exist.display()
+    );
+
+    // Graceful: exit 0, valid protocol JSON, verdict warn (never fail).
+    assert_eq!(code, 0, "exit 0 on rejected base_ref; stderr: {stderr}");
+    let v = parse_out(&stdout);
+    assert_eq!(
+        v["protocol_version"].as_u64(),
+        Some(0),
+        "must emit valid v0 protocol JSON; got: {v}"
+    );
+    assert_eq!(
+        v["verdict"].as_str(),
+        Some("warn"),
+        "a flag-shaped base_ref must warn (infra), never fail; got: {v}"
+    );
+    let findings = v["findings"].as_array().expect("findings array");
+    assert!(
+        findings
+            .iter()
+            .any(|f| f["rule"].as_str() == Some("klasp-plugin-agentic-flow/base-ref-rejected")),
+        "must surface the base-ref-rejected infra warn: {findings:?}"
+    );
+}
+
 /// 13. repo_root pointed at a non-git dir → git diff fails → warn + exit 0.
 #[test]
 fn gate_git_diff_unavailable_returns_warn() {
