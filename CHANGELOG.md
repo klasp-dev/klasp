@@ -10,6 +10,11 @@ follow the migration notes attached to each minor release.
 
 ## [Unreleased]
 
+## [0.5.0]
+
+Cross-surface hook-conflict detection, a receipts-gating reference plugin, and
+a zero-setup `klasp demo`.
+
 ### Added
 
 - **`klasp demo` subcommand + replay harness ([#69])** — `klasp demo` runs a
@@ -30,6 +35,12 @@ follow the migration notes attached to each minor release.
   new reference plugin that reads `.agentic-flow/` step receipts and blocks a
   commit/push when required flow steps are missing or stale, exercising the v0
   subprocess plugin protocol end-to-end.
+- **`klasp-core` public `text` and `fs` modules ([#125], [#126])** — the
+  managed-block hook writer (`klasp_core::text`) and filesystem helpers
+  (`klasp_core::fs`), previously duplicated inside the bundled surfaces, are now
+  part of klasp-core's published API so out-of-tree surfaces and plugins can
+  reuse the same hook read/render/install/uninstall primitives instead of
+  reimplementing them.
 
 ### Fixed
 
@@ -338,7 +349,8 @@ The MVP. Claude Code only. Shell-command checks. One-command install. See
 
 See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan.
 
-[Unreleased]: https://github.com/klasp-dev/klasp/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/klasp-dev/klasp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/klasp-dev/klasp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/klasp-dev/klasp/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/klasp-dev/klasp/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/klasp-dev/klasp/compare/v0.2.5...v0.3.0
@@ -374,5 +386,7 @@ See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan.
 [#103]: https://github.com/klasp-dev/klasp/issues/103
 [#104]: https://github.com/klasp-dev/klasp/pull/104
 [#110]: https://github.com/klasp-dev/klasp/pull/110
+[#125]: https://github.com/klasp-dev/klasp/pull/125
+[#126]: https://github.com/klasp-dev/klasp/pull/126
 [#129]: https://github.com/klasp-dev/klasp/pull/129
 [#131]: https://github.com/klasp-dev/klasp/pull/131
