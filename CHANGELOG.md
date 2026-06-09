@@ -21,6 +21,15 @@ follow the migration notes attached to each minor release.
   `klasp doctor`. Surfaces now own their install-side warning logic and the
   per-surface doctor check, eliminating the last ad-hoc string matching in the
   doctor command path.
+- **Hook-manager conflict detection for Claude Code ([#92], [#131])** —
+  `ClaudeCodeSurface` now fingerprints husky, lefthook, and pre-commit-framework
+  hooks and emits a skip-with-notice warning instead of overwriting them,
+  bringing the Claude surface to parity with the Codex surface's existing
+  conflict handling.
+- **`klasp-plugin-agentic-flow` receipts-completeness gate ([#98], [#129])** —
+  new reference plugin that reads `.agentic-flow/` step receipts and blocks a
+  commit/push when required flow steps are missing or stale, exercising the v0
+  subprocess plugin protocol end-to-end.
 
 ### Fixed
 
@@ -30,6 +39,11 @@ follow the migration notes attached to each minor release.
   Now only the managed block region is compared; trailing content is ignored.
   Setup subcommand output polished: redundant status lines collapsed, install
   confirmation message is consistent across surfaces.
+- **PEP 440 normalisation in the release version bumper ([#16], [#26])** —
+  `scripts/bump-source-versions.mjs` now whitelists the supported tag forms
+  (`X.Y.Z`, `-rc.N`, `-alpha.N`, `-beta.N`) and exits with a clear error on
+  unsupported forms (`-pre.N`, `-dev.N`, `+sha.abc`) instead of silently
+  emitting a malformed PyPI version string.
 
 ## [0.4.0]
 
@@ -332,6 +346,8 @@ See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan.
 [0.2.3]: https://github.com/klasp-dev/klasp/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/klasp-dev/klasp/compare/v0.1.0...v0.2.2
 [0.1.0]: https://github.com/klasp-dev/klasp/releases/tag/v0.1.0
+[#16]: https://github.com/klasp-dev/klasp/issues/16
+[#26]: https://github.com/klasp-dev/klasp/pull/26
 [#34]: https://github.com/klasp-dev/klasp/pull/34
 [#35]: https://github.com/klasp-dev/klasp/pull/35
 [#36]: https://github.com/klasp-dev/klasp/pull/36
@@ -350,9 +366,13 @@ See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan.
 [#72]: https://github.com/klasp-dev/klasp/pull/72
 [#73]: https://github.com/klasp-dev/klasp/pull/73
 [#91]: https://github.com/klasp-dev/klasp/issues/91
+[#92]: https://github.com/klasp-dev/klasp/issues/92
 [#97]: https://github.com/klasp-dev/klasp/issues/97
+[#98]: https://github.com/klasp-dev/klasp/issues/98
 [#100]: https://github.com/klasp-dev/klasp/pull/100
 [#101]: https://github.com/klasp-dev/klasp/pull/101
 [#103]: https://github.com/klasp-dev/klasp/issues/103
 [#104]: https://github.com/klasp-dev/klasp/pull/104
 [#110]: https://github.com/klasp-dev/klasp/pull/110
+[#129]: https://github.com/klasp-dev/klasp/pull/129
+[#131]: https://github.com/klasp-dev/klasp/pull/131
