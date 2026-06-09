@@ -44,3 +44,12 @@ ruvector.db-wal
 # docs/agentic-flow-receipts.md.
 .agentic-flow/receipts/
 .agentic-flow/state.json
+
+# Secrets (defense-in-depth; none currently tracked)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
