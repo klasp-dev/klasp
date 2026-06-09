@@ -40,12 +40,15 @@ it backs so a reviewer can trace any `✓` to the file that proves it:
 
 | Surface | Columns proven | Test file(s) |
 |---|---|---|
-| Claude Code | Install / Uninstall / Doctor | [`klasp/tests/install_claude_code.rs`](../klasp/tests/install_claude_code.rs) |
+| Claude Code | Install / Uninstall | [`klasp/tests/install_claude_code.rs`](../klasp/tests/install_claude_code.rs) |
+| Claude Code | Doctor | [`klasp/tests/doctor.rs`](../klasp/tests/doctor.rs) |
 | Claude Code | Commit gate / Push gate / Structured verdict / Captured-session | [`klasp/tests/gate_flow.rs`](../klasp/tests/gate_flow.rs) |
 | Claude Code | Conflict handling | [`klasp-agents-claude/tests/conflict_detection.rs`](../klasp-agents-claude/tests/conflict_detection.rs) |
-| Codex CLI | Install / Uninstall / Doctor / Conflict handling | [`klasp/tests/install_codex_cli.rs`](../klasp/tests/install_codex_cli.rs) |
+| Codex CLI | Install / Uninstall / Conflict handling | [`klasp/tests/install_codex_cli.rs`](../klasp/tests/install_codex_cli.rs) |
+| Codex CLI | Doctor | [`klasp/tests/doctor.rs`](../klasp/tests/doctor.rs) |
 | Codex CLI | Commit gate / Push gate / Structured verdict / Captured-session | [`klasp/tests/codex_captured_session.rs`](../klasp/tests/codex_captured_session.rs) |
-| Aider | Install / Uninstall / Doctor | [`klasp-agents-aider/tests/aider_conf_install.rs`](../klasp-agents-aider/tests/aider_conf_install.rs) |
+| Aider | Install / Uninstall | [`klasp-agents-aider/tests/aider_conf_install.rs`](../klasp-agents-aider/tests/aider_conf_install.rs) |
+| Aider | Doctor | [`klasp/tests/aider_captured_session.rs`](../klasp/tests/aider_captured_session.rs) |
 | Aider | Commit gate / Structured verdict / Captured-session | [`klasp/tests/aider_captured_session.rs`](../klasp/tests/aider_captured_session.rs) |
 
 ## Plugin protocol
