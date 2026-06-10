@@ -127,6 +127,24 @@ jobs:
             exit 1
           fi
 
+  msrv:
+    name: MSRV (1.85)
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: "1.85"
+
+      # Build the shipped lib + bins on the declared MSRV. Deliberately not
+      # --all-targets: MSRV is what consumers compile, not the dev-deps that
+      # tests/benches pull in. Guards Cargo.toml `rust-version = "1.85"`.
+      - name: cargo check on MSRV
+        run: cargo check --workspace
+
   cross-platform-build:
     name: build / ${{ matrix.target.os }}
     needs: changes
@@ -240,6 +258,7 @@ jobs:
     needs:
       - changes
       - check
+      - msrv
       - cross-platform-build
       - npm-validate
       - pypi-validate
@@ -253,6 +272,7 @@ jobs:
           declare -A results=(
             [changes]="${{ needs.changes.result }}"
             [check]="${{ needs.check.result }}"
+            [msrv]="${{ needs.msrv.result }}"
             [cross-platform-build]="${{ needs.cross-platform-build.result }}"
             [npm-validate]="${{ needs.npm-validate.result }}"
             [pypi-validate]="${{ needs.pypi-validate.result }}"
