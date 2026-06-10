@@ -319,9 +319,10 @@ fn pytest_unsupported_version_surfaces_warn_alongside_fail() {
 }
 
 #[test]
-fn pytest_collection_error_exit_5_blocks_with_descriptive_detail() {
-    // pytest exit 5 = "no tests collected" — should map to a Fail with
-    // the documented exit-code semantic ("no tests").
+fn pytest_collection_error_exit_5_passes_through() {
+    // pytest exit 5 = "no tests collected" — a benign no-op in a diff-scoped
+    // gate (e.g. a commit that staged no Python in a polyglot repo). The gate
+    // must NOT block: exit 0. Regression guard for B1 (was a Fail/exit-2).
     let project = TempDir::new().expect("tempdir");
     let scratch = TempDir::new().expect("scratch");
     let bin_dir = install_fake_pytest(&scratch, FIXTURE_8X_VERSION);
@@ -329,7 +330,7 @@ fn pytest_collection_error_exit_5_blocks_with_descriptive_detail() {
 
     write_klasp_toml(project.path(), PYTEST_KLASP_TOML);
 
-    let (code, stderr) = spawn_gate(
+    let (code, _stderr) = spawn_gate(
         FIXTURE_GIT_COMMIT,
         project.path(),
         &bin_dir,
@@ -338,10 +339,10 @@ fn pytest_collection_error_exit_5_blocks_with_descriptive_detail() {
             ("FAKE_PYTEST_EXIT", "5"),
         ],
     );
-    assert_eq!(code, Some(2));
-    assert!(
-        stderr.contains("no tests"),
-        "expected 'no tests' detail for exit 5, got: {stderr}",
+    assert_eq!(
+        code,
+        Some(0),
+        "exit 5 (no tests collected) must pass through, not block",
     );
 }
 
