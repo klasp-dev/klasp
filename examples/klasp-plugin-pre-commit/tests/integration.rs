@@ -317,20 +317,23 @@ fn gate_input_with_unknown_protocol_version_warns() {
 /// authors are most likely to copy incorrectly.
 #[test]
 fn gate_with_malformed_input_returns_warn_and_exits_zero() {
-    let (code, stdout, stderr) =
-        run_plugin(&["--gate"], Some("{not valid json"), None);
+    let (code, stdout, stderr) = run_plugin(&["--gate"], Some("{not valid json"), None);
     assert_eq!(
         code, 0,
         "plugin must exit 0 on malformed stdin; stderr: {stderr}"
     );
 
-    let v: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("plugin must emit valid JSON even on bad input: {e}\nstdout={stdout}"));
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!("plugin must emit valid JSON even on bad input: {e}\nstdout={stdout}")
+    });
     assert_eq!(v["verdict"].as_str(), Some("warn"));
     let findings = v["findings"].as_array().expect("findings is array");
     assert!(
         findings.iter().any(|f| {
-            f["rule"].as_str().unwrap_or("").contains("input-parse-error")
+            f["rule"]
+                .as_str()
+                .unwrap_or("")
+                .contains("input-parse-error")
         }),
         "must have an input-parse-error finding; findings: {findings:?}"
     );
@@ -345,7 +348,8 @@ fn gate_with_empty_input_returns_warn_and_exits_zero() {
         "plugin must exit 0 on empty stdin; stderr: {stderr}"
     );
 
-    let v: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("plugin must emit valid JSON on empty input: {e}\nstdout={stdout}"));
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!("plugin must emit valid JSON on empty input: {e}\nstdout={stdout}")
+    });
     assert_eq!(v["verdict"].as_str(), Some("warn"));
 }

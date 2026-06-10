@@ -382,7 +382,14 @@ fn gate_missing_required_receipt_returns_fail_with_resume() {
     write_receipt(
         &receipts_dir,
         "08-review-handoff",
-        &fresh_completed_receipt("08-review-handoff", "auto", "feature/thing", &base, &hash, false),
+        &fresh_completed_receipt(
+            "08-review-handoff",
+            "auto",
+            "feature/thing",
+            &base,
+            &hash,
+            false,
+        ),
     );
     write_receipt(
         &receipts_dir,
@@ -416,10 +423,16 @@ fn gate_missing_required_receipt_returns_fail_with_resume() {
         "missing finding file must reference 07-code-review; got: {missing}"
     );
     // The resume hint leads the earliest error message.
-    let any_resume = findings
-        .iter()
-        .any(|f| f["message"].as_str().unwrap_or("").contains("resume --from"));
-    assert!(any_resume, "a finding must carry the resume hint: {findings:?}");
+    let any_resume = findings.iter().any(|f| {
+        f["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("resume --from")
+    });
+    assert!(
+        any_resume,
+        "a finding must carry the resume hint: {findings:?}"
+    );
 }
 
 /// 4. Stale receipt (wrong diff_hash) → fail + stale-step, resume target = 06.
@@ -451,12 +464,26 @@ fn gate_stale_receipt_returns_fail() {
     write_receipt(
         &receipts_dir,
         "07-code-review",
-        &fresh_completed_receipt("07-code-review", "auto", "feature/thing", &base, &hash, false),
+        &fresh_completed_receipt(
+            "07-code-review",
+            "auto",
+            "feature/thing",
+            &base,
+            &hash,
+            false,
+        ),
     );
     write_receipt(
         &receipts_dir,
         "08-review-handoff",
-        &fresh_completed_receipt("08-review-handoff", "auto", "feature/thing", &base, &hash, false),
+        &fresh_completed_receipt(
+            "08-review-handoff",
+            "auto",
+            "feature/thing",
+            &base,
+            &hash,
+            false,
+        ),
     );
     write_receipt(
         &receipts_dir,
@@ -486,7 +513,12 @@ fn gate_stale_receipt_returns_fail() {
     // Resume target is the earliest failing step = 06.
     let resume = findings
         .iter()
-        .find(|f| f["message"].as_str().unwrap_or("").contains("resume --from"))
+        .find(|f| {
+            f["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("resume --from")
+        })
         .expect("must carry resume hint");
     assert!(
         resume["message"]
@@ -528,7 +560,14 @@ fn gate_unconfirmed_user_confirm_step_fails() {
     write_receipt(
         &receipts_dir,
         "04-log-issue",
-        &fresh_completed_receipt("04-log-issue", "user-confirm", "feature/thing", &base, &hash, false),
+        &fresh_completed_receipt(
+            "04-log-issue",
+            "user-confirm",
+            "feature/thing",
+            &base,
+            &hash,
+            false,
+        ),
     );
 
     let settings = settings_with_manifest(&manifest);
@@ -539,10 +578,10 @@ fn gate_unconfirmed_user_confirm_step_fails() {
     assert_eq!(v["verdict"].as_str(), Some("fail"), "got: {v}");
     let findings = v["findings"].as_array().expect("findings array");
     assert!(
-        findings
-            .iter()
-            .any(|f| f["rule"].as_str() == Some("agentic-flow/unconfirmed-step")
-                && f["file"].as_str().unwrap_or("").contains("04-log-issue")),
+        findings.iter().any(
+            |f| f["rule"].as_str() == Some("agentic-flow/unconfirmed-step")
+                && f["file"].as_str().unwrap_or("").contains("04-log-issue")
+        ),
         "must have unconfirmed-step for 04-log-issue: {findings:?}"
     );
 }
@@ -569,12 +608,26 @@ fn gate_legit_skipped_step_passes() {
     write_receipt(
         &receipts_dir,
         "07-code-review",
-        &fresh_completed_receipt("07-code-review", "auto", "feature/thing", &base, &hash, false),
+        &fresh_completed_receipt(
+            "07-code-review",
+            "auto",
+            "feature/thing",
+            &base,
+            &hash,
+            false,
+        ),
     );
     write_receipt(
         &receipts_dir,
         "08-review-handoff",
-        &fresh_completed_receipt("08-review-handoff", "auto", "feature/thing", &base, &hash, false),
+        &fresh_completed_receipt(
+            "08-review-handoff",
+            "auto",
+            "feature/thing",
+            &base,
+            &hash,
+            false,
+        ),
     );
     write_receipt(
         &receipts_dir,
@@ -642,7 +695,10 @@ fn gate_missing_receipts_dir_returns_warn() {
     let tmp = TempDir::new().unwrap();
     let (repo, base) = init_git_repo(&tmp);
     let manifest = write_manifest(repo.as_path(), full_manifest());
-    write_state(&repo, r#"{ "version": 1, "current_step": "quality-gates", "skipped": [] }"#);
+    write_state(
+        &repo,
+        r#"{ "version": 1, "current_step": "quality-gates", "skipped": [] }"#,
+    );
     // No receipts dir created.
 
     let settings = settings_with_manifest(&manifest);
@@ -653,9 +709,10 @@ fn gate_missing_receipts_dir_returns_warn() {
     assert_eq!(v["verdict"].as_str(), Some("warn"), "got: {v}");
     let findings = v["findings"].as_array().expect("findings array");
     assert!(
-        findings
-            .iter()
-            .any(|f| f["rule"].as_str().unwrap_or("").starts_with("klasp-plugin-agentic-flow/")),
+        findings.iter().any(|f| f["rule"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("klasp-plugin-agentic-flow/")),
         "infra warn rule prefix expected: {findings:?}"
     );
 }
@@ -704,7 +761,10 @@ fn gate_malformed_stdin_returns_warn_and_exits_zero() {
         .as_array()
         .expect("findings array")
         .iter()
-        .any(|f| f["rule"].as_str().unwrap_or("").contains("input-parse-error")));
+        .any(|f| f["rule"]
+            .as_str()
+            .unwrap_or("")
+            .contains("input-parse-error")));
 }
 
 /// 11. empty stdin → warn + exit 0.
