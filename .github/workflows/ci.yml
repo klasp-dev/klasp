@@ -54,11 +54,16 @@ jobs:
               - '.github/workflows/**'
               - 'greptile.json'
             surfaces:
-              # Inputs to the agent-surfaces guard: surface crates (a new one
-              # must add a matrix row), the matrix itself, and the guard script.
+              # Inputs to the agent-surfaces guards: surface crates (a new one
+              # must add a row), the matrix source of truth + rendered file, the
+              # proof test files, and the guard/generator scripts.
               - 'klasp-agents-*/**'
+              - 'klasp/tests/**'
               - 'docs/agent-surfaces.md'
+              - 'docs/surfaces.json'
               - 'scripts/check-agent-surfaces.mjs'
+              - 'scripts/gen-agent-surfaces.mjs'
+              - 'scripts/verify-surface-proofs.mjs'
 
   check:
     name: cargo check + fmt + clippy + test
@@ -205,6 +210,17 @@ jobs:
       # fails here (issue #68 — the conformance matrix is a tracked contract).
       - name: check agent surfaces
         run: node scripts/check-agent-surfaces.mjs
+
+      # The matrix tables are generated from docs/surfaces.json; fail if the
+      # committed markdown has drifted from the source of truth.
+      - name: matrix matches surfaces.json (no drift)
+        run: node scripts/gen-agent-surfaces.mjs --check
+
+      # Every ✓ cell must be backed by a proof test file that exists and holds
+      # a runnable (non-#[ignore]) test. Combined with the cargo-test job, a ✓
+      # cannot be committed without a real, runnable, passing test.
+      - name: every check-mark is backed by a runnable test
+        run: node scripts/verify-surface-proofs.mjs
 
   # ------------------------------------------------------------------
   # Aggregate required-check.
