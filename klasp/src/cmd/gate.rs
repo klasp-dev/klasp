@@ -31,7 +31,7 @@ use std::process::ExitCode;
 use rayon::prelude::*;
 
 use klasp_core::{
-    discover_config_for_path, CheckConfig, CheckResult, ConfigV1, GateProtocol, GitEvent,
+    discover_config_for_path, CheckConfig, CheckResult, ConfigV1, Finding, GateProtocol, GitEvent,
     RepoState, Trigger, UserTrigger, Verdict, VerdictPolicy,
 };
 
@@ -85,6 +85,56 @@ fn fail_open<W: Write>(stderr: &mut W, enforce: bool, reason: &str) -> Outcome {
         let _ = writeln!(stderr, "{NOTICE_PREFIX} {reason}, skipping.");
         Outcome::Pass
     }
+}
+
+/// The invoking user's home directory, when it's a plausible absolute path.
+/// Used to collapse `/Users/<name>/…` / `/home/<name>/…` to `~` in
+/// agent-facing output so the gate doesn't leak the developer's username and
+/// home path into the agent's context window. A privacy/readability pass only —
+/// it never hides a finding (the deferred follow-up from the 53231c4 git-arg
+/// hardening). Secret-pattern redaction is intentionally out of scope:
+/// guessing at secrets risks hiding real findings, the opposite of the gate's job.
+fn home_prefix() -> Option<String> {
+    std::env::var("HOME")
+        .ok()
+        .filter(|h| h.len() > 1 && h.starts_with('/'))
+}
+
+fn redact(s: &str, home: &str) -> String {
+    s.replace(home, "~")
+}
+
+fn redact_finding(mut f: Finding, home: &str) -> Finding {
+    f.message = redact(&f.message, home);
+    f.file = f.file.map(|p| redact(&p, home));
+    f
+}
+
+fn redact_verdict(v: Verdict, home: &str) -> Verdict {
+    match v {
+        Verdict::Pass => Verdict::Pass,
+        Verdict::Warn { findings, message } => Verdict::Warn {
+            findings: findings
+                .into_iter()
+                .map(|f| redact_finding(f, home))
+                .collect(),
+            message: message.map(|m| redact(&m, home)),
+        },
+        Verdict::Fail { findings, message } => Verdict::Fail {
+            findings: findings
+                .into_iter()
+                .map(|f| redact_finding(f, home))
+                .collect(),
+            message: redact(&message, home),
+        },
+    }
+}
+
+fn redact_check_result(mut c: CheckResult, home: &str) -> CheckResult {
+    c.verdict = redact_verdict(c.verdict, home);
+    c.raw_stdout = c.raw_stdout.map(|s| redact(&s, home));
+    c.raw_stderr = c.raw_stderr.map(|s| redact(&s, home));
+    c
 }
 
 fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
@@ -260,6 +310,21 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
     // regardless of the individual group policies already applied above.
     let cross_group_policy = VerdictPolicy::AnyFail;
     let final_verdict = Verdict::merge(group_verdicts, cross_group_policy);
+
+    // Collapse the user's home path to `~` in everything the agent sees, so a
+    // failing check can't leak `/Users/<name>/…` into the agent's context.
+    // Verdict blocking-ness is unaffected (a Fail stays a Fail).
+    let (final_verdict, all_check_results) = match home_prefix() {
+        Some(home) => (
+            redact_verdict(final_verdict, &home),
+            all_check_results
+                .into_iter()
+                .map(|c| redact_check_result(c, &home))
+                .collect(),
+        ),
+        None => (final_verdict, all_check_results),
+    };
+
     dispatch_output(
         stderr,
         args,
@@ -529,6 +594,30 @@ mod tests {
     use klasp_core::{CheckConfig, CheckSourceConfig, TriggerConfig};
 
     use super::*;
+
+    #[test]
+    fn redact_collapses_home_path_in_findings() {
+        use klasp_core::Severity;
+        let home = "/Users/alice";
+        let v = Verdict::Fail {
+            findings: vec![Finding {
+                rule: "shell:lint".into(),
+                message: "/Users/alice/proj/x.rs:1 error".into(),
+                file: Some("/Users/alice/proj/x.rs".into()),
+                line: Some(1),
+                severity: Severity::Error,
+            }],
+            message: "/Users/alice/proj failed".into(),
+        };
+        match redact_verdict(v, home) {
+            Verdict::Fail { findings, message } => {
+                assert_eq!(message, "~/proj failed");
+                assert_eq!(findings[0].message, "~/proj/x.rs:1 error");
+                assert_eq!(findings[0].file.as_deref(), Some("~/proj/x.rs"));
+            }
+            other => panic!("expected Fail, got {other:?}"),
+        }
+    }
 
     fn check_with_triggers(on: Vec<&str>) -> CheckConfig {
         CheckConfig {

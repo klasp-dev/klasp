@@ -26,6 +26,11 @@ follow the migration notes attached to each minor release.
 - **Atomic version bump + a CI version-sync invariant** — `scripts/bump-versions.mjs`
   bumps Cargo/npm/pypi together and `scripts/check-version-sync.mjs` (in CI)
   asserts they agree.
+- **Home-path redaction in findings** — agent-facing finding text (and the
+  per-check raw output in `--format json`) now collapses the developer's home
+  directory to `~`, so a failing check can't leak `/Users/<name>/…` into the
+  agent's context window. Secret-pattern redaction is intentionally not done
+  (it would risk hiding real findings).
 
 ### Changed
 
