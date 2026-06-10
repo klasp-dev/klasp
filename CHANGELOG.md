@@ -19,6 +19,19 @@ follow the migration notes attached to each minor release.
   agent surface crate (`klasp-agents-*`) lands without a matrix row, plus a PR
   template checkbox reminding contributors to update the matrix. (klasp.dev mirror
   deferred.)
+- **Example reference plugins now run in CI** — `examples/` crates live outside
+  the Cargo workspace, so `cargo test --workspace` never exercised their suites,
+  including the git-arg flag-smuggling security regression test in
+  `klasp-plugin-agentic-flow`. CI now runs `cargo clippy -D warnings` + `cargo
+  test` over every `examples/*/Cargo.toml`, so that test gates every PR.
+
+### Fixed
+
+- **`pytest` recipe: exit 5 (no tests collected) is now a no-op pass, not a
+  block** — a diff-scoped commit that staged no Python (e.g. a Rust-only change
+  in a polyglot repo) made pytest collect nothing and exit 5, which the recipe
+  mapped to `Fail`, blocking the commit. It now passes through, resolving the
+  behaviour the `klasp.toml` dogfood note had deferred.
 
 ## [0.5.0]
 
