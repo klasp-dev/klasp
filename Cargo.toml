@@ -15,7 +15,10 @@ exclude = ["examples/*"]
 [workspace.package]
 version = "0.5.0"
 edition = "2021"
-rust-version = "1.75"
+# Real MSRV floor: `toml`/`serde_spanned` pull in `edition2024`, which needs
+# Cargo >= 1.85. A CI leg (`msrv` job in .github/workflows/ci.yml) builds the
+# workspace on this exact toolchain so the declared value can never drift again.
+rust-version = "1.85"
 license = "Apache-2.0"
 repository = "https://github.com/klasp-dev/klasp"
 homepage = "https://klasp.dev"

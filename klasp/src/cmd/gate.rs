@@ -4,9 +4,12 @@
 //! Implements the seven-step flow from [docs/design.md §6]. The flow is
 //! deliberately linear — no async runtime, no concurrent checks; v0.2 will
 //! add `rayon`-based parallelism when the test surface is broad enough to
-//! catch race regressions. **Every tooling failure fails open** with a
-//! single stderr notice and exit 0; only a `Verdict::Fail` aggregated from
-//! actual check results returns exit 2 to deny the tool call.
+//! catch race regressions. **Every tooling failure fails open** (advisory
+//! mode, the default) with a single stderr notice and exit 0; only a
+//! `Verdict::Fail` aggregated from actual check results returns exit 2 to deny
+//! the tool call. Setting `KLASP_MODE=enforce` flips the *error* exit points
+//! (1, 2, 3, 5, and a group's config error in 6) to fail CLOSED — exit 2 —
+//! while the legitimate pass-throughs in point 4 still exit 0 in both modes.
 //!
 //! The seven fail-open exit points:
 //!
@@ -28,7 +31,7 @@ use std::process::ExitCode;
 use rayon::prelude::*;
 
 use klasp_core::{
-    discover_config_for_path, CheckConfig, CheckResult, ConfigV1, GateProtocol, GitEvent,
+    discover_config_for_path, CheckConfig, CheckResult, ConfigV1, Finding, GateProtocol, GitEvent,
     RepoState, Trigger, UserTrigger, Verdict, VerdictPolicy,
 };
 
@@ -56,6 +59,84 @@ enum Outcome {
     Block,
 }
 
+/// True when the caller opted into fail-closed enforcement via
+/// `KLASP_MODE=enforce` (case-insensitive). Default (unset / any other value)
+/// is advisory — the gate fails open. Read from the environment, not
+/// `klasp.toml`, because the highest-value enforcement cases are exactly the
+/// ones where the config is missing or unparseable, so the signal must survive
+/// a config that won't load. `klasp install` baking this into the generated
+/// hook from a `[gate].mode` field is the natural follow-up.
+fn enforce_mode() -> bool {
+    std::env::var("KLASP_MODE")
+        .map(|m| m.eq_ignore_ascii_case("enforce"))
+        .unwrap_or(false)
+}
+
+/// Resolve an internal "can't determine a verdict" condition. Advisory →
+/// `Pass` (fail open) with a "skipping" notice; enforce → `Block` (fail closed)
+/// with a "blocking" notice. Every error exit point routes through here;
+/// legitimate pass-throughs (non-git command, no matching trigger) do NOT —
+/// they pass in both modes.
+fn fail_open<W: Write>(stderr: &mut W, enforce: bool, reason: &str) -> Outcome {
+    if enforce {
+        let _ = writeln!(stderr, "{NOTICE_PREFIX} enforce mode: blocking — {reason}.");
+        Outcome::Block
+    } else {
+        let _ = writeln!(stderr, "{NOTICE_PREFIX} {reason}, skipping.");
+        Outcome::Pass
+    }
+}
+
+/// The invoking user's home directory, when it's a plausible absolute path.
+/// Used to collapse `/Users/<name>/…` / `/home/<name>/…` to `~` in
+/// agent-facing output so the gate doesn't leak the developer's username and
+/// home path into the agent's context window. A privacy/readability pass only —
+/// it never hides a finding (the deferred follow-up from the 53231c4 git-arg
+/// hardening). Secret-pattern redaction is intentionally out of scope:
+/// guessing at secrets risks hiding real findings, the opposite of the gate's job.
+fn home_prefix() -> Option<String> {
+    std::env::var("HOME")
+        .ok()
+        .filter(|h| h.len() > 1 && h.starts_with('/'))
+}
+
+fn redact(s: &str, home: &str) -> String {
+    s.replace(home, "~")
+}
+
+fn redact_finding(mut f: Finding, home: &str) -> Finding {
+    f.message = redact(&f.message, home);
+    f.file = f.file.map(|p| redact(&p, home));
+    f
+}
+
+fn redact_verdict(v: Verdict, home: &str) -> Verdict {
+    match v {
+        Verdict::Pass => Verdict::Pass,
+        Verdict::Warn { findings, message } => Verdict::Warn {
+            findings: findings
+                .into_iter()
+                .map(|f| redact_finding(f, home))
+                .collect(),
+            message: message.map(|m| redact(&m, home)),
+        },
+        Verdict::Fail { findings, message } => Verdict::Fail {
+            findings: findings
+                .into_iter()
+                .map(|f| redact_finding(f, home))
+                .collect(),
+            message: redact(&message, home),
+        },
+    }
+}
+
+fn redact_check_result(mut c: CheckResult, home: &str) -> CheckResult {
+    c.verdict = redact_verdict(c.verdict, home);
+    c.raw_stdout = c.raw_stdout.map(|s| redact(&s, home));
+    c.raw_stderr = c.raw_stderr.map(|s| redact(&s, home));
+    c
+}
+
 fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
     // `--agent` and `--trigger` are accepted-and-ignored informational hints.
     // Installed hooks (Codex git-hooks, Aider commit-cmd-pre) pass these flags
@@ -65,46 +146,43 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
     // and intentionally not wired into dispatch. See issue #91 and docs/design.md §6.
     let _ = (args.agent.as_deref(), args.trigger.as_deref());
 
+    // Fail-closed enforcement (opt-in). Resolved before the schema check so it
+    // covers every error exit point below, including the ones that occur before
+    // any klasp.toml is loaded.
+    let enforce = enforce_mode();
+
     // 1. Schema handshake — env var, not stdin (see design §3.3).
     match GateProtocol::read_schema_from_env() {
         Ok(env_value) => {
             if let Err(e) = GateProtocol::check_schema_env(env_value) {
-                let _ = writeln!(
+                return fail_open(
                     stderr,
-                    "{NOTICE_PREFIX} schema mismatch ({e}), skipping. \
-                     Re-run `klasp install` to update the hook."
+                    enforce,
+                    &format!("schema mismatch ({e}); re-run `klasp install` to update the hook"),
                 );
-                return Outcome::Pass;
             }
         }
         Err(e) => {
-            let _ = writeln!(
+            return fail_open(
                 stderr,
-                "{NOTICE_PREFIX} could not read KLASP_GATE_SCHEMA ({e}), \
-                 skipping. Re-run `klasp install` to regenerate the hook."
+                enforce,
+                &format!(
+                    "could not read KLASP_GATE_SCHEMA ({e}); re-run `klasp install` to regenerate the hook"
+                ),
             );
-            return Outcome::Pass;
         }
     }
 
     // 2. Parse stdin (fail-open on read or parse error).
     let mut buf = String::new();
     if let Err(e) = io::stdin().read_to_string(&mut buf) {
-        let _ = writeln!(
-            stderr,
-            "{NOTICE_PREFIX} could not read stdin ({e}), skipping."
-        );
-        return Outcome::Pass;
+        return fail_open(stderr, enforce, &format!("could not read stdin ({e})"));
     }
 
     let input = match GateProtocol::parse(&buf) {
         Ok(i) => i,
         Err(e) => {
-            let _ = writeln!(
-                stderr,
-                "{NOTICE_PREFIX} could not parse input ({e}), skipping."
-            );
-            return Outcome::Pass;
+            return fail_open(stderr, enforce, &format!("could not parse input ({e})"));
         }
     };
 
@@ -127,11 +205,7 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
     let repo_root = match git::find_repo_root_from_cwd() {
         Some(r) => r,
         None => {
-            let _ = writeln!(
-                stderr,
-                "{NOTICE_PREFIX} could not resolve repo root, skipping."
-            );
-            return Outcome::Pass;
+            return fail_open(stderr, enforce, "could not resolve repo root");
         }
     };
 
@@ -153,8 +227,7 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
         let config = match ConfigV1::load(&repo_root) {
             Ok(c) => c,
             Err(e) => {
-                let _ = writeln!(stderr, "{NOTICE_PREFIX} config error ({e}), skipping.");
-                return Outcome::Pass;
+                return fail_open(stderr, enforce, &format!("config error ({e})"));
             }
         };
         // Resolve effective git event: built-in OR user trigger.
@@ -188,6 +261,22 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
                 let config = match ConfigV1::from_file(&config_path) {
                     Ok(c) => c,
                     Err(e) => {
+                        if enforce {
+                            let _ = writeln!(
+                                stderr,
+                                "{NOTICE_PREFIX} enforce mode: blocking — config error for {path} ({e}).",
+                                path = config_path.display(),
+                            );
+                            // A failing group makes the cross-group AnyFail
+                            // aggregate block (exit 2).
+                            return Some(Verdict::Fail {
+                                findings: vec![],
+                                message: format!(
+                                    "klasp enforce mode: could not load config {}",
+                                    config_path.display()
+                                ),
+                            });
+                        }
                         let _ = writeln!(
                             stderr,
                             "{NOTICE_PREFIX} config error for {path} ({e}), skipping group.",
@@ -221,6 +310,21 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
     // regardless of the individual group policies already applied above.
     let cross_group_policy = VerdictPolicy::AnyFail;
     let final_verdict = Verdict::merge(group_verdicts, cross_group_policy);
+
+    // Collapse the user's home path to `~` in everything the agent sees, so a
+    // failing check can't leak `/Users/<name>/…` into the agent's context.
+    // Verdict blocking-ness is unaffected (a Fail stays a Fail).
+    let (final_verdict, all_check_results) = match home_prefix() {
+        Some(home) => (
+            redact_verdict(final_verdict, &home),
+            all_check_results
+                .into_iter()
+                .map(|c| redact_check_result(c, &home))
+                .collect(),
+        ),
+        None => (final_verdict, all_check_results),
+    };
+
     dispatch_output(
         stderr,
         args,
@@ -490,6 +594,30 @@ mod tests {
     use klasp_core::{CheckConfig, CheckSourceConfig, TriggerConfig};
 
     use super::*;
+
+    #[test]
+    fn redact_collapses_home_path_in_findings() {
+        use klasp_core::Severity;
+        let home = "/Users/alice";
+        let v = Verdict::Fail {
+            findings: vec![Finding {
+                rule: "shell:lint".into(),
+                message: "/Users/alice/proj/x.rs:1 error".into(),
+                file: Some("/Users/alice/proj/x.rs".into()),
+                line: Some(1),
+                severity: Severity::Error,
+            }],
+            message: "/Users/alice/proj failed".into(),
+        };
+        match redact_verdict(v, home) {
+            Verdict::Fail { findings, message } => {
+                assert_eq!(message, "~/proj failed");
+                assert_eq!(findings[0].message, "~/proj/x.rs:1 error");
+                assert_eq!(findings[0].file.as_deref(), Some("~/proj/x.rs"));
+            }
+            other => panic!("expected Fail, got {other:?}"),
+        }
+    }
 
     fn check_with_triggers(on: Vec<&str>) -> CheckConfig {
         CheckConfig {

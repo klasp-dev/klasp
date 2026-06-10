@@ -10,8 +10,33 @@ follow the migration notes attached to each minor release.
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in fail-closed enforce mode** — set `KLASP_MODE=enforce` in the gate
+  environment and internal errors (schema skew, unparseable or missing config)
+  fail *closed* (exit 2) instead of failing open, so a broken or absent config
+  blocks the tool call rather than allowing it. Legitimate pass-throughs (a
+  non-git command, no matching trigger) still allow in both modes. See
+  `SECURITY.md`.
+- **Self-proving conformance matrix** — `docs/agent-surfaces.md` is now generated
+  from `docs/surfaces.json` (`scripts/gen-agent-surfaces.mjs`), and CI fails if a
+  `✓` lacks a runnable proof test or the committed matrix drifts from the source
+  (`scripts/verify-surface-proofs.mjs`). A `✓` can't be committed without a real,
+  passing test.
+- **Atomic version bump + a CI version-sync invariant** — `scripts/bump-versions.mjs`
+  bumps Cargo/npm/pypi together and `scripts/check-version-sync.mjs` (in CI)
+  asserts they agree.
+- **Home-path redaction in findings** — agent-facing finding text (and the
+  per-check raw output in `--format json`) now collapses the developer's home
+  directory to `~`, so a failing check can't leak `/Users/<name>/…` into the
+  agent's context window. Secret-pattern redaction is intentionally not done
+  (it would risk hiding real findings).
+
 ### Changed
 
+- **MSRV corrected to 1.85 and gated in CI** — the declared `rust-version = "1.75"`
+  was unbuildable (`edition2024` via `toml`/`serde_spanned` needs Cargo ≥ 1.85);
+  a new `msrv` CI job builds the workspace on the declared toolchain.
 - **Agent conformance matrix is now a tracked contract ([#68])** — moved
   `docs/conformance-matrix.md` to `docs/agent-surfaces.md`, referenced it from the
   README's "Why klasp" section, and mapped every `✓` to the test file that proves
