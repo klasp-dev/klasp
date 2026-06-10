@@ -66,7 +66,8 @@ const DEFAULT_RECEIPTS: &str = ".agentic-flow/receipts/";
 /// agentic-flow flow.yaml ids. The plugin recognizes these natively; a manifest
 /// step the plugin doesn't recognize produces a `warn` (not a fail).
 const COMMIT_IMPL_STEPS: &[&str] = &["feature-dev", "dispatch-impl"];
-const PUSH_REQUIRED_STEPS: &[&str] = &["simplify", "code-review", "review-handoff", "quality-gates"];
+const PUSH_REQUIRED_STEPS: &[&str] =
+    &["simplify", "code-review", "review-handoff", "quality-gates"];
 /// pr-create depth (only reachable via `settings.phase`, see ARCHITECTURAL note).
 const PR_CREATE_REQUIRED_STEPS: &[&str] = &["triage-followups"];
 /// pr-merge depth (only reachable via `settings.phase`).
@@ -248,7 +249,13 @@ fn audit(input: &PluginGateInput) -> Result<Vec<PluginFinding>, PluginGateOutput
                 let nn_step = format!("{nn:02}-{id}");
                 let receipt_rel = receipt_rel_path(&receipts_dir, repo_root, &nn_step);
                 if let StepResult::Error(f) = reconcile_step(
-                    input, &state, &receipts, &positions, id, &nn_step, &receipt_rel,
+                    input,
+                    &state,
+                    &receipts,
+                    &positions,
+                    id,
+                    &nn_step,
+                    &receipt_rel,
                 ) {
                     audit_errors.push((*nn, f));
                 }
@@ -260,7 +267,13 @@ fn audit(input: &PluginGateInput) -> Result<Vec<PluginFinding>, PluginGateOutput
                     let receipt_rel = receipt_rel_path(&receipts_dir, repo_root, &nn_step);
                     matches!(
                         reconcile_step(
-                            input, &state, &receipts, &positions, id, &nn_step, &receipt_rel
+                            input,
+                            &state,
+                            &receipts,
+                            &positions,
+                            id,
+                            &nn_step,
+                            &receipt_rel
                         ),
                         StepResult::Ok
                     )
@@ -354,7 +367,8 @@ fn reconcile_step(
             }
             // User-confirm enforcement.
             let gating = manifest_gating(positions, id).or(r.gating.as_deref());
-            if gating == Some("user-confirm") && !(r.user_confirmed && r.confirmation_id.is_some()) {
+            if gating == Some("user-confirm") && !(r.user_confirmed && r.confirmation_id.is_some())
+            {
                 return StepResult::Error(error_finding(
                     RULE_UNCONFIRMED,
                     Some(receipt_rel),
