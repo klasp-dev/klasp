@@ -211,6 +211,81 @@ fn missing_klasp_toml_fails_open() {
 }
 
 #[test]
+fn enforce_mode_blocks_missing_config() {
+    // With KLASP_MODE=enforce, an internal "can't determine a verdict"
+    // condition (here: a git commit attempted but no klasp.toml to gate it)
+    // fails CLOSED → exit 2, the opposite of the advisory default above.
+    let project = TempDir::new().expect("tempdir");
+    let (code, stderr) = spawn_gate(
+        FIXTURE_GIT_COMMIT,
+        project.path(),
+        &[("KLASP_MODE", "enforce")],
+    );
+    assert_eq!(
+        code,
+        Some(2),
+        "enforce mode must block when it can't load config to gate a git command",
+    );
+    assert!(
+        stderr.contains("enforce"),
+        "expected an enforce-mode notice on stderr, got: {stderr:?}",
+    );
+}
+
+#[test]
+fn enforce_mode_blocks_unparseable_stdin() {
+    // Unparseable tool-call payload is an internal error; advisory fails open,
+    // enforce fails closed.
+    let project = TempDir::new().expect("tempdir");
+    let (code, _stderr) = spawn_gate(
+        "not json at all",
+        project.path(),
+        &[("KLASP_MODE", "enforce")],
+    );
+    assert_eq!(
+        code,
+        Some(2),
+        "enforce mode must block on an unparseable gate payload",
+    );
+}
+
+#[test]
+fn enforce_mode_still_passes_non_git_command() {
+    // Enforce flips ERROR fail-opens to blocks, but a non-git command is a
+    // legitimate pass-through (not klasp's business) and must still exit 0.
+    let project = TempDir::new().expect("tempdir");
+    write_klasp_toml(
+        project.path(),
+        r#"
+            version = 1
+
+            [gate]
+            agents = ["claude_code"]
+            policy = "any_fail"
+
+            [[checks]]
+            name = "always-fail"
+            triggers = [{ on = ["commit"] }]
+            timeout_secs = 5
+            [checks.source]
+            type = "shell"
+            command = "exit 7"
+        "#,
+    );
+    let payload = r#"{
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "ls -la" }
+    }"#;
+    let (code, _stderr) = spawn_gate(payload, project.path(), &[("KLASP_MODE", "enforce")]);
+    assert_eq!(
+        code,
+        Some(0),
+        "a non-git command is a legitimate pass-through even in enforce mode",
+    );
+}
+
+#[test]
 fn klasp_base_ref_is_exposed_to_shell_checks() {
     // End-to-end: the gate runtime computes a merge-base and threads it
     // through `RepoState` → `ShellSource::run` → the child's `KLASP_BASE_REF`

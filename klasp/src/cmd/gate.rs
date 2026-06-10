@@ -4,9 +4,12 @@
 //! Implements the seven-step flow from [docs/design.md §6]. The flow is
 //! deliberately linear — no async runtime, no concurrent checks; v0.2 will
 //! add `rayon`-based parallelism when the test surface is broad enough to
-//! catch race regressions. **Every tooling failure fails open** with a
-//! single stderr notice and exit 0; only a `Verdict::Fail` aggregated from
-//! actual check results returns exit 2 to deny the tool call.
+//! catch race regressions. **Every tooling failure fails open** (advisory
+//! mode, the default) with a single stderr notice and exit 0; only a
+//! `Verdict::Fail` aggregated from actual check results returns exit 2 to deny
+//! the tool call. Setting `KLASP_MODE=enforce` flips the *error* exit points
+//! (1, 2, 3, 5, and a group's config error in 6) to fail CLOSED — exit 2 —
+//! while the legitimate pass-throughs in point 4 still exit 0 in both modes.
 //!
 //! The seven fail-open exit points:
 //!
@@ -56,6 +59,34 @@ enum Outcome {
     Block,
 }
 
+/// True when the caller opted into fail-closed enforcement via
+/// `KLASP_MODE=enforce` (case-insensitive). Default (unset / any other value)
+/// is advisory — the gate fails open. Read from the environment, not
+/// `klasp.toml`, because the highest-value enforcement cases are exactly the
+/// ones where the config is missing or unparseable, so the signal must survive
+/// a config that won't load. `klasp install` baking this into the generated
+/// hook from a `[gate].mode` field is the natural follow-up.
+fn enforce_mode() -> bool {
+    std::env::var("KLASP_MODE")
+        .map(|m| m.eq_ignore_ascii_case("enforce"))
+        .unwrap_or(false)
+}
+
+/// Resolve an internal "can't determine a verdict" condition. Advisory →
+/// `Pass` (fail open) with a "skipping" notice; enforce → `Block` (fail closed)
+/// with a "blocking" notice. Every error exit point routes through here;
+/// legitimate pass-throughs (non-git command, no matching trigger) do NOT —
+/// they pass in both modes.
+fn fail_open<W: Write>(stderr: &mut W, enforce: bool, reason: &str) -> Outcome {
+    if enforce {
+        let _ = writeln!(stderr, "{NOTICE_PREFIX} enforce mode: blocking — {reason}.");
+        Outcome::Block
+    } else {
+        let _ = writeln!(stderr, "{NOTICE_PREFIX} {reason}, skipping.");
+        Outcome::Pass
+    }
+}
+
 fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
     // `--agent` and `--trigger` are accepted-and-ignored informational hints.
     // Installed hooks (Codex git-hooks, Aider commit-cmd-pre) pass these flags
@@ -65,46 +96,43 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
     // and intentionally not wired into dispatch. See issue #91 and docs/design.md §6.
     let _ = (args.agent.as_deref(), args.trigger.as_deref());
 
+    // Fail-closed enforcement (opt-in). Resolved before the schema check so it
+    // covers every error exit point below, including the ones that occur before
+    // any klasp.toml is loaded.
+    let enforce = enforce_mode();
+
     // 1. Schema handshake — env var, not stdin (see design §3.3).
     match GateProtocol::read_schema_from_env() {
         Ok(env_value) => {
             if let Err(e) = GateProtocol::check_schema_env(env_value) {
-                let _ = writeln!(
+                return fail_open(
                     stderr,
-                    "{NOTICE_PREFIX} schema mismatch ({e}), skipping. \
-                     Re-run `klasp install` to update the hook."
+                    enforce,
+                    &format!("schema mismatch ({e}); re-run `klasp install` to update the hook"),
                 );
-                return Outcome::Pass;
             }
         }
         Err(e) => {
-            let _ = writeln!(
+            return fail_open(
                 stderr,
-                "{NOTICE_PREFIX} could not read KLASP_GATE_SCHEMA ({e}), \
-                 skipping. Re-run `klasp install` to regenerate the hook."
+                enforce,
+                &format!(
+                    "could not read KLASP_GATE_SCHEMA ({e}); re-run `klasp install` to regenerate the hook"
+                ),
             );
-            return Outcome::Pass;
         }
     }
 
     // 2. Parse stdin (fail-open on read or parse error).
     let mut buf = String::new();
     if let Err(e) = io::stdin().read_to_string(&mut buf) {
-        let _ = writeln!(
-            stderr,
-            "{NOTICE_PREFIX} could not read stdin ({e}), skipping."
-        );
-        return Outcome::Pass;
+        return fail_open(stderr, enforce, &format!("could not read stdin ({e})"));
     }
 
     let input = match GateProtocol::parse(&buf) {
         Ok(i) => i,
         Err(e) => {
-            let _ = writeln!(
-                stderr,
-                "{NOTICE_PREFIX} could not parse input ({e}), skipping."
-            );
-            return Outcome::Pass;
+            return fail_open(stderr, enforce, &format!("could not parse input ({e})"));
         }
     };
 
@@ -127,11 +155,7 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
     let repo_root = match git::find_repo_root_from_cwd() {
         Some(r) => r,
         None => {
-            let _ = writeln!(
-                stderr,
-                "{NOTICE_PREFIX} could not resolve repo root, skipping."
-            );
-            return Outcome::Pass;
+            return fail_open(stderr, enforce, "could not resolve repo root");
         }
     };
 
@@ -153,8 +177,7 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
         let config = match ConfigV1::load(&repo_root) {
             Ok(c) => c,
             Err(e) => {
-                let _ = writeln!(stderr, "{NOTICE_PREFIX} config error ({e}), skipping.");
-                return Outcome::Pass;
+                return fail_open(stderr, enforce, &format!("config error ({e})"));
             }
         };
         // Resolve effective git event: built-in OR user trigger.
@@ -188,6 +211,22 @@ fn gate<W: Write>(stderr: &mut W, args: &GateArgs) -> Outcome {
                 let config = match ConfigV1::from_file(&config_path) {
                     Ok(c) => c,
                     Err(e) => {
+                        if enforce {
+                            let _ = writeln!(
+                                stderr,
+                                "{NOTICE_PREFIX} enforce mode: blocking — config error for {path} ({e}).",
+                                path = config_path.display(),
+                            );
+                            // A failing group makes the cross-group AnyFail
+                            // aggregate block (exit 2).
+                            return Some(Verdict::Fail {
+                                findings: vec![],
+                                message: format!(
+                                    "klasp enforce mode: could not load config {}",
+                                    config_path.display()
+                                ),
+                            });
+                        }
                         let _ = writeln!(
                             stderr,
                             "{NOTICE_PREFIX} config error for {path} ({e}), skipping group.",
