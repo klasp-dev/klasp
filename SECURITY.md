@@ -44,8 +44,13 @@ Please calibrate expectations accordingly:
   internal error, klasp degrades to *allow* (with a notice on the surface) so it
   never silently wedges your commits. This is a deliberate availability choice
   and means klasp must **not** be relied on as a hard enforcement control in its
-  default configuration. A fail-closed / enforce mode is tracked for a future
-  release.
+  default configuration. An **opt-in fail-closed mode** exists: set
+  `KLASP_MODE=enforce` in the gate's environment and those internal errors fail
+  *closed* (exit 2) instead — a broken or absent config blocks the tool call
+  rather than allowing it. Legitimate pass-throughs (a non-git command, no
+  matching trigger) still allow in both modes. Wiring this into `klasp install`
+  from a `[gate]` config field so the generated hook exports it is a planned
+  follow-up.
 - **Plugins are subprocesses with your privileges.** The v0 subprocess plugin
   protocol runs plugin binaries you configure, as you, with your environment.
   Only install plugins you trust, the same as any other dev dependency.
