@@ -11,45 +11,55 @@ A cell is only `✓` when all three of these are true:
 
 Anything weaker is `?` — feature claimed but not load-bearing.
 
-This file is a **tracked contract**, not a marketing table. Two guards keep it honest:
+This file is a **tracked contract**, not a marketing table — and the tables below
+are **generated from [`docs/surfaces.json`](./surfaces.json)**, the single source
+of truth. Three mechanical guards keep every `✓` honest (CI, every PR):
 
-- Every agent surface crate (`klasp-agents-*`) must have a row here. CI runs
-  [`scripts/check-agent-surfaces.mjs`](../scripts/check-agent-surfaces.mjs) on
-  every PR and fails if a surface crate lands without a matrix row.
-- Every `✓` is backed by a committed test, linked from the proof table in the
-  [What `✓` means](#what--means) section below.
+- **No drift.** [`scripts/gen-agent-surfaces.mjs`](../scripts/gen-agent-surfaces.mjs)
+  renders the tables from `surfaces.json`; CI fails if the committed markdown
+  differs (`--check`). Edit `surfaces.json`, then run it with `--write`.
+- **No unbacked `✓`.** [`scripts/verify-surface-proofs.mjs`](../scripts/verify-surface-proofs.mjs)
+  fails if any `✓` cell lacks a proof test file that exists and holds a runnable
+  (non-`#[ignore]`) test, or if a `klasp-agents-*` crate has no row.
+- **The proofs actually pass.** The `cargo test` job runs those test files.
 
-See [issue #68](https://github.com/klasp-dev/klasp/issues/68) for the tracking discussion.
+Together these mean a `✓` cannot be committed without a real, runnable, passing
+test. See [issue #68](https://github.com/klasp-dev/klasp/issues/68) for the
+tracking discussion.
 
-## v0.3.0
+## v0.5.0
 
+<!-- BEGIN GENERATED:matrix -->
 | Surface | Install | Uninstall | Doctor | Commit gate | Push gate | Structured verdict | Conflict handling | Captured-session test | Notes |
-|---|---|---|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Claude Code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (husky / lefthook / pre-commit framework) | ✓ | Conflict handling is advisory: Claude installs via `.claude/settings.json`, not `.git/hooks/`, so it warns (rather than skips) when a co-resident manager is detected. See [#92](https://github.com/klasp-dev/klasp/issues/92). |
 | Codex CLI | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Aider | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | ✓ | v0.3 W1 (#40, #46). Aider has no push-time hook (`.aider.conf.yml` exposes `commit-cmd-pre` only) and no conflicting hook-manager surface — both columns are intentional `—`, not regressions. |
-| Cursor | — | — | — | — | — | — | — | — | Not supported in v0.3 (see [cursor-assessment.md](./cursor-assessment.md)); hook surface is beta with open correctness bugs |
-| Windsurf | — | — | — | — | — | — | — | — | Not surveyed |
-| Cline | — | — | — | — | — | — | — | — | Not surveyed |
+| Cursor | — | — | — | — | — | — | — | — | Not supported (see [cursor-assessment.md](./cursor-assessment.md)); hook surface is beta with open correctness bugs. |
+| Windsurf | — | — | — | — | — | — | — | — | Not surveyed. |
+| Cline | — | — | — | — | — | — | — | — | Not surveyed. |
+<!-- END GENERATED:matrix -->
 
 ## What `✓` means
 
-A row claims `✓` only when a committed integration test in the test suite proves it.
-Every `✓`-bearing surface has a proof row below; each test is mapped to the columns
-it backs so a reviewer can trace any `✓` to the file that proves it:
+A row claims `✓` only when a committed test in the suite proves it, and
+[`scripts/verify-surface-proofs.mjs`](../scripts/verify-surface-proofs.mjs)
+enforces that mechanically. Each `✓` is mapped to the test file that backs it so
+a reviewer can trace any claim to its proof:
 
+<!-- BEGIN GENERATED:proofs -->
 | Surface | Columns proven | Test file(s) |
-|---|---|---|
+| --- | --- | --- |
 | Claude Code | Install / Uninstall | [`klasp/tests/install_claude_code.rs`](../klasp/tests/install_claude_code.rs) |
 | Claude Code | Doctor | [`klasp/tests/doctor.rs`](../klasp/tests/doctor.rs) |
-| Claude Code | Commit gate / Push gate / Structured verdict / Captured-session | [`klasp/tests/gate_flow.rs`](../klasp/tests/gate_flow.rs) |
+| Claude Code | Commit gate / Push gate / Structured verdict / Captured-session test | [`klasp/tests/gate_flow.rs`](../klasp/tests/gate_flow.rs) |
 | Claude Code | Conflict handling | [`klasp-agents-claude/tests/conflict_detection.rs`](../klasp-agents-claude/tests/conflict_detection.rs) |
 | Codex CLI | Install / Uninstall / Conflict handling | [`klasp/tests/install_codex_cli.rs`](../klasp/tests/install_codex_cli.rs) |
 | Codex CLI | Doctor | [`klasp/tests/doctor.rs`](../klasp/tests/doctor.rs) |
-| Codex CLI | Commit gate / Push gate / Structured verdict / Captured-session | [`klasp/tests/codex_captured_session.rs`](../klasp/tests/codex_captured_session.rs) |
+| Codex CLI | Commit gate / Push gate / Structured verdict / Captured-session test | [`klasp/tests/codex_captured_session.rs`](../klasp/tests/codex_captured_session.rs) |
 | Aider | Install / Uninstall | [`klasp-agents-aider/tests/aider_conf_install.rs`](../klasp-agents-aider/tests/aider_conf_install.rs) |
-| Aider | Doctor | [`klasp/tests/aider_captured_session.rs`](../klasp/tests/aider_captured_session.rs) |
-| Aider | Commit gate / Structured verdict / Captured-session | [`klasp/tests/aider_captured_session.rs`](../klasp/tests/aider_captured_session.rs) |
+| Aider | Doctor / Commit gate / Structured verdict / Captured-session test | [`klasp/tests/aider_captured_session.rs`](../klasp/tests/aider_captured_session.rs) |
+<!-- END GENERATED:proofs -->
 
 ## Plugin protocol
 
