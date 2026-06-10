@@ -327,7 +327,7 @@ Pytest's documented exit codes ride through:
 | 2 | Test run interrupted (`KeyboardInterrupt`) | `Fail` with `interrupted` detail |
 | 3 | Internal pytest error | `Fail` with `internal error` detail |
 | 4 | pytest CLI usage error | `Fail` with `usage error` detail |
-| 5 | No tests collected | `Fail` with `no tests` detail |
+| 5 | No tests collected | `Pass` (no-op — e.g. a commit that staged no Python) |
 
 pytest 7.x and 8.x are both supported; outside that range the recipe
 surfaces a stderr warning but keeps running on the bet that pytest's
