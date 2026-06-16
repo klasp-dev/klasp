@@ -30,7 +30,13 @@ pub(super) fn outcome_to_verdict(
     version_warning: Option<&str>,
 ) -> Verdict {
     match outcome.status_code {
-        Some(0) => match version_warning {
+        // Exit 0 = tests ran clean. Exit 5 = pytest collected no tests; in a
+        // diff-scoped commit gate this is the common benign case of a commit
+        // that staged no Python (e.g. a Rust-only change in a polyglot repo),
+        // so it is treated as a no-op pass rather than a block. A genuinely
+        // vanished test suite is better caught by CI running the full suite
+        // than by the commit gate. See docs/recipes.md and the klasp.toml note.
+        Some(0) | Some(5) => match version_warning {
             None => Verdict::Pass,
             Some(warning) => Verdict::Warn {
                 findings: vec![note(check_name, warning, Severity::Warn)],
@@ -79,7 +85,8 @@ fn exit_code_detail(check_name: &str, code: i32, stderr_trimmed: &str) -> String
         2 => "test run was interrupted by the user (KeyboardInterrupt)",
         3 => "internal error happened while executing tests",
         4 => "pytest command line usage error",
-        5 => "no tests were collected",
+        // exit 5 ("no tests collected") is handled as a no-op pass in
+        // `outcome_to_verdict` and never reaches here.
         _ => "pytest exited with an unexpected status",
     };
     if stderr_trimmed.is_empty() {
@@ -194,14 +201,25 @@ mod tests {
     }
 
     #[test]
-    fn collection_error_exit_5_carries_descriptive_detail() {
+    fn collection_error_exit_5_is_pass() {
+        // pytest exit 5 = "no tests collected". In a diff-scoped commit gate
+        // this is the benign no-Python-staged case, so it is a no-op pass
+        // rather than a block. See `outcome_to_verdict` and docs/recipes.md.
         let v = outcome_to_verdict("tests", &outcome(Some(5), "", ""), None, None);
+        assert!(matches!(v, Verdict::Pass), "expected Pass, got {v:?}");
+    }
+
+    #[test]
+    fn collection_error_exit_5_with_version_warning_is_warn() {
+        // The no-tests-collected pass still surfaces a version warning the
+        // same way the exit-0 path does — non-blocking, but noted.
+        let v = outcome_to_verdict("tests", &outcome(Some(5), "", ""), None, Some("old pytest"));
         match v {
-            Verdict::Fail { message, .. } => {
-                assert!(message.contains("no tests"));
-                assert!(message.contains("exit 5"));
+            Verdict::Warn { findings, message } => {
+                assert_eq!(findings.len(), 1);
+                assert!(message.unwrap().contains("old pytest"));
             }
-            other => panic!("expected Fail, got {other:?}"),
+            other => panic!("expected Warn, got {other:?}"),
         }
     }
 

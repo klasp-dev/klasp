@@ -90,6 +90,24 @@ jobs:
         run: cargo test --workspace -- --ignored
         continue-on-error: true
 
+      # examples/ holds forkable reference plugins intentionally OUTSIDE the
+      # workspace (Cargo.toml `exclude`), so the clippy/test steps above never
+      # touch them — including the git-arg flag-smuggling security regression
+      # test in klasp-plugin-agentic-flow
+      # (gate_flag_smuggling_base_ref_is_rejected). Run each example crate
+      # explicitly so those suites gate every PR. NOT continue-on-error: a
+      # failure here must fail the build.
+      - name: cargo clippy + test (example plugins)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for manifest in examples/*/Cargo.toml; do
+            echo "::group::$manifest"
+            cargo clippy --manifest-path "$manifest" --all-targets -- -D warnings
+            cargo test --manifest-path "$manifest"
+            echo "::endgroup::"
+          done
+
       # Insta snapshot guard. `cargo test` accepts matching snapshots but
       # leaves `*.snap.new` artefacts on drift. Fail the build if any are
       # present — forces an explicit `cargo insta accept` (or revert) in the
