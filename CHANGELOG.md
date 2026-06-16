@@ -10,6 +10,12 @@ follow the migration notes attached to each minor release.
 
 ## [Unreleased]
 
+### Added
+
+- **Security policy ([#140])** — added `SECURITY.md` documenting the
+  supported-version policy and an honest threat model for klasp's gate
+  execution (what the sandbox does and does not protect against).
+
 ### Changed
 
 - **Agent conformance matrix is now a tracked contract ([#68])** — moved
@@ -27,6 +33,10 @@ follow the migration notes attached to each minor release.
 
 ### Fixed
 
+- **Hardened the `klasp-plugin-agentic-flow` git-arg boundary ([#138])** —
+  tightened argument handling so a crafted ref or path can no longer smuggle
+  extra `git` flags across the argument boundary, and added secret-file
+  patterns to `.gitignore` to reduce the chance of committing credentials.
 - **`pytest` recipe: exit 5 (no tests collected) is now a no-op pass, not a
   block** — a diff-scoped commit that staged no Python (e.g. a Rust-only change
   in a polyglot repo) made pytest collect nothing and exit 5, which the recipe
@@ -413,3 +423,5 @@ See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan.
 [#126]: https://github.com/klasp-dev/klasp/pull/126
 [#129]: https://github.com/klasp-dev/klasp/pull/129
 [#131]: https://github.com/klasp-dev/klasp/pull/131
+[#138]: https://github.com/klasp-dev/klasp/pull/138
+[#140]: https://github.com/klasp-dev/klasp/pull/140
