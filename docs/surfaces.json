@@ -1,0 +1,119 @@
+{
+  "_comment": "SINGLE SOURCE OF TRUTH for the agent-surface conformance matrix. The matrix and proof tables in docs/agent-surfaces.md are GENERATED from this file by scripts/gen-agent-surfaces.mjs (run with --write). CI verifies (a) the committed markdown matches what this file generates (drift check), (b) every '✓' cell is backed by a proof test file that exists and holds at least one non-#[ignore] test (scripts/verify-surface-proofs.mjs). Combined with the cargo-test CI job that runs those files, a '✓' cannot be committed without a real, runnable, passing test. klasp.dev also renders this file so the site can't drift from the code. Edit cells/proofs HERE, then run `node scripts/gen-agent-surfaces.mjs --write`.",
+  "schema": 1,
+  "version": "0.5.0",
+  "capabilities": [
+    "Install",
+    "Uninstall",
+    "Doctor",
+    "Commit gate",
+    "Push gate",
+    "Structured verdict",
+    "Conflict handling",
+    "Captured-session test"
+  ],
+  "surfaces": [
+    {
+      "name": "Claude Code",
+      "cells": {
+        "Install": "✓",
+        "Uninstall": "✓",
+        "Doctor": "✓",
+        "Commit gate": "✓",
+        "Push gate": "✓",
+        "Structured verdict": "✓",
+        "Conflict handling": "✓ (husky / lefthook / pre-commit framework)",
+        "Captured-session test": "✓"
+      },
+      "notes": "Conflict handling is advisory: Claude installs via `.claude/settings.json`, not `.git/hooks/`, so it warns (rather than skips) when a co-resident manager is detected. See [#92](https://github.com/klasp-dev/klasp/issues/92).",
+      "proofs": [
+        { "columns": ["Install", "Uninstall"], "test": "klasp/tests/install_claude_code.rs" },
+        { "columns": ["Doctor"], "test": "klasp/tests/doctor.rs" },
+        { "columns": ["Commit gate", "Push gate", "Structured verdict", "Captured-session test"], "test": "klasp/tests/gate_flow.rs" },
+        { "columns": ["Conflict handling"], "test": "klasp-agents-claude/tests/conflict_detection.rs" }
+      ]
+    },
+    {
+      "name": "Codex CLI",
+      "cells": {
+        "Install": "✓",
+        "Uninstall": "✓",
+        "Doctor": "✓",
+        "Commit gate": "✓",
+        "Push gate": "✓",
+        "Structured verdict": "✓",
+        "Conflict handling": "✓",
+        "Captured-session test": "✓"
+      },
+      "notes": "—",
+      "proofs": [
+        { "columns": ["Install", "Uninstall", "Conflict handling"], "test": "klasp/tests/install_codex_cli.rs" },
+        { "columns": ["Doctor"], "test": "klasp/tests/doctor.rs" },
+        { "columns": ["Commit gate", "Push gate", "Structured verdict", "Captured-session test"], "test": "klasp/tests/codex_captured_session.rs" }
+      ]
+    },
+    {
+      "name": "Aider",
+      "cells": {
+        "Install": "✓",
+        "Uninstall": "✓",
+        "Doctor": "✓",
+        "Commit gate": "✓",
+        "Push gate": "—",
+        "Structured verdict": "✓",
+        "Conflict handling": "—",
+        "Captured-session test": "✓"
+      },
+      "notes": "v0.3 W1 (#40, #46). Aider has no push-time hook (`.aider.conf.yml` exposes `commit-cmd-pre` only) and no conflicting hook-manager surface — both columns are intentional `—`, not regressions.",
+      "proofs": [
+        { "columns": ["Install", "Uninstall"], "test": "klasp-agents-aider/tests/aider_conf_install.rs" },
+        { "columns": ["Doctor", "Commit gate", "Structured verdict", "Captured-session test"], "test": "klasp/tests/aider_captured_session.rs" }
+      ]
+    },
+    {
+      "name": "Cursor",
+      "cells": {
+        "Install": "—",
+        "Uninstall": "—",
+        "Doctor": "—",
+        "Commit gate": "—",
+        "Push gate": "—",
+        "Structured verdict": "—",
+        "Conflict handling": "—",
+        "Captured-session test": "—"
+      },
+      "notes": "Not supported (see [cursor-assessment.md](./cursor-assessment.md)); hook surface is beta with open correctness bugs.",
+      "proofs": []
+    },
+    {
+      "name": "Windsurf",
+      "cells": {
+        "Install": "—",
+        "Uninstall": "—",
+        "Doctor": "—",
+        "Commit gate": "—",
+        "Push gate": "—",
+        "Structured verdict": "—",
+        "Conflict handling": "—",
+        "Captured-session test": "—"
+      },
+      "notes": "Not surveyed.",
+      "proofs": []
+    },
+    {
+      "name": "Cline",
+      "cells": {
+        "Install": "—",
+        "Uninstall": "—",
+        "Doctor": "—",
+        "Commit gate": "—",
+        "Push gate": "—",
+        "Structured verdict": "—",
+        "Conflict handling": "—",
+        "Captured-session test": "—"
+      },
+      "notes": "Not surveyed.",
+      "proofs": []
+    }
+  ]
+}
